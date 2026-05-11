@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 36 22% 95%;
+    --foreground: 25 9% 10%;
+    --card: 36 50% 99%;
+    --card-foreground: 25 9% 10%;
+    --popover: 36 50% 99%;
+    --popover-foreground: 25 9% 10%;
+    --primary: 228 36% 42%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 36 16% 92%;
+    --secondary-foreground: 25 8% 28%;
+    --muted: 36 16% 92%;
+    --muted-foreground: 25 5% 40%;
+    --accent: 228 36% 42%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 33 13% 87%;
+    --input: 33 13% 87%;
+    --ring: 228 36% 42%;
+    --radius: 0.75rem;
+    --sidebar-background: 36 50% 99%;
+    --sidebar-foreground: 25 9% 10%;
+    --sidebar-border: 33 13% 87%;
+    --sidebar-accent: 228 60% 95%;
+    --sidebar-accent-foreground: 228 40% 38%;
+    --sidebar-primary: 228 36% 42%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-ring: 228 36% 42%;
+  }
+
+  .dark {
+    --background: 30 5% 10%;
+    --foreground: 35 18% 90%;
+    --card: 30 5% 14%;
+    --card-foreground: 35 18% 90%;
+    --popover: 30 5% 14%;
+    --popover-foreground: 35 18% 90%;
+    --primary: 228 50% 62%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 28 5% 17%;
+    --secondary-foreground: 35 18% 75%;
+    --muted: 28 5% 17%;
+    --muted-foreground: 30 4% 58%;
+    --accent: 228 50% 62%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 32 8% 19%;
+    --input: 32 8% 22%;
+    --ring: 228 50% 62%;
+    --sidebar-background: 30 5% 12%;
+    --sidebar-foreground: 35 18% 90%;
+    --sidebar-border: 32 8% 19%;
+    --sidebar-accent: 228 28% 18%;
+    --sidebar-accent-foreground: 228 50% 72%;
+    --sidebar-primary: 228 50% 62%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-ring: 228 50% 62%;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
+  }
+}
