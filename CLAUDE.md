@@ -147,6 +147,19 @@ is silently wrong.
     never be used as a key, which is why the `player_gameweeks` constraint is
     `UNIQUE(player_id, fixture_id)`. It also means any per-gameweek average has to
     state explicitly whether it divides by rounds or by matches played.
+14. **`fixtures.csv` exists 2018-19 onward only.** For 2016-17 and 2017-18, derive
+    the `fixtures` table from `merged_gw.csv`: group by `fixture`, and use
+    `was_home` plus the player's own team from `players_raw.team` to assign home
+    and away sides. `team_h_score` and `team_a_score` are present in `merged_gw`
+    for all seasons. Difficulty ratings do not exist for those two seasons and stay
+    NULL. Ignore the `stats` column in `fixtures.csv`; the bonus and BPS detail it
+    carries is already in `merged_gw`.
+15. **Team identity for 2016-17 through 2018-19 comes from
+    `players_raw.team_code`, not `teams.csv`, which is absent for those seasons.**
+    Team names are only available from `teams.csv`, so clubs relegated before
+    2019-20 and never promoted since have a code with no name. Those are seeded
+    manually in `server/src/ingest/seed-teams.ts`. Strength ratings do not exist
+    for those seasons and stay NULL.
 
 ## Getting Started
 

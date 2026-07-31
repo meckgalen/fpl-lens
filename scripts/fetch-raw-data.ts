@@ -37,7 +37,7 @@ const SEASONS = [
 ];
 
 // Files relative to a season directory, both remotely and on disk.
-const FILES = ['players_raw.csv', 'teams.csv', 'gws/merged_gw.csv'];
+const FILES = ['players_raw.csv', 'teams.csv', 'fixtures.csv', 'gws/merged_gw.csv'];
 
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const RAW_ROOT = join(PROJECT_ROOT, 'data', 'raw');
