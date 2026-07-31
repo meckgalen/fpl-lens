@@ -8,6 +8,10 @@
     "install:all": "cd server && npm install && cd ../client && npm install"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "@types/node": "^26.1.2",
+    "chardet": "^2.2.0",
+    "concurrently": "^8.2.2",
+    "csv-parse": "^7.0.1",
+    "tsx": "^4.23.1"
   }
 }
