@@ -8,8 +8,16 @@ with filters.
 
 ## Current State
 
-MVP scaffold is complete and reads directly from the live FPL API. **Active work is
-Phase 0: replacing that with a Postgres data layer backfilled from historical CSVs.**
+MVP scaffold is complete and still reads directly from the live FPL API. **Active work
+is Phase 0: replacing that with a Postgres data layer backfilled from historical CSVs.**
+
+Phase 0 steps 1 and 2 are done. The raw CSVs for all ten seasons are in `data/raw/`
+and profiled in `docs/data-profile.md`. Postgres 16 runs in docker-compose and the
+schema exists, created by `server/migrations/1785550165663_initial-schema.ts`:
+`players`, `teams`, `team_seasons`, `player_seasons`, `fixtures`,
+`player_gameweeks`. **Every one of those tables is empty.** Nothing ingests yet;
+`server/src/db/pool.ts` is not imported by `index.ts`, and the routes still hit the
+live API. Step 3, dimension ingest, is next.
 
 The app currently cannot show anything useful, because it is preseason (2026/27 GW1
 deadline is 21 Aug 2026) and the live API returns an empty current-season history
@@ -81,7 +89,8 @@ fpl-lens/
 │   ├── vite.config.ts         # proxies /api to :3001
 │   ├── package.json
 │   └── tsconfig.json
-├── docker-compose.yml
+├── docker-compose.yml         # dev Postgres 16, host port 5434
+├── .env.example               # copy to .env; read by compose AND server/src/db
 ├── package.json               # root scripts (concurrently runs both)
 └── CLAUDE.md
 ```
@@ -152,26 +161,41 @@ is silently wrong.
     `was_home` plus the player's own team from `players_raw.team` to assign home
     and away sides. `team_h_score` and `team_a_score` are present in `merged_gw`
     for all seasons. Difficulty ratings do not exist for those two seasons and stay
-    NULL. Ignore the `stats` column in `fixtures.csv`; the bonus and BPS detail it
-    carries is already in `merged_gw`.
+    NULL. `fixtures.finished` is **read** from `fixtures.csv` for 2018-19 onward but
+    **derived** for 2016-17 and 2017-18, where no such field exists: set it `true`,
+    both seasons being complete. Ignore the `stats` column in `fixtures.csv`; the
+    bonus and BPS detail it carries is already in `merged_gw`.
 15. **Team identity for 2016-17 through 2018-19 comes from
     `players_raw.team_code`, not `teams.csv`, which is absent for those seasons.**
     Team names are only available from `teams.csv`, so clubs relegated before
     2019-20 and never promoted since have a code with no name. Those are seeded
     manually in `server/src/ingest/seed-teams.ts`. Strength ratings do not exist
     for those seasons and stay NULL.
+16. **`ea_index` is excluded.** It appears in `merged_gw.csv` for 2016-17 through
+    2018-19 and is 0 in all 67,936 rows across those three seasons. Storing 0
+    would assert a measurement nobody took; storing NULL would leave it empty in
+    every row it exists in. It carries no signal either way, so it gets no column.
+    Note that `docs/data-profile.md` lists it as present in three seasons with no
+    indication that it is empty, because the profiler reports column presence, not
+    column content.
 
 ## Getting Started
 
 ```bash
 npm install
 npm run install:all
+cp .env.example .env
 docker compose up -d
 npm run migrate:up
 npm run dev
 ```
 
 Frontend: http://localhost:5173, Backend: http://localhost:3001
+
+Postgres publishes on host port **5434**, not 5432, because a native Postgres and
+another project's container already hold 5432 and 5433 on the dev machine. Change
+`POSTGRES_PORT` and the port inside `DATABASE_URL` together if you need a different
+one. `npm run migrate:down` reverts the last migration.
 
 ## What's Built
 
@@ -207,14 +231,14 @@ Frontend: http://localhost:5173, Backend: http://localhost:3001
 
 One session per step. Commit between each.
 
-- [ ] **1. Fetch and profile.** `scripts/fetch-raw-data.ts` downloads the three CSVs
+- [x] **1. Fetch and profile.** `scripts/fetch-raw-data.ts` downloads the three CSVs
       per season, 2016-17 through 2025-26, into `data/raw/{season}/`.
       `scripts/profile-raw-data.ts` writes `docs/data-profile.md` with the column
       presence matrix per season, distinct `element_type` values, distinct position
       strings, row and distinct-element counts per season, first-appearance season for
       each drifting stat family, and an explicit answer to whether `code` exists in
       `players_raw.csv` for every season. No schema design in this step.
-- [ ] **2. Schema.** Postgres in docker-compose, node-pg-migrate wired with up/down
+- [x] **2. Schema.** Postgres in docker-compose, node-pg-migrate wired with up/down
       scripts, first migration creating the tables below. No ingestion logic.
 - [ ] **3. Dimension ingest.** Populate `teams`, `team_seasons`, `players`,
       `player_seasons` from `teams.csv` and `players_raw.csv`.
@@ -239,7 +263,8 @@ team_seasons     (team_id, season, fpl_team_id, strength_*,
 player_seasons   (player_id, season, fpl_element_id, team_id, position,
                   start_cost, end_cost, UNIQUE(season, fpl_element_id))
 fixtures         (id, season, fpl_fixture_id, gw, home_team_id, away_team_id,
-                  kickoff_time, UNIQUE(season, fpl_fixture_id))
+                  kickoff_time, finished, home_score, away_score, home_difficulty,
+                  away_difficulty, UNIQUE(season, fpl_fixture_id))
 player_gameweeks (player_id, season, gw, fixture_id, was_home, opponent_team_id,
                   <stat columns>, UNIQUE(player_id, fixture_id))
 ```

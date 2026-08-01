@@ -1,0 +1,31 @@
+# Development only. Not a deployment artifact.
+#
+# Host port defaults to 5434, not 5432, because a native Postgres owns 5432 on
+# the dev machine and another project's container owns 5433. Override with
+# POSTGRES_PORT in .env.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fpl-lens-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fpl}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fpl}
+      POSTGRES_DB: ${POSTGRES_DB:-fpl_lens}
+    ports:
+      - '${POSTGRES_PORT:-5434}:5432'
+    volumes:
+      - fpl_lens_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_USER:-fpl} -d ${POSTGRES_DB:-fpl_lens}',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  fpl_lens_pgdata:
