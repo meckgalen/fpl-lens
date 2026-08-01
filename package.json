@@ -8,7 +8,8 @@
     "install:all": "cd server && npm install && cd ../client && npm install",
     "migrate:up": "cd server && npm run migrate:up",
     "migrate:down": "cd server && npm run migrate:down",
-    "migrate:create": "cd server && npm run migrate:create"
+    "migrate:create": "cd server && npm run migrate:create",
+    "ingest:dimensions": "cd server && npm run ingest:dimensions"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

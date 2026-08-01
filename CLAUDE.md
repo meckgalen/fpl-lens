@@ -11,13 +11,24 @@ with filters.
 MVP scaffold is complete and still reads directly from the live FPL API. **Active work
 is Phase 0: replacing that with a Postgres data layer backfilled from historical CSVs.**
 
-Phase 0 steps 1 and 2 are done. The raw CSVs for all ten seasons are in `data/raw/`
-and profiled in `docs/data-profile.md`. Postgres 16 runs in docker-compose and the
-schema exists, created by `server/migrations/1785550165663_initial-schema.ts`:
-`players`, `teams`, `team_seasons`, `player_seasons`, `fixtures`,
-`player_gameweeks`. **Every one of those tables is empty.** Nothing ingests yet;
-`server/src/db/pool.ts` is not imported by `index.ts`, and the routes still hit the
-live API. Step 3, dimension ingest, is next.
+Phase 0 steps 1, 2 and 3 are done. The raw CSVs for all ten seasons are in
+`data/raw/` and profiled in `docs/data-profile.md`. Postgres 16 runs in
+docker-compose and the schema exists, created by
+`server/migrations/1785550165663_initial-schema.ts`.
+
+The four dimension tables are populated by `npm run ingest:dimensions`
+(`server/src/ingest/ingest-dimensions.ts`, idempotent, one transaction):
+
+| Table            | Rows                |
+| ---------------- | ------------------- |
+| `teams`          | 34                  |
+| `team_seasons`   | 200 (20 per season) |
+| `players`        | 2623                |
+| `player_seasons` | 7338                |
+
+**`fixtures` and `player_gameweeks` are still empty.** Step 4, fixture ingest, is
+next. The routes still hit the live API; `server/src/db/pool.ts` is not yet
+imported by `index.ts`, and nothing is read from Postgres until step 6.
 
 The app currently cannot show anything useful, because it is preseason (2026/27 GW1
 deadline is 21 Aug 2026) and the live API returns an empty current-season history
@@ -178,6 +189,24 @@ is silently wrong.
     Note that `docs/data-profile.md` lists it as present in three seasons with no
     indication that it is empty, because the profiler reports column presence, not
     column content.
+17. **`player_seasons.team_id` is the club at the END of that season, not for the
+    whole season.** `players_raw.csv` is an end-of-season bootstrap snapshot, so a
+    player who transferred in January is recorded under his new club for the entire
+    season row. Never use it to answer "which club was this player at in gameweek
+    N". That comes from the fixture: `was_home` picks `home_team_id` or
+    `away_team_id` on the `player_gameweeks` row's fixture. Verified empirically:
+    for the 96 players who turned out for two clubs in one season across 2020-21,
+    2022-23, 2024-25 and 2025-26, the snapshot's `team_code` matches the club of
+    their chronologically last appearance in 96 of 96 cases.
+18. **The literal string `'None'` is a null, and only `'None'`.** The upstream
+    scraper serialises Python `None` as the four-character string `None`. It occurs
+    in eleven columns of `players_raw.csv`, of which only `birth_date` is ingested
+    (162 rows in 2024-25, 19 in 2025-26). It does NOT occur anywhere in
+    `merged_gw.csv` or `fixtures.csv`, in any season. Normalise `'None'` and the
+    empty string to NULL at parse time in every ingest, including the ones whose
+    sources are currently clean. Do NOT normalise `'-'`, `'null'`, `'nan'` or
+    lowercase `'none'`: none of them occur in any of the three files, and `'-'`
+    could be legitimate in a text field.
 
 ## Getting Started
 
@@ -240,15 +269,17 @@ One session per step. Commit between each.
       `players_raw.csv` for every season. No schema design in this step.
 - [x] **2. Schema.** Postgres in docker-compose, node-pg-migrate wired with up/down
       scripts, first migration creating the tables below. No ingestion logic.
-- [ ] **3. Dimension ingest.** Populate `teams`, `team_seasons`, `players`,
+- [x] **3. Dimension ingest.** Populate `teams`, `team_seasons`, `players`,
       `player_seasons` from `teams.csv` and `players_raw.csv`.
-- [ ] **4. Fact ingest.** Populate `player_gameweeks` from `merged_gw.csv` via `COPY`,
+- [ ] **4. Fixture ingest.** Populate `fixtures` from `fixtures.csv` for 2018-19
+      onward and derive it from `merged_gw.csv` for 2016-17 and 2017-18 per rule 14.
+- [ ] **5. Fact ingest.** Populate `player_gameweeks` from `merged_gw.csv` via `COPY`,
       resolving `element` and `opponent_team` through the season maps. Roughly 200k to
       250k rows total. Use `COPY` through node-postgres, not an ORM row by row.
-- [ ] **5. Repository and cutover.** Add `repositories/`, then swap
+- [ ] **6. Repository and cutover.** Add `repositories/`, then swap
       `GET /api/player/:id` to read from Postgres while keeping the response shape
       byte-identical so the client stays untouched.
-- [ ] **6. Types split.** Separate wire types (FPL and CSV shapes), domain types, and
+- [ ] **7. Types split.** Separate wire types (FPL and CSV shapes), domain types, and
       UI constants, with the mapper living at the ingestion boundary. Numerics become
       `number`, not `string`.
 
