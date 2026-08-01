@@ -11,24 +11,29 @@ with filters.
 MVP scaffold is complete and still reads directly from the live FPL API. **Active work
 is Phase 0: replacing that with a Postgres data layer backfilled from historical CSVs.**
 
-Phase 0 steps 1, 2 and 3 are done. The raw CSVs for all ten seasons are in
+Phase 0 steps 1 through 4 are done. The raw CSVs for all ten seasons are in
 `data/raw/` and profiled in `docs/data-profile.md`. Postgres 16 runs in
 docker-compose and the schema exists, created by
 `server/migrations/1785550165663_initial-schema.ts`.
 
-The four dimension tables are populated by `npm run ingest:dimensions`
-(`server/src/ingest/ingest-dimensions.ts`, idempotent, one transaction):
+Two ingest scripts populate five of the six tables. Both are idempotent, run in
+one transaction, and assert their own results:
 
-| Table            | Rows                |
-| ---------------- | ------------------- |
-| `teams`          | 34                  |
-| `team_seasons`   | 200 (20 per season) |
-| `players`        | 2623                |
-| `player_seasons` | 7338                |
+| Table            | Rows                 | Populated by             |
+| ---------------- | -------------------- | ------------------------ |
+| `teams`          | 34                   | `npm run ingest:dimensions` |
+| `team_seasons`   | 200 (20 per season)  | `npm run ingest:dimensions` |
+| `players`        | 2623                 | `npm run ingest:dimensions` |
+| `player_seasons` | 7338                 | `npm run ingest:dimensions` |
+| `fixtures`       | 3800 (380 per season)| `npm run ingest:fixtures`   |
 
-**`fixtures` and `player_gameweeks` are still empty.** Step 4, fixture ingest, is
-next. The routes still hit the live API; `server/src/db/pool.ts` is not yet
-imported by `index.ts`, and nothing is read from Postgres until step 6.
+`ingest:fixtures` depends on `ingest:dimensions` having run: it resolves
+season-scoped team ids through `team_seasons` and fails with a clear message if
+that table is not populated.
+
+**`player_gameweeks` is the only empty table.** Step 5, fact ingest, is next. The
+routes still hit the live API; `server/src/db/pool.ts` is not yet imported by
+`index.ts`, and nothing is read from Postgres until step 6.
 
 The app currently cannot show anything useful, because it is preseason (2026/27 GW1
 deadline is 21 Aug 2026) and the live API returns an empty current-season history
@@ -168,11 +173,39 @@ is silently wrong.
     `UNIQUE(player_id, fixture_id)`. It also means any per-gameweek average has to
     state explicitly whether it divides by rounds or by matches played.
 14. **`fixtures.csv` exists 2018-19 onward only.** For 2016-17 and 2017-18, derive
-    the `fixtures` table from `merged_gw.csv`: group by `fixture`, and use
-    `was_home` plus the player's own team from `players_raw.team` to assign home
-    and away sides. `team_h_score` and `team_a_score` are present in `merged_gw`
-    for all seasons. Difficulty ratings do not exist for those two seasons and stay
-    NULL. `fixtures.finished` is **read** from `fixtures.csv` for 2018-19 onward but
+    the `fixtures` table from `merged_gw.csv` by grouping on `fixture`.
+
+    **Assign home and away from `was_home` plus `opponent_team`, never from
+    `players_raw.team`:**
+
+    - `was_home = true` → the player is the home side, so `opponent_team` is **away**
+    - `was_home = false` → the player is the away side, so `opponent_team` is **home**
+
+    Each side must resolve to exactly one distinct team per fixture. Ambiguity is a
+    hard failure, not a warning.
+
+    `players_raw.team` was tried and rejected, and the reasoning matters because
+    rule 17 makes that column look like the natural choice. Rule 17 establishes
+    that `players_raw.csv` is an end-of-season snapshot, so a player who
+    transferred in January carries his **new** club on fixtures he actually played
+    for his **old** one. That makes `was_home` + `players_raw.team` internally
+    inconsistent on **32 to 124 fixtures per season**, survivable only by majority
+    voting across each fixture's rows — and majority voting has no failure mode: it
+    silently picks whichever side has more rows. `opponent_team` is a property of
+    the match rather than of the player, so no snapshot staleness can reach it.
+    Verified: **0 mismatches and 0 ambiguity across all ten seasons.**
+
+    The derivation is cross-checked in `server/src/ingest/ingest-fixtures.ts`
+    against the eight seasons that also have a `fixtures.csv`, on home team, away
+    team, both scores, `gw` and `kickoff_time`. That check is what justifies
+    trusting it for the two seasons with no second source, so it must keep passing.
+    **One known exception:** 2021-22 fixture 263, where `merged_gw` says 15:00 and
+    `fixtures.csv` says 15:30. Teams, round and score agree. It is allowlisted by
+    name; any other disagreement, on any field, fails the ingest.
+
+    `team_h_score` and `team_a_score` are present in `merged_gw` for all seasons.
+    Difficulty ratings do not exist for the two derived seasons and stay NULL.
+    `fixtures.finished` is **read** from `fixtures.csv` for 2018-19 onward but
     **derived** for 2016-17 and 2017-18, where no such field exists: set it `true`,
     both seasons being complete. Ignore the `stats` column in `fixtures.csv`; the
     bonus and BPS detail it carries is already in `merged_gw`.
@@ -271,7 +304,7 @@ One session per step. Commit between each.
       scripts, first migration creating the tables below. No ingestion logic.
 - [x] **3. Dimension ingest.** Populate `teams`, `team_seasons`, `players`,
       `player_seasons` from `teams.csv` and `players_raw.csv`.
-- [ ] **4. Fixture ingest.** Populate `fixtures` from `fixtures.csv` for 2018-19
+- [x] **4. Fixture ingest.** Populate `fixtures` from `fixtures.csv` for 2018-19
       onward and derive it from `merged_gw.csv` for 2016-17 and 2017-18 per rule 14.
 - [ ] **5. Fact ingest.** Populate `player_gameweeks` from `merged_gw.csv` via `COPY`,
       resolving `element` and `opponent_team` through the season maps. Roughly 200k to

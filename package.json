@@ -9,7 +9,8 @@
     "migrate:up": "cd server && npm run migrate:up",
     "migrate:down": "cd server && npm run migrate:down",
     "migrate:create": "cd server && npm run migrate:create",
-    "ingest:dimensions": "cd server && npm run ingest:dimensions"
+    "ingest:dimensions": "cd server && npm run ingest:dimensions",
+    "ingest:fixtures": "cd server && npm run ingest:fixtures"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
