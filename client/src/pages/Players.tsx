@@ -2,23 +2,30 @@ import { Fragment, useMemo, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table';
 import { PlayerAvatar, PosBadge, StatusDot } from '../components/PosBadge';
-import { POSITION_MAP, statusBucket } from '../types/fpl';
+import { POSITION_MAP, fmtNum, statusBucket } from '../types/fpl';
 import type { Player } from '../types/fpl';
-import { currentGameweek, useBootstrap } from '../lib/bootstrap';
+import { useBootstrap } from '../lib/bootstrap';
 
-type SortKey = 'pts' | 'form' | 'price' | 'sel' | 'goals' | 'assists';
+/**
+ * `form` and `selected_by_percent` were columns here and were sortable. Both
+ * have no source in the database and arrive null, so parseFloat gave NaN and
+ * the sort left the table in arbitrary order while the header still showed an
+ * arrow. They are dropped rather than null-guarded: a stable order on a field
+ * with no values is still meaningless, and an always-empty column is noise.
+ * They come back with the live bootstrap sync. `ppm` replaces them with a real
+ * aggregate.
+ */
+type SortKey = 'pts' | 'ppm' | 'price' | 'goals' | 'assists';
 const POSITIONS = ['ALL', 'GKP', 'DEF', 'MID', 'FWD'] as const;
 
 const numForKey = (p: Player, k: SortKey): number => {
   switch (k) {
     case 'pts':
       return p.total_points;
-    case 'form':
-      return parseFloat(p.form);
+    case 'ppm':
+      return parseFloat(p.points_per_game);
     case 'price':
       return p.now_cost;
-    case 'sel':
-      return parseFloat(p.selected_by_percent);
     case 'goals':
       return p.goals_scored;
     case 'assists':
@@ -29,7 +36,6 @@ const numForKey = (p: Player, k: SortKey): number => {
 export default function Players({ onOpenDetail }: { onOpenDetail: (player: Player) => void }) {
   const b = useBootstrap();
   const teamMap = useMemo(() => Object.fromEntries(b.teams.map((t) => [t.id, t.short_name])), [b.teams]);
-  const cur = currentGameweek(b);
 
   const [search, setSearch] = useState('');
   const [pos, setPos] = useState<(typeof POSITIONS)[number]>('ALL');
@@ -39,9 +45,8 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
 
   const cols: { v: SortKey; l: string }[] = [
     { v: 'pts', l: 'Pts' },
-    { v: 'form', l: 'Form' },
+    { v: 'ppm', l: 'PPM' },
     { v: 'price', l: 'Price' },
-    { v: 'sel', l: 'Sel %' },
     { v: 'goals', l: 'G' },
     { v: 'assists', l: 'A' },
   ];
@@ -72,10 +77,8 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
     switch (v) {
       case 'price':
         return `£${(p.now_cost / 10).toFixed(1)}`;
-      case 'sel':
-        return `${p.selected_by_percent}%`;
-      case 'form':
-        return p.form;
+      case 'ppm':
+        return fmtNum(p.points_per_game, 1);
       case 'pts':
         return p.total_points;
       case 'goals':
@@ -193,10 +196,10 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
                             ['Minutes', p.minutes],
                             ['Bonus', p.bonus],
                             ['BPS', p.bps],
-                            ['xG', parseFloat(p.expected_goals).toFixed(2)],
-                            ['xA', parseFloat(p.expected_assists).toFixed(2)],
-                            ['ICT', parseFloat(p.ict_index).toFixed(1)],
-                            [`GW${cur?.id ?? '?'} News`, p.news || '—'],
+                            ['xG', fmtNum(p.expected_goals, 2)],
+                            ['xA', fmtNum(p.expected_assists, 2)],
+                            ['ICT', fmtNum(p.ict_index, 1)],
+                            ['News', p.news || '—'],
                           ].map(([label, value]) => (
                             <div key={String(label)}>
                               <div className="text-[9.5px] text-muted-foreground uppercase tracking-[.07em] mb-1">

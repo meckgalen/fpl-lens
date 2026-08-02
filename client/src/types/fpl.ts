@@ -110,11 +110,46 @@ export const STATUS_MAP: Record<string, { label: string; color: string }> = {
   u: { label: 'Unavailable', color: '#95a5a6' },
 };
 
-// Maps FPL status codes to a 3-bucket health used by UI dots.
-export function statusBucket(code: string): 'fit' | 'doubt' | 'out' {
+/**
+ * Availability is a live-game fact. It is null over a completed season, which
+ * is not the same as being unavailable — nobody asked the question.
+ */
+export const UNKNOWN_STATUS = { label: 'Unknown', color: '#95a5a6' };
+
+export function statusOf(code: string | null | undefined) {
+  if (!code) return UNKNOWN_STATUS;
+  return STATUS_MAP[code] ?? UNKNOWN_STATUS;
+}
+
+// Maps FPL status codes to the health buckets the UI dots use.
+export function statusBucket(code: string | null | undefined): 'fit' | 'doubt' | 'out' | 'unknown' {
+  if (!code) return 'unknown';
   if (code === 'a') return 'fit';
   if (code === 'd') return 'doubt';
   return 'out';
+}
+
+/**
+ * Rendered where a value genuinely has no source — never where it is zero.
+ * Zero means "measured, and it was none"; this means "not measured at all".
+ * See CLAUDE.md rule 6 and API identity rule 4.
+ */
+export const NO_VALUE = '—';
+
+/**
+ * Format a numeric that may be absent. Returns the placeholder rather than
+ * 'NaN', which is what `parseFloat(null).toFixed(2)` produces.
+ */
+export function fmtNum(value: string | number | null | undefined, digits: number): string {
+  if (value === null || value === undefined || value === '') return NO_VALUE;
+  const n = typeof value === 'number' ? value : parseFloat(value);
+  return Number.isFinite(n) ? n.toFixed(digits) : NO_VALUE;
+}
+
+/** Same, for a value rendered as-is with a suffix (ownership, form). */
+export function fmtOr(value: string | number | null | undefined, suffix = ''): string {
+  if (value === null || value === undefined || value === '') return NO_VALUE;
+  return `${value}${suffix}`;
 }
 
 export interface Fixture {

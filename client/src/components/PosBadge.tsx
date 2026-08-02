@@ -17,13 +17,16 @@ export function PosBadge({ pos }: { pos: string }) {
   );
 }
 
-export function StatusDot({ status }: { status: 'fit' | 'doubt' | 'out' | string }) {
+export function StatusDot({ status }: { status: 'fit' | 'doubt' | 'out' | 'unknown' | string }) {
   const colors: Record<string, string> = {
     fit: 'bg-green-500',
     doubt: 'bg-yellow-500',
     out: 'bg-red-500',
+    unknown: 'bg-border',
   };
-  return <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${colors[status] || colors.fit}`} />;
+  // Falls back to unknown, not to fit: an unrecognised code is a question mark,
+  // and claiming a player is fit is the more expensive way to be wrong.
+  return <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${colors[status] || colors.unknown}`} />;
 }
 
 export function FDRBadge({ value }: { value: number }) {

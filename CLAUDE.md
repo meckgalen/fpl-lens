@@ -8,25 +8,22 @@ with filters.
 
 ## Current State
 
-MVP scaffold is complete and still reads directly from the live FPL API. **Active work
-is Phase 0: replacing that with a Postgres data layer backfilled from historical CSVs.**
-
-Phase 0 steps 1 through 5 are done. The raw CSVs for all ten seasons are in
-`data/raw/` and profiled in `docs/data-profile.md`. Postgres 16 runs in
-docker-compose and the schema exists, created by
-`server/migrations/1785550165663_initial-schema.ts`.
+**Phase 0 steps 1 through 6 are done: the app reads from Postgres, not the live
+FPL API.** The raw CSVs for all ten seasons are in `data/raw/` and profiled in
+`docs/data-profile.md`. Postgres 16 runs in docker-compose and the schema
+exists, created by `server/migrations/1785550165663_initial-schema.ts`.
 
 **All six tables are populated.** Three ingest scripts do it. All three are
 idempotent, run in one transaction, and assert their own results:
 
-| Table              | Rows                    | Populated by                |
-| ------------------ | ----------------------- | --------------------------- |
-| `teams`            | 34                      | `npm run ingest:dimensions` |
-| `team_seasons`     | 200 (20 per season)     | `npm run ingest:dimensions` |
-| `players`          | 2623                    | `npm run ingest:dimensions` |
-| `player_seasons`   | 7338                    | `npm run ingest:dimensions` |
-| `fixtures`         | 3800 (380 per season)   | `npm run ingest:fixtures`   |
-| `player_gameweeks` | 253509                  | `npm run ingest:gameweeks`  |
+| Table              | Rows                  | Populated by                |
+| ------------------ | --------------------- | --------------------------- |
+| `teams`            | 34                    | `npm run ingest:dimensions` |
+| `team_seasons`     | 200 (20 per season)   | `npm run ingest:dimensions` |
+| `players`          | 2623                  | `npm run ingest:dimensions` |
+| `player_seasons`   | 7338                  | `npm run ingest:dimensions` |
+| `fixtures`         | 3800 (380 per season) | `npm run ingest:fixtures`   |
+| `player_gameweeks` | 253509                | `npm run ingest:gameweeks`  |
 
 The scripts must be run in that order. Each asserts its predecessors' row counts
 before it starts and fails with a message naming the one to run first:
@@ -198,7 +195,6 @@ is silently wrong.
 
     **Assign home and away from `was_home` plus `opponent_team`, never from
     `players_raw.team`:**
-
     - `was_home = true` → the player is the home side, so `opponent_team` is **away**
     - `was_home = false` → the player is the away side, so `opponent_team` is **home**
 
@@ -230,6 +226,7 @@ is silently wrong.
     **derived** for 2016-17 and 2017-18, where no such field exists: set it `true`,
     both seasons being complete. Ignore the `stats` column in `fixtures.csv`; the
     bonus and BPS detail it carries is already in `merged_gw`.
+
 15. **Team identity for 2016-17 through 2018-19 comes from
     `players_raw.team_code`, not `teams.csv`, which is absent for those seasons.**
     Team names are only available from `teams.csv`, so clubs relegated before
@@ -317,40 +314,54 @@ one. `npm run migrate:down` reverts the last migration.
 
 ## What's Built
 
-- [x] Backend FPL API proxy with in-memory caching
-- [x] Player search with autocomplete
-- [x] Player header card (name, team, position, price, form, xG, xA, ICT)
+- [x] Postgres-backed read API through `server/src/repositories/`
+- [x] Player list with search, position filter and sortable columns
+- [x] Player header card (name, team, position, price, xG, xA, ICT)
 - [x] Gameweek-by-gameweek stats table (sortable, all columns)
 - [x] Filters: gameweek range, home/away
 - [x] Averages row in stats table
+- [x] Dashboard, ranked on real aggregates: total points, points per match with
+      an appearance floor, ICT index
+- [x] Fixtures page with difficulty ratings, by gameweek
+
+The live FPL API proxy in `services/fplApi.ts` still exists with its 5-minute
+cache, but no route calls it: it is the ingestion source for the live season.
+`components/PlayerSearch.tsx` is an orphan from the original scaffold — the
+Players page has its own inline search and nothing imports it.
 
 ## Known Issues
 
-- **The client still sends an FPL element id to `/api/player/:code`, which now
-  expects `players.fpl_code`.** Player detail is broken until step 7 changes it.
-  The fix is small: bootstrap already returns the code as `players[].id`, so the
-  client only has to keep round-tripping the id it was given.
-- The five live-only bootstrap fields are `null` now, so the header card renders
-  an empty Form, `null%` Ownership and the "Unavailable" status colour until the
-  bootstrap sync lands. Not a bug in the cutover; see API identity rule 4.
-- `PlayerHeader` does `parseFloat(player.expected_goals).toFixed(2)`, which
-  renders `NaN` when xG is legitimately NULL. Invisible today because the default
-  season is 2025-26; visible the moment `?season=` reaches a pre-2022-23 season.
-- Gameweek range filter defaults to "from 1 to 1", so it shows a single gameweek even
-  when data exists. The `events[]` array now reports 38 finished gameweeks rather
-  than 0, so the bound it reads is at least correct.
-- `history_past` is fetched from `element-summary` and then discarded. It is never
-  rendered. Superseded by Phase 0, which provides full per-gameweek history for
-  those seasons.
-- Empty state reads "No data for the selected filters", which is misleading when
-  the cause is an empty history array, not the filters.
+Every entry here is traced to the code before it is trusted. An issue that has
+quietly been fixed is worse than no issue list, because the next session plans
+around it.
+
+- The five live-only fields (`form`, `selected_by_percent`, `status`, `news`,
+  `chance_of_playing_next_round`) are `null` and stay null until a live
+  bootstrap sync exists. The UI renders `—` for them. `form` and
+  `selected_by_percent` were sortable columns on the Players page and are gone
+  rather than shown empty; they come back with the sync. See API identity
+  rule 4.
 - `client/src/types/fpl.ts` mirrors the FPL wire format directly. Numerics arrive as
   strings (`expected_goals: string`, `form: string`) and every consumer parses them ad
   hoc. There is no `code`, `team_code` or `birth_date` on `Player`, no `code` on
   `Team`, and `GameweekHistory` has no `element`, `fixture`, `kickoff_time` or
   `season`, so a row cannot be uniquely keyed.
-- The dark theme below is the original spec, but the current UI renders light/cream.
-  Reconcile before any styling work.
+- `maxGw` in `PlayerDetail.tsx` is the *count* of finished events used as a
+  maximum round number. It happens to be right for a 38-round season and is
+  wrong for 2019-20, which runs to round 47. It also freezes into `useState`'s
+  initial value, so it would not follow a season change.
+- Empty state reads "No data for the selected filters", which is misleading when
+  the cause is an empty history array, not the filters.
+- `StatsTable` keys its rows on `gw.round`, which collides on a double gameweek
+  — two rows in one round is the whole point of rule 13. Its averages row sums
+  NULLs as zero and divides by rounds rather than matches played.
+- `client/src/components/PlayerSearch.tsx` is dead: nothing imports it. The
+  Players page has its own inline search.
+- The UI has a working light/dark toggle, but neither theme is the one in Design
+  Decisions: light is cream (`36 22% 95%`), dark is a warm near-black
+  (`30 5% 10%`), and the accent is indigo (`228 36% 42%`) rather than
+  `#0f0f23`/`#00ff87`. Reconcile the spec with the build before any styling work
+  — the decision of which one wins is still open.
 
 ## Current Work: Phase 0, Persistence and Backfill
 
@@ -378,7 +389,7 @@ One session per step. Commit between each.
       postponed-fixture duplicates in 2019-20, 10 byte-identical duplicates in
       2025-26. Nothing else is dropped — an unresolved id throws.
 - [x] **6. Repository and cutover.** `server/src/repositories/{seasons,teams,
-      players,fixtures}.ts` hold every query; the three routes read Postgres
+    players,fixtures}.ts` hold every query; the three routes read Postgres
       through them. Response shapes are unchanged bar the identity changes in
       "API Identity Rules" and the five null live-only fields. Verified with a
       field-by-field diff against responses captured from the live API before
@@ -450,18 +461,38 @@ to 0.52% below.
 
 ## Deferred
 
-Not in scope until Phase 0 is complete. Do not start these.
+The gate used to be "not until Phase 0 is complete". Phase 0 is complete, so
+that sentence would now read as permission to start all of this, which is the
+opposite of the intent.
+
+What gates the list now: **each item is picked deliberately, as the subject of a
+session, and never drifted into as a side effect of another task.** Nothing here
+is a prerequisite for anything already built, so touching one while working on
+something else is scope creep rather than progress. Two of them have a real
+ordering constraint, marked below.
+
+Also still open, from Known Issues rather than from this list: a live bootstrap
+sync, which is what fills the five null fields and makes `form` and ownership
+real again.
 
 - **Data view improvements:** fixture difficulty colouring, totals row, per-90 toggle,
   rolling form, multi-player comparison, styling polish.
 - **Expected points prediction:** transparent weighted formula, not black-box ML,
   because explainability matters for FPL managers. Requires a backtest harness fitted
   on earlier seasons and evaluated on a held-out one, benchmarked against a trailing
-  five-gameweek average and against FPL's own `ep_next`. Unreachable without the
-  historical data Phase 0 provides.
+  five-gameweek average and against FPL's own `ep_next`. The historical data it
+  needs now exists. **Blocked on nothing; blocks the captaincy model.**
+- **A real captaincy model.** The Dashboard ranks by points per match with an
+  appearance floor, which is honest but is not a captain pick. A real one needs
+  fixture difficulty, minutes risk, form and ownership. **Blocked on the
+  expected points work above** — without it there is no per-fixture projection
+  to captain on, and the live sync, for form and ownership.
 - **LLM scouting reports.**
 - **Deploy on karpuz-prod** alongside TechRelative (Docker Compose, Nginx), responsive
   design, README with screenshots.
+- **A season selector in the UI.** The API already accepts `?season=` and
+  returns any of the ten; nothing sends it, so the app only ever shows the
+  latest. Phase 1.
 
 ## Design Decisions
 

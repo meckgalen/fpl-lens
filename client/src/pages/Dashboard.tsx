@@ -4,8 +4,26 @@ import { Badge } from '../components/ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table';
 import { PlayerAvatar, PosBadge } from '../components/PosBadge';
 import { Countdown } from '../components/Countdown';
-import { POSITION_MAP } from '../types/fpl';
+import { POSITION_MAP, fmtNum } from '../types/fpl';
 import { currentGameweek, nextGameweek, useBootstrap } from '../lib/bootstrap';
+
+/**
+ * Minimum appearances before a per-match average is worth ranking on.
+ *
+ * Picked from the appearance distribution, not by feel. In 2025-26, of 841
+ * players 304 never appeared, 76 made 1-4 appearances and 47 made 5-9. Sorting
+ * by raw points-per-game with no floor puts a one-appearance substitute on 7.0
+ * above Haaland's 6.8 from 35 matches. Checking the top five at successive
+ * floors, the small-sample noise is gone by 5 and the list is then identical at
+ * 5, 8, 10 and 12 — so anything in that band costs nothing, and a higher floor
+ * buys sample size for free.
+ *
+ * 10 is a quarter of a 38-game season and leaves a near-constant eligible pool
+ * across very different seasons: 393 of the 524 who played in 2016-17, 393 of
+ * 515 in 2019-20, 414 of 537 in 2025-26. The UI label states the number, so the
+ * ranking is honest about who it leaves out.
+ */
+const MIN_APPEARANCES = 10;
 
 export default function Dashboard() {
   const b = useBootstrap();
@@ -15,24 +33,44 @@ export default function Dashboard() {
   const next = nextGameweek(b);
   const deadline = next?.deadline_time ? new Date(next.deadline_time).getTime() : Date.now();
 
-  // Top performers by form (a reasonable stand-in for "GW{N} top scorers"
-  // since the bootstrap endpoint doesn't include per-GW points for every player).
-  const topGW = useMemo(
-    () =>
-      [...b.players]
-        .sort((a, c) => parseFloat(c.form) - parseFloat(a.form))
-        .slice(0, 6),
+  // Every ranking below used to sort on `form`, which the database has no
+  // source for and which now arrives null: parseFloat(null) is NaN, a NaN
+  // comparator leaves the array in whatever order it arrived, and the section
+  // went on calling itself a ranking. These three sort on real aggregates.
+  //
+  // form would be the wrong metric even if it were populated. FPL computes it
+  // over the last 30 days, and trailing form only means something when there is
+  // a next gameweek to predict. These seasons are over.
+  const topPoints = useMemo(
+    () => [...b.players].sort((a, c) => c.total_points - a.total_points).slice(0, 6),
     [b.players]
   );
 
-  // Captain suggestions and xP leaders both use form as proxy expected-points
-  // until the prediction model lands.
-  const captains = useMemo(
-    () => [...b.players].sort((a, c) => parseFloat(c.form) - parseFloat(a.form)).slice(0, 3),
+  // Appearances are not in the payload. points_per_game is total points over
+  // matches played, so points / ppg recovers the count — approximately, because
+  // ppg is rounded to one decimal, and not at all for a player who appeared but
+  // scored nothing (ppg 0.0, so they read as 0 appearances).
+  //
+  // Both errors are harmless for a floor: they are at most an appearance either
+  // way, and a player near zero points is nowhere near the top of a
+  // points-per-match ranking. The aggregate should return the count outright so
+  // this can go — see the types split.
+  const appearances = (p: { total_points: number; points_per_game: string }) => {
+    const ppg = parseFloat(p.points_per_game);
+    return ppg > 0 ? Math.round(p.total_points / ppg) : 0;
+  };
+
+  const bestPerMatch = useMemo(
+    () =>
+      b.players
+        .filter((p) => appearances(p) >= MIN_APPEARANCES)
+        .sort((a, c) => parseFloat(c.points_per_game) - parseFloat(a.points_per_game))
+        .slice(0, 3),
     [b.players]
   );
-  const xpTop = useMemo(
-    () => [...b.players].sort((a, c) => parseFloat(c.form) - parseFloat(a.form)).slice(0, 7),
+
+  const ictTop = useMemo(
+    () => [...b.players].sort((a, c) => parseFloat(c.ict_index) - parseFloat(a.ict_index)).slice(0, 7),
     [b.players]
   );
 
@@ -87,8 +125,8 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 gap-3.5 mb-3.5">
         <Card>
           <CardHeader>
-            <CardTitle>Top Performers (Form)</CardTitle>
-            <Badge variant="secondary">Gameweek {cur?.id ?? '?'}</Badge>
+            <CardTitle>Top Performers · Total points</CardTitle>
+            <Badge variant="secondary">Season</Badge>
           </CardHeader>
           <Table>
             <TableHeader>
@@ -97,11 +135,11 @@ export default function Dashboard() {
                 <TableHead className="w-10"> </TableHead>
                 <TableHead>Player</TableHead>
                 <TableHead>Pos</TableHead>
-                <TableHead className="text-right pr-4">Form</TableHead>
+                <TableHead className="text-right pr-4">Pts</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {topGW.map((p, i) => (
+              {topPoints.map((p, i) => (
                 <TableRow key={p.id}>
                   <TableCell className="font-display font-semibold text-border pl-4">{i + 1}</TableCell>
                   <TableCell className="p-1.5 pl-3">
@@ -117,7 +155,7 @@ export default function Dashboard() {
                     <PosBadge pos={POSITION_MAP[p.element_type]} />
                   </TableCell>
                   <TableCell className="text-right font-display font-bold text-[15px] text-foreground pr-4">
-                    {p.form}
+                    {p.total_points}
                   </TableCell>
                 </TableRow>
               ))}
@@ -127,14 +165,17 @@ export default function Dashboard() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Captain Suggestions</CardTitle>
-            <Badge variant="primary-tint">GW{next?.id ?? '?'}</Badge>
+            {/* Not "Captain Suggestions": a captain pick needs fixture difficulty,
+                minutes risk, form and ownership, none of which exists here.
+                Points per match is a real number, so that is what it says. */}
+            <CardTitle>Best points per match</CardTitle>
+            <Badge variant="primary-tint">min {MIN_APPEARANCES} apps</Badge>
           </CardHeader>
           <CardContent className="pt-3 pb-2">
-            {captains.map((p, i) => (
+            {bestPerMatch.map((p, i) => (
               <div
                 key={p.id}
-                className={`flex items-center gap-3 py-3 ${i < captains.length - 1 ? 'border-b border-border' : ''}`}
+                className={`flex items-center gap-3 py-3 ${i < bestPerMatch.length - 1 ? 'border-b border-border' : ''}`}
               >
                 <span className="font-display font-bold text-[11px] text-border w-4 text-center">#{i + 1}</span>
                 <div className="w-9 h-9 rounded-lg bg-muted flex items-end justify-center overflow-hidden flex-shrink-0">
@@ -151,8 +192,10 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <div className="font-display font-bold text-xl text-foreground tabular-nums">{p.form}</div>
-                  <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Form</div>
+                  <div className="font-display font-bold text-xl text-foreground tabular-nums">
+                    {fmtNum(p.points_per_game, 1)}
+                  </div>
+                  <div className="text-[9px] text-muted-foreground uppercase tracking-wider">PPM</div>
                 </div>
               </div>
             ))}
@@ -162,14 +205,19 @@ export default function Dashboard() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Expected Points Leaders</CardTitle>
-          <Badge variant="primary-tint">GW{next?.id ?? '?'}</Badge>
+          {/* Was "Expected Points Leaders", ranked on form as a stand-in for a
+              prediction model. No such model exists — it is deferred work — and a
+              heading that implies one is how a future session concludes it was
+              already started. ICT is FPL's own composite and is non-null in all
+              ten seasons. */}
+          <CardTitle>ICT Index Leaders</CardTitle>
+          <Badge variant="primary-tint">Season</Badge>
         </CardHeader>
         <CardContent className="pt-3 pb-2">
-          {xpTop.map((p, i) => (
+          {ictTop.map((p, i) => (
             <div
               key={p.id}
-              className={`flex items-center gap-3 py-2.5 ${i < xpTop.length - 1 ? 'border-b border-border' : ''}`}
+              className={`flex items-center gap-3 py-2.5 ${i < ictTop.length - 1 ? 'border-b border-border' : ''}`}
             >
               <span className="font-display font-bold text-[11px] text-border w-4 text-center shrink-0">{i + 1}</span>
               <div className="w-8 h-8 rounded-lg bg-muted flex items-end justify-center overflow-hidden flex-shrink-0">
@@ -185,8 +233,10 @@ export default function Dashboard() {
                 </div>
               </div>
               <div className="text-right flex-shrink-0">
-                <div className="font-display font-bold text-[15px] text-foreground tabular-nums">{p.form}</div>
-                <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Form</div>
+                <div className="font-display font-bold text-[15px] text-foreground tabular-nums">
+                  {fmtNum(p.ict_index, 1)}
+                </div>
+                <div className="text-[9px] text-muted-foreground uppercase tracking-wider">ICT</div>
               </div>
             </div>
           ))}

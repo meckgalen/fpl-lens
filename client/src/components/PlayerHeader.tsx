@@ -1,5 +1,5 @@
 import type { Player, Team } from '../types/fpl';
-import { POSITION_MAP, STATUS_MAP } from '../types/fpl';
+import { POSITION_MAP, fmtNum, fmtOr, statusOf } from '../types/fpl';
 import { Card, CardContent } from './ui/Card';
 import { PosBadge } from './PosBadge';
 
@@ -9,20 +9,23 @@ interface Props {
 }
 
 export default function PlayerHeader({ player, team }: Props) {
-  const status = STATUS_MAP[player.status] || STATUS_MAP['u'];
+  const status = statusOf(player.status);
 
+  // Form and Ownership have no source in the database and arrive null; xG and
+  // xA are null for every season before 2022-23. All four render the "no value"
+  // placeholder rather than an empty tile, 'null%' or 'NaN'.
   const stats: { label: string; value: string | number }[] = [
     { label: 'Total Pts', value: player.total_points },
-    { label: 'PPG', value: player.points_per_game },
-    { label: 'Form', value: player.form },
+    { label: 'PPG', value: fmtOr(player.points_per_game) },
+    { label: 'Form', value: fmtOr(player.form) },
     { label: 'Price', value: `£${(player.now_cost / 10).toFixed(1)}` },
-    { label: 'Ownership', value: `${player.selected_by_percent}%` },
+    { label: 'Ownership', value: fmtOr(player.selected_by_percent, '%') },
     { label: 'Minutes', value: player.minutes },
     { label: 'Goals', value: player.goals_scored },
     { label: 'Assists', value: player.assists },
-    { label: 'xG', value: parseFloat(player.expected_goals).toFixed(2) },
-    { label: 'xA', value: parseFloat(player.expected_assists).toFixed(2) },
-    { label: 'ICT', value: parseFloat(player.ict_index).toFixed(1) },
+    { label: 'xG', value: fmtNum(player.expected_goals, 2) },
+    { label: 'xA', value: fmtNum(player.expected_assists, 2) },
+    { label: 'ICT', value: fmtNum(player.ict_index, 1) },
     { label: 'Bonus', value: player.bonus },
   ];
 
