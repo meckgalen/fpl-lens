@@ -1,6 +1,11 @@
 interface Props {
   gwRange: [number, number];
-  maxGw: number;
+  /**
+   * The round numbers that exist this season, in order — not a count and not a
+   * maximum. 2019-20 runs 1-29 then 39-47 and 2022-23 skips round 7, so a range
+   * built from a length is wrong in both.
+   */
+  rounds: number[];
   homeAway: 'all' | 'home' | 'away';
   onGwRangeChange: (range: [number, number]) => void;
   onHomeAwayChange: (value: 'all' | 'home' | 'away') => void;
@@ -9,8 +14,8 @@ interface Props {
 const selectClass =
   'h-8 px-2 rounded-md border border-input bg-card text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
-export default function GameweekFilters({ gwRange, maxGw, homeAway, onGwRangeChange, onHomeAwayChange }: Props) {
-  const gwOptions = Array.from({ length: maxGw }, (_, i) => i + 1);
+export default function GameweekFilters({ gwRange, rounds, homeAway, onGwRangeChange, onHomeAwayChange }: Props) {
+  const gwOptions = rounds;
 
   return (
     <div className="flex flex-wrap items-center gap-4 mb-4">

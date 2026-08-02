@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import type { Player, Team } from '../types/fpl';
-import { POSITION_MAP } from '../types/fpl';
+import { POSITION_MAP, fmtPrice } from '../types/fpl';
 
 interface Props {
   players: Player[];
@@ -103,7 +103,7 @@ export default function PlayerSearch({ players, teams, onSelect }: Props) {
                 </span>
               </span>
               <span style={{ fontSize: 13, opacity: 0.7 }}>
-                {teamMap[p.team]} · {POSITION_MAP[p.element_type]} · £{(p.now_cost / 10).toFixed(1)}
+                {teamMap[p.team]} · {POSITION_MAP[p.element_type]} · {fmtPrice(p.now_cost)}
               </span>
             </li>
           ))}

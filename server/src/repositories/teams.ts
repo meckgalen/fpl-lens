@@ -10,24 +10,17 @@
  */
 
 import type { Queryable } from '../db/pool.js';
+import type { Team } from '../types/domain.js';
 
-export interface TeamRow {
-  /** teams.fpl_team_code — permanent across seasons. */
-  id: number;
-  name: string;
-  short_name: string;
-  /** NULL for 2016-17..2018-19: no teams.csv upstream, so no ratings (rule 15). */
-  strength_overall_home: number | null;
-  strength_overall_away: number | null;
-  strength_attack_home: number | null;
-  strength_attack_away: number | null;
-  strength_defence_home: number | null;
-  strength_defence_away: number | null;
-}
-
-/** The 20 clubs of one season, ordered by name as the FPL API orders them. */
-export async function listTeams(db: Queryable, season: string): Promise<TeamRow[]> {
-  const { rows } = await db.query<TeamRow>(
+/**
+ * The 20 clubs of one season, ordered by name as the FPL API orders them.
+ *
+ * No mapper: every column is text, integer or smallint, all of which the driver
+ * already returns in their final form. The strengths are smallint and nullable
+ * (rule 15), and nullable is what they stay.
+ */
+export async function listTeams(db: Queryable, season: string): Promise<Team[]> {
+  const { rows } = await db.query<Team>(
     `SELECT t.fpl_team_code AS id,
             t.name,
             t.short_name,

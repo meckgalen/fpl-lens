@@ -1,26 +1,22 @@
 /**
  * The read API. Phase 0 step 6 moved all three routes off the live FPL API and
- * onto Postgres.
+ * onto Postgres; step 7 typed the boundary.
  *
- * The response shapes are unchanged from the live-API era, deliberately, so the
- * client keeps working untouched — with two intentional exceptions, both about
- * identity:
+ * This file maps domain objects (../types/domain.ts) to response bodies
+ * (../types/api.ts). The mapping is small on purpose — it adds the season and
+ * the fields that exist in the shape but have no source in the data, and
+ * nothing else. Everything that required a decision about meaning happened in
+ * the repository.
+ *
+ * Three things about the shape, all in "API Identity Rules":
  *
  *   1. Ids in responses are permanent codes, never season-scoped FPL ids.
  *      `players[].id` is `players.fpl_code`, and every team id — `teams[].id`,
  *      `players[].team`, `history[].opponent_team` — is `teams.fpl_team_code`.
  *      FPL reassigns its element and team ids every August, so a URL or a
- *      cached id built on one silently comes to mean somebody else. The
- *      season-scoped ids stay in the ingest layer, where `player_seasons` and
- *      `team_seasons` translate them.
- *
- *   2. Seven fields have no source in the database. `photo` and
- *      `points_per_game` are derivable and are derived; the other five return
- *      null. See the comment on the bootstrap handler.
- *
- * The database holds ten seasons where the FPL shape assumes one, so both
- * player-facing routes take an optional ?season= and otherwise use the latest
- * season present. The client does not send it yet.
+ *      cached id built on one silently comes to mean somebody else.
+ *   2. Every response names its season (rule 7).
+ *   3. Fields with no source are null, never invented (rule 4).
  *
  * No SQL lives in this file. It all lives in ../repositories.
  *
@@ -39,6 +35,12 @@ import {
   playerExists,
 } from '../repositories/players.js';
 import { listEvents, listFixtures } from '../repositories/fixtures.js';
+import type {
+  BootstrapResponse,
+  ErrorResponse,
+  FixturesResponse,
+  PlayerDetailResponse,
+} from '../types/api.js';
 
 const router = Router();
 
@@ -51,6 +53,9 @@ const SEASON_FORMAT = /^\d{4}-\d{2}$/;
  * An unknown season is a 400 rather than a silent fall back to the default:
  * quietly serving 2025-26 to someone who asked for 2019-20 is worse than
  * saying no, because the response looks perfectly valid.
+ *
+ * The season it returns is the one every response then reports, so a client
+ * that sends nothing is still told which season it got.
  */
 async function resolveSeason(req: Request, res: Response): Promise<string | null> {
   const requested = req.query.season;
@@ -58,10 +63,11 @@ async function resolveSeason(req: Request, res: Response): Promise<string | null
 
   const season = String(requested);
   if (!SEASON_FORMAT.test(season) || !(await seasonExists(pool, season))) {
-    res.status(400).json({
+    const body: ErrorResponse = {
       error: `Unknown season '${season}'`,
       available: await listSeasons(pool),
-    });
+    };
+    res.status(400).json(body);
     return null;
   }
   return season;
@@ -86,17 +92,16 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
       { id: 4, name: 'Forward' },
     ];
 
-    // Deliberately no `season` key, tempting as it is: the brief is that the
-    // shape does not move except for the two identity changes, and an added
-    // key is still a moved shape. It belongs in the step 7 types split.
-    res.json({
+    const body: BootstrapResponse = {
+      season,
       players: players.map((p) => ({
         ...p,
-        // Live-only fields, kept present so the response shape does not move.
-        // They describe the state of the game right now — who is injured, what
-        // the market thinks — which is not something a historical season has.
-        // They will be filled by the bootstrap sync that ingests the live
-        // season; until then, null rather than an invented value.
+        // Live-only fields. They describe the state of the game right now —
+        // who is injured, what the market thinks — which is not something a
+        // completed season has. They will be filled by the bootstrap sync that
+        // ingests the live season; until then, null rather than an invented
+        // value, and present rather than omitted so the shape does not move
+        // when they become real.
         form: null,
         selected_by_percent: null,
         status: null,
@@ -104,12 +109,21 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
         chance_of_playing_next_round: null,
       })),
       teams,
-      events,
+      events: events.map((e) => ({
+        ...e,
+        // ~90 minutes before the round's first kick-off, recorded nowhere.
+        deadline_time: null,
+        // A finished season has no current round, and nominating the last one
+        // would be a guess dressed as data (API identity rule 6).
+        is_current: false,
+        is_next: false,
+      })),
       positions,
-    });
+    };
+    res.json(body);
   } catch (err) {
     console.error('Bootstrap query failed:', err);
-    res.status(500).json({ error: 'Failed to load FPL data' });
+    res.status(500).json({ error: 'Failed to load FPL data' } satisfies ErrorResponse);
   }
 });
 
@@ -126,7 +140,7 @@ router.get('/player/:code', async (req: Request, res: Response) => {
   try {
     const fplCode = Number(req.params.code);
     if (!Number.isInteger(fplCode)) {
-      res.status(400).json({ error: 'Invalid player code' });
+      res.status(400).json({ error: 'Invalid player code' } satisfies ErrorResponse);
       return;
     }
 
@@ -134,7 +148,7 @@ router.get('/player/:code', async (req: Request, res: Response) => {
     if (season === null) return;
 
     if (!(await playerExists(pool, fplCode))) {
-      res.status(404).json({ error: `No player with code ${fplCode}` });
+      res.status(404).json({ error: `No player with code ${fplCode}` } satisfies ErrorResponse);
       return;
     }
 
@@ -145,10 +159,11 @@ router.get('/player/:code', async (req: Request, res: Response) => {
       getPlayerUpcomingFixtures(pool, fplCode, season),
     ]);
 
-    res.json({ history, fixtures });
+    const body: PlayerDetailResponse = { season, history, fixtures };
+    res.json(body);
   } catch (err) {
     console.error('Player query failed:', err);
-    res.status(500).json({ error: 'Failed to load player data' });
+    res.status(500).json({ error: 'Failed to load player data' } satisfies ErrorResponse);
   }
 });
 
@@ -163,16 +178,23 @@ router.get('/fixtures', async (req: Request, res: Response) => {
     if (raw !== undefined) {
       event = Number(raw);
       if (!Number.isInteger(event)) {
-        res.status(400).json({ error: 'Invalid event' });
+        res.status(400).json({ error: 'Invalid event' } satisfies ErrorResponse);
         return;
       }
     }
 
     const fixtures = await listFixtures(pool, season, event);
-    res.json({ fixtures });
+
+    const body: FixturesResponse = {
+      season,
+      // FPL's own permanent fixture code, which was never ingested. Null, not
+      // absent: the key is part of the shape (API identity rule 4).
+      fixtures: fixtures.map((f) => ({ ...f, code: null })),
+    };
+    res.json(body);
   } catch (err) {
     console.error('Fixtures query failed:', err);
-    res.status(500).json({ error: 'Failed to load fixtures' });
+    res.status(500).json({ error: 'Failed to load fixtures' } satisfies ErrorResponse);
   }
 });
 

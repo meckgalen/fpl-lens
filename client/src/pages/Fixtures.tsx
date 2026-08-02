@@ -20,6 +20,7 @@ export default function Fixtures() {
 
   const [tab, setTab] = useState<'upcoming' | 'results'>('upcoming');
   const [fixtures, setFixtures] = useState<Fixture[] | null>(null);
+  const [season, setSeason] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const targetGw = tab === 'upcoming' ? next?.id : cur?.id;
@@ -29,7 +30,12 @@ export default function Fixtures() {
     setFixtures(null);
     setError(null);
     fetchFixtures(targetGw)
-      .then((d) => setFixtures(d.fixtures))
+      .then((d) => {
+        setFixtures(d.fixtures);
+        // Labelled from this response rather than from bootstrap, so the
+        // heading describes the rows actually on screen.
+        setSeason(d.season);
+      })
       .catch((err) => setError(err.message));
   }, [targetGw]);
 
@@ -45,7 +51,9 @@ export default function Fixtures() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="font-display text-xl font-semibold text-foreground">Fixtures</h1>
+        <h1 className="font-display text-xl font-semibold text-foreground">
+          Fixtures · {season ?? b.season}
+        </h1>
         <p className="text-sm text-muted-foreground mt-1">
           {tab === 'upcoming'
             ? `Gameweek ${next?.id ?? '?'} — difficulty ratings shown per team`

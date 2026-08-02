@@ -38,6 +38,7 @@ import { parse } from 'csv-parse/sync';
 import type { PoolClient } from 'pg';
 import { from as copyFrom } from 'pg-copy-streams';
 import { pool, closePool } from '../db/pool.js';
+import type { CsvRow } from '../types/wire.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 // server/src/ingest -> server/src -> server -> repo root
@@ -254,8 +255,12 @@ const EXCLUDED_CSV_COLUMNS = new Set([
 // ---------------------------------------------------------------- parsing
 // Same conventions as ingest-dimensions.ts and ingest-fixtures.ts.
 
-/** A parsed CSV row. Every absent value is null, never '' and never 'None'. */
-type Row = Record<string, string | null>;
+/**
+ * A parsed CSV row: every absent value is null, never '' and never 'None'
+ * (rule 18). Shared with the other two ingests — the normalisation contract
+ * is identical for all three files, so the type recording it should be too.
+ */
+type Row = CsvRow;
 
 /**
  * Rule 18: exactly the empty string and the literal 'None' become null.

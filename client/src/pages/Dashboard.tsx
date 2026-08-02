@@ -4,7 +4,7 @@ import { Badge } from '../components/ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table';
 import { PlayerAvatar, PosBadge } from '../components/PosBadge';
 import { Countdown } from '../components/Countdown';
-import { NO_DEADLINE, POSITION_MAP, fmtNum } from '../types/fpl';
+import { NO_DEADLINE, POSITION_MAP, fmtNum, fmtPrice } from '../types/fpl';
 import { currentGameweek, nextGameweek, useBootstrap } from '../lib/bootstrap';
 
 /**
@@ -46,31 +46,20 @@ export default function Dashboard() {
     [b.players]
   );
 
-  // Appearances are not in the payload. points_per_game is total points over
-  // matches played, so points / ppg recovers the count — approximately, because
-  // ppg is rounded to one decimal, and not at all for a player who appeared but
-  // scored nothing (ppg 0.0, so they read as 0 appearances).
-  //
-  // Both errors are harmless for a floor: they are at most an appearance either
-  // way, and a player near zero points is nowhere near the top of a
-  // points-per-match ranking. The aggregate should return the count outright so
-  // this can go — see the types split.
-  const appearances = (p: { total_points: number; points_per_game: string }) => {
-    const ppg = parseFloat(p.points_per_game);
-    return ppg > 0 ? Math.round(p.total_points / ppg) : 0;
-  };
-
+  // `appearances` now comes from the aggregate. It used to be recovered here as
+  // total_points / points_per_game, which is off by an appearance either way on
+  // the rounding and reads 0 for anyone who appeared and scored nothing.
   const bestPerMatch = useMemo(
     () =>
       b.players
-        .filter((p) => appearances(p) >= MIN_APPEARANCES)
-        .sort((a, c) => parseFloat(c.points_per_game) - parseFloat(a.points_per_game))
+        .filter((p) => p.appearances >= MIN_APPEARANCES)
+        .sort((a, c) => c.points_per_game - a.points_per_game)
         .slice(0, 3),
     [b.players]
   );
 
   const ictTop = useMemo(
-    () => [...b.players].sort((a, c) => parseFloat(c.ict_index) - parseFloat(a.ict_index)).slice(0, 7),
+    () => [...b.players].sort((a, c) => c.ict_index - a.ict_index).slice(0, 7),
     [b.players]
   );
 
@@ -90,7 +79,10 @@ export default function Dashboard() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="font-display text-xl font-semibold text-foreground">Dashboard</h1>
+        {/* The season is named here, and on every other page header, because
+            the database holds ten of them and a payload from the wrong one
+            looks exactly like the right one. */}
+        <h1 className="font-display text-xl font-semibold text-foreground">Dashboard · {b.season}</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Gameweek {cur?.id ?? '–'} · Next deadline{' '}
           <span className="font-medium text-foreground">{deadlineLabel}</span>
@@ -188,7 +180,7 @@ export default function Dashboard() {
                       {teamMap[p.team]}
                     </Badge>
                     <PosBadge pos={POSITION_MAP[p.element_type]} />
-                    <span className="text-[10px] text-muted-foreground">£{(p.now_cost / 10).toFixed(1)}m</span>
+                    <span className="text-[10px] text-muted-foreground">{fmtPrice(p.now_cost)}m</span>
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0">
@@ -228,7 +220,7 @@ export default function Dashboard() {
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <PosBadge pos={POSITION_MAP[p.element_type]} />
                   <span className="text-[10px] text-muted-foreground">
-                    {teamMap[p.team]} · £{(p.now_cost / 10).toFixed(1)}m
+                    {teamMap[p.team]} · {fmtPrice(p.now_cost)}m
                   </span>
                 </div>
               </div>

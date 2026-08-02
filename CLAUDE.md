@@ -8,8 +8,9 @@ with filters.
 
 ## Current State
 
-**Phase 0 steps 1 through 6 are done: the app reads from Postgres, not the live
-FPL API.** The raw CSVs for all ten seasons are in `data/raw/` and profiled in
+**Phase 0 is complete. All seven steps are done, and the app reads from
+Postgres, not the live FPL API.** The raw CSVs for all ten seasons are in
+`data/raw/` and profiled in
 `docs/data-profile.md`. Postgres 16 runs in docker-compose and the schema
 exists, created by `server/migrations/1785550165663_initial-schema.ts`.
 
@@ -30,13 +31,20 @@ before it starts and fails with a message naming the one to run first:
 `ingest:fixtures` needs `team_seasons`, and `ingest:gameweeks` needs
 `player_seasons` and `fixtures` to resolve its three season-scoped ids.
 
-`npm test` runs the acceptance suite in
-`server/src/ingest/player-gameweeks.test.ts` against the populated database: the
-nine Saka 2025-26 metrics, Salah 2017-18 and De Bruyne 2019-20 (both sourced
-independently of the CSVs), plus the dedup, double/blank gameweek and rule 6
-nullability boundaries. 11 tests, all passing.
+`npm test` runs 19 tests against the populated database, all passing, in three
+files:
 
-**Step 6 is done: all three routes read Postgres.** `GET /api/bootstrap`,
+- `server/src/ingest/player-gameweeks.test.ts` — the ingest acceptance suite.
+  The nine Saka 2025-26 metrics, Salah 2017-18 and De Bruyne 2019-20 (both
+  sourced independently of the CSVs), plus the dedup, double/blank gameweek and
+  rule 6 nullability boundaries.
+- `server/src/repositories/api-identity.test.ts` — `/api/player/:code` takes an
+  `fpl_code`, the id bootstrap hands out is the one that resolves, and no
+  season-scoped element id resolves as a code.
+- `server/src/repositories/wire-types.test.ts` — decimals arrive as numbers and
+  unmeasured stats arrive as null, on the aggregate and on the gameweek rows.
+
+**All three routes read Postgres.** `GET /api/bootstrap`,
 `GET /api/player/:code` and `GET /api/fixtures` go through
 `server/src/repositories/`, and no SQL exists outside that directory.
 `server/src/services/fplApi.ts` and its 5-minute cache are still there and still
@@ -45,7 +53,10 @@ code.
 
 Every route serves one season, defaulting to the latest in the database
 (computed, not hardcoded) and accepting `?season=2019-20`. An unknown season is
-a 400 listing the ten that exist. The client does not send the parameter yet.
+a 400 listing the ten that exist. Every response now names the season it
+resolved, and every page header displays it. The client sends `?season=` only
+on `/api/player/:code`, where it forwards the season bootstrap resolved so the
+two requests cannot disagree; nothing yet *chooses* a season.
 
 `GET /api/bootstrap` runs a ~90ms aggregate per request. No cache and no
 materialized view: it is fast enough, and a cache is a second source of truth.
@@ -54,8 +65,13 @@ The app now shows the 2025-26 season in full — 841 players, 380 fixtures, 38
 gameweeks — instead of the empty current-season history the live API returns
 during preseason (2026/27 GW1 deadline is 21 Aug 2026).
 
-**The client has not been updated yet and still passes an FPL element id to
-`/api/player/:code`.** That is step 7's first job. See "API identity rules".
+**Step 7 split the types, and the JSON changed with it.** Decimals are numbers,
+not strings: `expected_goals` is `7.57`, not `"7.57"`. `server/src/types/`
+holds `wire.ts` (what upstreams send: strings and season-scoped ids), `domain.ts`
+(what the app means: numbers, permanent codes, explicit nulls) and `api.ts` (the
+response bodies). The parse happens once, in `server/src/repositories/parse.ts`,
+called column by column from each repository's mapper. Nothing in `client/`
+calls `parseFloat` any more.
 
 ## Tech Stack
 
@@ -106,20 +122,34 @@ fpl-lens/
 │   │   ├── repositories/      # DB query layer — the ONLY place SQL may live
 │   │   ├── routes/fpl.ts      # /api/bootstrap, /api/player/:code, /api/fixtures
 │   │   ├── services/fplApi.ts # live FPL API client, cache; ingest source only
-│   │   └── types/             # wire types (FPL/CSV shapes) + domain types
+│   │   └── types/
+│   │       ├── wire.ts        # what upstreams send: strings, season-scoped ids
+│   │       ├── domain.ts      # what the app means: numbers, codes, real nulls
+│   │       └── api.ts         # the response bodies the client consumes
 │   ├── package.json
 │   └── tsconfig.json
 ├── client/
 │   ├── src/
 │   │   ├── main.tsx
-│   │   ├── App.tsx            # Root component, state, filter logic
-│   │   ├── types/fpl.ts       # domain types + UI constants
+│   │   ├── App.tsx            # shell: nav, theme, bootstrap fetch, detail state
+│   │   ├── types/fpl.ts       # domain types + UI constants + formatters
 │   │   ├── services/api.ts    # frontend fetch wrappers
+│   │   ├── lib/
+│   │   │   ├── bootstrap.ts   # BootstrapContext, current/next gameweek
+│   │   │   └── cn.ts          # class name join
+│   │   ├── pages/
+│   │   │   ├── Dashboard.tsx  # three rankings over season aggregates
+│   │   │   ├── Players.tsx    # the list: own inline search, sort, expand
+│   │   │   ├── Fixtures.tsx   # by gameweek, with difficulty
+│   │   │   └── PlayerDetail.tsx
 │   │   └── components/
-│   │       ├── PlayerSearch.tsx
+│   │       ├── ui/            # Card, Table, Badge, Switch, Input
 │   │       ├── PlayerHeader.tsx
 │   │       ├── GameweekFilters.tsx
-│   │       └── StatsTable.tsx
+│   │       ├── StatsTable.tsx
+│   │       ├── PosBadge.tsx   # PosBadge, StatusDot, FDRBadge, PlayerAvatar
+│   │       ├── Countdown.tsx
+│   │       └── PlayerSearch.tsx  # UNUSED: nothing imports it
 │   ├── vite.config.ts         # proxies /api to :3001
 │   ├── package.json
 │   └── tsconfig.json
@@ -263,7 +293,7 @@ is silently wrong.
 
 The storage rules above keep season-scoped ids out of the database. These keep
 them out of the API. Added in step 6; they are the reason the cutover has a
-deliberate breaking change in it.
+deliberate breaking change in it. Rules 7 and 8 were added in step 7.
 
 1. **A code is the external contract. A season-scoped FPL id is not.** Anything
    that appears in a URL or in a response body is a permanent code:
@@ -293,6 +323,25 @@ deliberate breaking change in it.
 6. **`is_current` / `is_next` are false on every event.** They describe a live
    season. Over a completed one there is no current gameweek, and nominating the
    last one would be a guess dressed as data.
+7. **Every response names the season it describes.** `GET /api/bootstrap`,
+   `GET /api/player/:code` and `GET /api/fixtures` each return a top-level
+   `season`. It is the season `resolveSeason()` actually used, never the one
+   requested — so it stays true when the parameter is absent and the default
+   applies, and it keeps being true if the defaulting rule changes. The database
+   holds ten seasons and a response carrying the wrong one is indistinguishable
+   from the right one at a glance: same players, same round numbers, same column
+   names. Without this key the only way to place a payload is to recognise the
+   opponent abbreviations. Any consumer showing data from a response must label
+   it with that response's own `season`, not with one it got from somewhere
+   else — which is why the Fixtures page labels itself from the fixtures
+   response and the player detail page from the detail response.
+8. **Decimals are numbers on the wire, not strings.** `expected_goals` is
+   `7.57`, not `"7.57"`. Postgres returns `numeric` and int8 as text and the FPL
+   API sends its decimals quoted; both are parsed once, at the repository
+   boundary, by `server/src/repositories/parse.ts`. The parse throws rather than
+   coercing, because the two failure modes it replaces were silent: a `as
+   number` cast that shipped the string, and a `Number(x) || 0` that would turn
+   rule 6's null into a zero.
 
 ## Getting Started
 
@@ -316,13 +365,14 @@ one. `npm run migrate:down` reverts the last migration.
 
 - [x] Postgres-backed read API through `server/src/repositories/`
 - [x] Player list with search, position filter and sortable columns
-- [x] Player header card (name, team, position, price, xG, xA, ICT)
-- [x] Gameweek-by-gameweek stats table (sortable, all columns)
-- [x] Filters: gameweek range, home/away
-- [x] Averages row in stats table
+- [x] Player header card (season, team, position, price, apps, starts, xG, xA, ICT)
+- [x] Gameweek-by-gameweek stats table (sortable, all columns, keyed on fixture)
+- [x] Filters: gameweek range built from the rounds that exist, home/away
+- [x] Averages row in stats table, nulls skipped, denominator stated
 - [x] Dashboard, ranked on real aggregates: total points, points per match with
       an appearance floor, ICT index
 - [x] Fixtures page with difficulty ratings, by gameweek
+- [x] Every page header names the season it is showing
 
 The live FPL API proxy in `services/fplApi.ts` still exists with its 5-minute
 cache, but no route calls it: it is the ingestion source for the live season.
@@ -341,31 +391,31 @@ around it.
   `selected_by_percent` were sortable columns on the Players page and are gone
   rather than shown empty; they come back with the sync. See API identity
   rule 4.
-- `client/src/types/fpl.ts` mirrors the FPL wire format directly. Numerics arrive as
-  strings (`expected_goals: string`, `form: string`) and every consumer parses them ad
-  hoc. There is no `code`, `team_code` or `birth_date` on `Player`, no `code` on
-  `Team`, and `GameweekHistory` has no `element`, `fixture`, `kickoff_time` or
-  `season`, so a row cannot be uniquely keyed.
-- `maxGw` in `PlayerDetail.tsx` is the *count* of finished events used as a
-  maximum round number. It happens to be right for a 38-round season and is
-  wrong for 2019-20, which runs to round 47. It also freezes into `useState`'s
-  initial value, so it would not follow a season change.
-- Empty state reads "No data for the selected filters", which is misleading when
-  the cause is an empty history array, not the filters.
-- `StatsTable` keys its rows on `gw.round`, which collides on a double gameweek
-  — two rows in one round is the whole point of rule 13. Its averages row sums
-  NULLs as zero and divides by rounds rather than matches played.
 - `client/src/components/PlayerSearch.tsx` is dead: nothing imports it. The
   Players page has its own inline search.
+- **The player object on the detail page is a snapshot.** `App.tsx` stores the
+  whole `Player` in `detailPlayer` when a row is clicked, so the header card
+  keeps rendering the object captured then, while its season label comes from
+  the live `bootstrap`. Today that cannot diverge — bootstrap is fetched once at
+  mount and never refetched — but a season selector would refetch it and leave a
+  card showing one season's totals under another season's label. Observed
+  directly by forcing a season change through HMR. The fix is to store the code
+  and re-resolve from `bootstrap.players`, and it belongs with the selector.
+- `GameweekHistory` still has no `kickoff_time` or `season`, so a row cannot be
+  keyed globally, only within one player-season (`fixture` is enough for that,
+  and is what `StatsTable` uses). Nothing needs the wider key yet.
+- `Player` carries no `birth_date` and `Team` no `code`, both of which exist in
+  the database. They are not in any response because nothing renders them.
 - The UI has a working light/dark toggle, but neither theme is the one in Design
   Decisions: light is cream (`36 22% 95%`), dark is a warm near-black
   (`30 5% 10%`), and the accent is indigo (`228 36% 42%`) rather than
   `#0f0f23`/`#00ff87`. Reconcile the spec with the build before any styling work
   — the decision of which one wins is still open.
 
-## Current Work: Phase 0, Persistence and Backfill
+## Phase 0, Persistence and Backfill — complete
 
-One session per step. Commit between each.
+One session per step, committed between each. Kept as the record of how the data
+layer was built and what each step decided.
 
 - [x] **1. Fetch and profile.** `scripts/fetch-raw-data.ts` downloads the three CSVs
       per season, 2016-17 through 2025-26, into `data/raw/{season}/`.
@@ -396,12 +446,20 @@ One session per step. Commit between each.
       the swap: no unexplained differences, and on the six players where the
       live bootstrap's carryover totals disagree with ours, FPL's own
       `history_past` backs ours.
-- [ ] **7. Types split.** Separate wire types (FPL and CSV shapes), domain types, and
-      UI constants, with the mapper living at the ingestion boundary. Numerics become
-      `number`, not `string`. **Starts with the client fix step 6 deliberately left
-      undone:** `fetchPlayerDetail` must send `players[].id`, which is now the
-      permanent `fpl_code`. Also move the wire mapping out of `routes/fpl.ts`,
-      where step 6 parked it on purpose to avoid colliding with this step.
+- [x] **7. Types split.** `server/src/types/{wire,domain,api}.ts` separate what
+      upstreams send from what the app means from what the API returns;
+      `server/src/repositories/parse.ts` does the parsing, column by column, in
+      each repository's mapper. Decimals became numbers on the wire — the one
+      contract change — and `starts` and `appearances` joined the bootstrap
+      aggregate. Every response now names its season and every page header
+      displays it. Three commits: the visible null fallout, the sort-direction
+      and deadline bugs found in the browser, then the split itself.
+
+      The step's stated premise was false and is recorded as such: the client
+      never sent an FPL element id to `/api/player/:code`. `fetchPlayerDetail`
+      has one call site and the id round-tripped from bootstrap correctly. That
+      is now pinned by `server/src/repositories/api-identity.test.ts` rather
+      than asserted in prose.
 
 ### Target schema
 
@@ -459,6 +517,21 @@ exactly 380 distinct `fixture_id`s, and `SUM(minutes)` must land within 1% below
 number — red cards and stoppage time make it approximate. Observed range is 0.13%
 to 0.52% below.
 
+### Rounds are not 1..n
+
+Two seasons break the assumption, in opposite directions, and any code deriving
+a maximum round from a count is wrong in both:
+
+| Season  | Rounds with fixtures | Highest round | Missing  |
+| ------- | -------------------- | ------------- | -------- |
+| 2019-20 | 38                   | 47            | 30 to 38 |
+| 2022-23 | 37                   | 38            | 7        |
+
+2019-20's Covid suspension emptied rounds 30-38 and replayed them as 39-47;
+2022-23 lost round 7 to the postponements after the Queen's death. The eight
+other seasons are 38 and 38. `PlayerDetail.tsx` therefore takes the round
+numbers from the events themselves rather than counting them.
+
 ## Deferred
 
 The gate used to be "not until Phase 0 is complete". Phase 0 is complete, so
@@ -505,10 +578,18 @@ real again.
 ## Working Agreement
 
 - Read this file and `docs/data-profile.md` before starting any task.
-- One Phase 0 step per session. Commit between steps.
-- Do not touch `client/` during steps 1 through 5. API response shapes stay stable
-  until step 6.
-- Plan before writing code for steps 3 and 4. Ingestion is where an agent will
-  confidently produce something that silently drops rows.
-- End each session by updating the Current State section above so the next session
-  starts from truth rather than a stale description.
+- One item per session, from Deferred, chosen deliberately. Commit between them.
+- Plan before writing code for anything that ingests or aggregates. That is
+  where an agent will confidently produce something that silently drops rows.
+- **Verification must not share its derivation with the thing it verifies.** A
+  pinned row count computed the same way the ingest computes it proves nothing.
+  Add a check from a different direction — 380 fixtures a season from the
+  competition format, `SUM(minutes)` against 380 × 2 × 11 × 90, acceptance
+  values from `history_past` rather than the CSVs — and report an approximate
+  quantity as a band, not a number.
+- **Trace a claim to the code before repeating it.** Two entries in Known Issues
+  were false when audited in step 7, one of them written by the previous session
+  and planned around by the next. An issue list that is not re-checked is worse
+  than none.
+- End each session by updating the Current State section above so the next
+  session starts from truth rather than a stale description.

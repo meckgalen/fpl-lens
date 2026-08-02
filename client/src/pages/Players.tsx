@@ -2,7 +2,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table';
 import { PlayerAvatar, PosBadge, StatusDot } from '../components/PosBadge';
-import { POSITION_MAP, fmtNum, statusBucket } from '../types/fpl';
+import { POSITION_MAP, fmtNum, fmtPrice, statusBucket } from '../types/fpl';
 import type { Player } from '../types/fpl';
 import { useBootstrap } from '../lib/bootstrap';
 
@@ -23,9 +23,12 @@ const numForKey = (p: Player, k: SortKey): number => {
     case 'pts':
       return p.total_points;
     case 'ppm':
-      return parseFloat(p.points_per_game);
+      return p.points_per_game;
     case 'price':
-      return p.now_cost;
+      // now_cost is null only for a player with no season row, which cannot
+      // reach this list. Sorting them last is still better than NaN, which
+      // would strand the whole comparator.
+      return p.now_cost ?? 0;
     case 'goals':
       return p.goals_scored;
     case 'assists':
@@ -82,7 +85,7 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
   const renderCell = (p: Player, v: SortKey) => {
     switch (v) {
       case 'price':
-        return `£${(p.now_cost / 10).toFixed(1)}`;
+        return fmtPrice(p.now_cost);
       case 'ppm':
         return fmtNum(p.points_per_game, 1);
       case 'pts':
@@ -97,7 +100,9 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
   return (
     <div>
       <div className="mb-6">
-        <h1 className="font-display text-xl font-semibold text-foreground">Player Statistics</h1>
+        <h1 className="font-display text-xl font-semibold text-foreground">
+          Player Statistics · {b.season}
+        </h1>
         <p className="text-sm text-muted-foreground mt-1">
           {list.length} players · Click column header to sort · Click row to expand
         </p>

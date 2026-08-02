@@ -10,38 +10,28 @@
  */
 
 import type { Queryable } from '../db/pool.js';
+import type { Fixture, Gameweek } from '../types/domain.js';
 
 const KICKOFF_UTC = `to_char(f.kickoff_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`;
 
-export interface FixtureRow {
-  /** Our own surrogate key. Permanent, and verified stable across re-ingest. */
-  id: number;
-  /**
-   * FPL's permanent fixture code. We never ingested it, so there is nothing to
-   * return and nothing worth inventing. Comes from the live sync later.
-   */
-  code: null;
-  event: number | null;
-  team_h: number;
-  team_a: number;
-  team_h_score: number | null;
-  team_a_score: number | null;
-  /** NULL for 2016-17 and 2017-18: no fixtures.csv upstream, no ratings (rule 14). */
-  team_h_difficulty: number | null;
-  team_a_difficulty: number | null;
-  kickoff_time: string | null;
-  finished: boolean;
-}
-
-/** One season's fixtures, optionally a single gameweek. */
+/**
+ * One season's fixtures, optionally a single gameweek.
+ *
+ * No mapper: scores and difficulties are smallint, ids are integer, and
+ * kickoff_time is already formatted to text above. Nothing arrives as a string
+ * that ought to be a number.
+ *
+ * `code` — FPL's own permanent fixture code — is not selected here. It was
+ * never ingested, so it has no domain value; the route adds it as null, which
+ * is where an absent-by-construction field belongs.
+ */
 export async function listFixtures(
   db: Queryable,
   season: string,
   gw?: number
-): Promise<FixtureRow[]> {
-  const { rows } = await db.query<FixtureRow>(
+): Promise<Fixture[]> {
+  const { rows } = await db.query<Fixture>(
     `SELECT f.id,
-            NULL::int AS code,
             f.gw AS event,
             home.fpl_team_code AS team_h,
             away.fpl_team_code AS team_a,
@@ -62,16 +52,6 @@ export async function listFixtures(
   return rows;
 }
 
-export interface EventRow {
-  /** The gameweek number. */
-  id: number;
-  name: string;
-  deadline_time: null;
-  finished: boolean;
-  is_current: boolean;
-  is_next: boolean;
-}
-
 /**
  * The gameweek list, derived from `fixtures` — there is no events table, and
  * the parts that are genuinely derivable are derived rather than guessed.
@@ -80,24 +60,20 @@ export interface EventRow {
  *   name     'Gameweek {n}', as the FPL API names them
  *   finished true when every fixture in the round has been played
  *
- * Not derivable, so not invented:
+ * The rows are NOT `1..n`. 2019-20 runs 1-29 and then 39-47, the nine rounds in
+ * between having been emptied by the Covid suspension and replayed at the end;
+ * 2022-23 has no round 7, postponed after the Queen's death. Anything treating
+ * the length of this array as the highest round number is wrong in both, in
+ * opposite directions.
  *
- *   deadline_time  the deadline is ~90 minutes before the first kick-off, and
- *                  nothing in the database records it. NULL, from the live
- *                  sync later. The client is already null-safe here.
- *   is_current /   live-season concepts. Over a season that finished years ago
- *   is_next        there is no "current" round, so both are false rather than
- *                  a guess at the last one. The client falls back to the last
- *                  finished round on its own when nothing is flagged current.
+ * deadline_time, is_current and is_next are not derivable and are not invented
+ * here — the route adds them. See ../types/api.ts.
  */
-export async function listEvents(db: Queryable, season: string): Promise<EventRow[]> {
-  const { rows } = await db.query<EventRow>(
+export async function listEvents(db: Queryable, season: string): Promise<Gameweek[]> {
+  const { rows } = await db.query<Gameweek>(
     `SELECT f.gw AS id,
             'Gameweek ' || f.gw AS name,
-            NULL::text AS deadline_time,
-            bool_and(f.finished) AS finished,
-            false AS is_current,
-            false AS is_next
+            bool_and(f.finished) AS finished
        FROM fixtures f
       WHERE f.season = $1 AND f.gw IS NOT NULL
       GROUP BY f.gw

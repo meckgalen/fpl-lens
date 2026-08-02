@@ -1,3 +1,5 @@
+import { NO_VALUE } from '../types/fpl';
+
 export function PosBadge({ pos }: { pos: string }) {
   const posStyles: Record<string, string> = {
     GKP: 'bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400',
@@ -29,7 +31,19 @@ export function StatusDot({ status }: { status: 'fit' | 'doubt' | 'out' | 'unkno
   return <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${colors[status] || colors.unknown}`} />;
 }
 
-export function FDRBadge({ value }: { value: number }) {
+/**
+ * Fixture difficulty, 1-5. Null for 2016-17 and 2017-18, which have no
+ * fixtures.csv upstream and therefore no ratings — rendered neutral rather than
+ * as a made-up 3, which would read as "medium" for a match nobody rated.
+ */
+export function FDRBadge({ value }: { value: number | null }) {
+  if (value === null) {
+    return (
+      <span className="inline-flex items-center justify-center w-7 h-5 rounded text-[10px] font-bold font-display flex-shrink-0 bg-muted text-muted-foreground">
+        {NO_VALUE}
+      </span>
+    );
+  }
   const styles = [
     '',
     'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-400',

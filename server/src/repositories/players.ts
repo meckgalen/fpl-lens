@@ -12,12 +12,15 @@
  *     reason. See ./teams.ts.
  *
  * On the numeric types: node-postgres returns int2/int4 as JS numbers, but
- * int8 (what SUM over an integer column produces) and numeric as strings. The
- * casts below are chosen so the wire types match what the client already
- * parses — counting stats as numbers, the decimal stats as strings.
+ * int8 (what SUM over an integer column produces) and numeric as strings. Each
+ * query below therefore has a `*DbRow` describing what actually comes back, and
+ * a mapper that parses it into the domain type. The DbRow types are not
+ * exported: nothing outside this file should ever hold one.
  */
 
 import type { Queryable } from '../db/pool.js';
+import type { PlayerGameweek, PlayerSeasonTotals, UpcomingFixture } from '../types/domain.js';
+import { num, numOrNull, type DbNumeric } from './parse.js';
 
 /** Rule 10's mapping, run backwards for the wire format. */
 const ELEMENT_TYPE_BY_POSITION = `CASE ps.position
@@ -27,16 +30,13 @@ const ELEMENT_TYPE_BY_POSITION = `CASE ps.position
         WHEN 'FWD' THEN 4
       END`;
 
-export interface PlayerTotalsRow {
-  /** players.fpl_code — permanent. */
+interface PlayerTotalsDbRow {
   id: number;
   first_name: string | null;
   second_name: string | null;
   web_name: string;
-  /** teams.fpl_team_code of the club on the season's end-of-season snapshot (rule 17). */
   team: number;
   element_type: number;
-  /** £0.1m units, raw (rule 9). */
   now_cost: number | null;
   total_points: number;
   minutes: number;
@@ -45,16 +45,57 @@ export interface PlayerTotalsRow {
   clean_sheets: number;
   bonus: number;
   bps: number;
-  influence: string;
-  creativity: string;
-  threat: string;
-  ict_index: string;
-  /** NULL before 2022-23 — not measured, not zero (rule 6). */
-  expected_goals: string | null;
-  expected_assists: string | null;
-  expected_goal_involvements: string | null;
-  points_per_game: string;
+  appearances: number;
+  /** numeric -> string. */
+  influence: DbNumeric;
+  creativity: DbNumeric;
+  threat: DbNumeric;
+  ict_index: DbNumeric;
+  points_per_game: DbNumeric;
+  /** NULL before 2022-23; sum() of a smallint returns int8, so also a string. */
+  starts: DbNumeric | null;
+  expected_goals: DbNumeric | null;
+  expected_assists: DbNumeric | null;
+  expected_goal_involvements: DbNumeric | null;
   photo: string;
+}
+
+function toPlayerSeasonTotals(r: PlayerTotalsDbRow): PlayerSeasonTotals {
+  return {
+    id: r.id,
+    first_name: r.first_name,
+    second_name: r.second_name,
+    web_name: r.web_name,
+    team: r.team,
+    element_type: r.element_type,
+    now_cost: r.now_cost,
+
+    total_points: r.total_points,
+    minutes: r.minutes,
+    goals_scored: r.goals_scored,
+    assists: r.assists,
+    clean_sheets: r.clean_sheets,
+    bonus: r.bonus,
+    bps: r.bps,
+
+    influence: num(r.influence, 'influence'),
+    creativity: num(r.creativity, 'creativity'),
+    threat: num(r.threat, 'threat'),
+    ict_index: num(r.ict_index, 'ict_index'),
+
+    starts: numOrNull(r.starts, 'starts'),
+    expected_goals: numOrNull(r.expected_goals, 'expected_goals'),
+    expected_assists: numOrNull(r.expected_assists, 'expected_assists'),
+    expected_goal_involvements: numOrNull(
+      r.expected_goal_involvements,
+      'expected_goal_involvements'
+    ),
+
+    appearances: r.appearances,
+    points_per_game: num(r.points_per_game, 'points_per_game'),
+
+    photo: r.photo,
+  };
 }
 
 /**
@@ -66,14 +107,19 @@ export interface PlayerTotalsRow {
  * the moment the app looks most broken.
  *
  * COALESCE to 0 is applied only to the columns present in all ten seasons.
- * expected_goals and friends are deliberately left NULL where they are NULL —
- * zero would claim the player generated no chances, when the truth is that
- * nobody measured before 2022-23 (rule 6).
+ * expected_goals, friends and `starts` are deliberately left NULL where they
+ * are NULL — zero would claim the player generated no chances or started no
+ * matches, when the truth is that nobody measured before 2022-23 (rule 6).
  *
- * points_per_game divides by matches the player actually appeared in
- * (minutes > 0), not by rounds in the season. Rule 13 requires saying which,
- * and this is the one that reproduces the FPL API's own value: Saka 2025-26 is
- * 157/31 = 5.1, where dividing by his 38 rounds would give 4.1.
+ * `appearances` is returned outright rather than left to the caller to infer.
+ * It used to be recovered on the client by dividing points by points_per_game,
+ * which is wrong by an appearance either way on the rounding and reads 0 for a
+ * player who appeared and scored nothing.
+ *
+ * points_per_game divides by appearances (minutes > 0), not by rounds in the
+ * season. Rule 13 requires saying which, and this is the one that reproduces
+ * the FPL API's own value: Saka 2025-26 is 157/31 = 5.1, where dividing by his
+ * 38 rounds would give 4.1.
  *
  * The rounding goes through float8 deliberately. Postgres rounds numeric half
  * away from zero (3.250 -> 3.3), while FPL — computing in Python — rounds half
@@ -81,15 +127,16 @@ export interface PlayerTotalsRow {
  * disagreed before this. round() on a double precision uses rint(), which is
  * half-to-even, so this reproduces the upstream value instead of being a
  * defensible-but-different number. The division stays in numeric so only the
- * tie-break itself sees a float.
+ * tie-break itself sees a float, and to_char pins the one-decimal presentation
+ * that rounding is for; the mapper then parses that text to a number.
  *
  * Measured at ~50ms for a full season, so callers run it per request.
  */
 export async function listPlayerTotals(
   db: Queryable,
   season: string
-): Promise<PlayerTotalsRow[]> {
-  const { rows } = await db.query<PlayerTotalsRow>(
+): Promise<PlayerSeasonTotals[]> {
+  const { rows } = await db.query<PlayerTotalsDbRow>(
     `SELECT p.fpl_code AS id,
             p.first_name,
             p.second_name,
@@ -111,9 +158,12 @@ export async function listPlayerTotals(
             COALESCE(sum(pg.threat), 0)     AS threat,
             COALESCE(sum(pg.ict_index), 0)  AS ict_index,
 
-            sum(pg.expected_goals)              AS expected_goals,
-            sum(pg.expected_assists)            AS expected_assists,
-            sum(pg.expected_goal_involvements)  AS expected_goal_involvements,
+            sum(pg.starts)                     AS starts,
+            sum(pg.expected_goals)             AS expected_goals,
+            sum(pg.expected_assists)           AS expected_assists,
+            sum(pg.expected_goal_involvements) AS expected_goal_involvements,
+
+            count(*) FILTER (WHERE pg.minutes > 0)::int AS appearances,
 
             to_char(
               round(
@@ -138,12 +188,12 @@ export async function listPlayerTotals(
       ORDER BY p.fpl_code`,
     [season]
   );
-  return rows;
+  return rows.map(toPlayerSeasonTotals);
 }
 
-export interface GameweekRow {
+interface GameweekDbRow {
+  fixture: number;
   round: number;
-  /** teams.fpl_team_code of the opponent. */
   opponent_team: number;
   was_home: boolean;
   total_points: number;
@@ -154,17 +204,52 @@ export interface GameweekRow {
   goals_conceded: number;
   bonus: number;
   bps: number;
-  influence: string;
-  creativity: string;
-  threat: string;
-  ict_index: string;
-  expected_goals: string | null;
-  expected_assists: string | null;
-  expected_goal_involvements: string | null;
+  influence: DbNumeric;
+  creativity: DbNumeric;
+  threat: DbNumeric;
+  ict_index: DbNumeric;
+  expected_goals: DbNumeric | null;
+  expected_assists: DbNumeric | null;
+  expected_goal_involvements: DbNumeric | null;
   value: number;
   selected: number;
   transfers_in: number;
   transfers_out: number;
+}
+
+function toPlayerGameweek(r: GameweekDbRow): PlayerGameweek {
+  return {
+    fixture: r.fixture,
+    round: r.round,
+    opponent_team: r.opponent_team,
+    was_home: r.was_home,
+
+    total_points: r.total_points,
+    minutes: r.minutes,
+    goals_scored: r.goals_scored,
+    assists: r.assists,
+    clean_sheets: r.clean_sheets,
+    goals_conceded: r.goals_conceded,
+    bonus: r.bonus,
+    bps: r.bps,
+
+    influence: num(r.influence, 'influence'),
+    creativity: num(r.creativity, 'creativity'),
+    threat: num(r.threat, 'threat'),
+    ict_index: num(r.ict_index, 'ict_index'),
+
+    expected_goals: numOrNull(r.expected_goals, 'expected_goals'),
+    expected_assists: numOrNull(r.expected_assists, 'expected_assists'),
+    expected_goal_involvements: numOrNull(
+      r.expected_goal_involvements,
+      'expected_goal_involvements'
+    ),
+
+    value: r.value,
+    selected: r.selected,
+    transfers_in: r.transfers_in,
+    transfers_out: r.transfers_out,
+  };
 }
 
 /**
@@ -172,14 +257,19 @@ export interface GameweekRow {
  *
  * Ordered by round then kickoff, because a double gameweek puts two rows in
  * one round and they should read in the order they were played (rule 13).
+ *
+ * `fixture` is selected because the round is not a key: keying rows on it
+ * collapses a double gameweek into one, which is the exact case rule 13 exists
+ * to protect. 2025-26 round 36 and 2019-20 round 39 both have one.
  */
 export async function getPlayerHistory(
   db: Queryable,
   fplCode: number,
   season: string
-): Promise<GameweekRow[]> {
-  const { rows } = await db.query<GameweekRow>(
-    `SELECT pg.gw AS round,
+): Promise<PlayerGameweek[]> {
+  const { rows } = await db.query<GameweekDbRow>(
+    `SELECT pg.fixture_id AS fixture,
+            pg.gw AS round,
             opp.fpl_team_code AS opponent_team,
             pg.was_home,
             pg.total_points,
@@ -209,15 +299,7 @@ export async function getPlayerHistory(
       ORDER BY pg.gw, f.kickoff_time`,
     [fplCode, season]
   );
-  return rows;
-}
-
-export interface UpcomingFixtureRow {
-  event: number | null;
-  team_h: number;
-  team_a: number;
-  is_home: boolean;
-  difficulty: number | null;
+  return rows.map(toPlayerGameweek);
 }
 
 /**
@@ -236,8 +318,8 @@ export async function getPlayerUpcomingFixtures(
   db: Queryable,
   fplCode: number,
   season: string
-): Promise<UpcomingFixtureRow[]> {
-  const { rows } = await db.query<UpcomingFixtureRow>(
+): Promise<UpcomingFixture[]> {
+  const { rows } = await db.query<UpcomingFixture>(
     `SELECT f.gw AS event,
             home.fpl_team_code AS team_h,
             away.fpl_team_code AS team_a,
@@ -254,10 +336,12 @@ export async function getPlayerUpcomingFixtures(
       ORDER BY f.gw, f.kickoff_time`,
     [fplCode, season]
   );
+  // Every column here is smallint or integer, which the driver already returns
+  // as a number. No mapper, because there is nothing to parse.
   return rows;
 }
 
-/** Whether the code names a real player at all, so /player/:id can 404. */
+/** Whether the code names a real player at all, so /player/:code can 404. */
 export async function playerExists(db: Queryable, fplCode: number): Promise<boolean> {
   const { rows } = await db.query<{ exists: boolean }>(
     'SELECT EXISTS (SELECT 1 FROM players WHERE fpl_code = $1) AS exists',
