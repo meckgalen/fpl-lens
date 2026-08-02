@@ -17,6 +17,7 @@
 import type {
   Fixture,
   Gameweek,
+  PlayerCareerSeason,
   PlayerGameweek,
   PlayerSeasonTotals,
   Team,
@@ -77,6 +78,33 @@ export interface PlayerDetailResponse {
   season: string;
   history: PlayerGameweek[];
   fixtures: UpcomingFixture[];
+  /**
+   * That season's twenty clubs, so `history[].opponent_team` can be named.
+   *
+   * The bootstrap's team list is the *latest* season's twenty, and the detail
+   * page can now show any of the ten: rendering 2016-17 against it prints a
+   * bare code wherever the opponent was Middlesbrough, Hull or Sunderland. The
+   * lookup travels with the response for the same reason the season label
+   * does — a payload has to be readable from itself, not from whatever the
+   * client happened to fetch first.
+   */
+  teams: Team[];
+}
+
+/**
+ * A player's whole career, one row per season, newest first.
+ *
+ * **This is the first response that spans seasons, and so the first with no
+ * top-level `season` key.** API identity rule 7 requires every piece of data on
+ * screen to be labelled with the season it came from; where a response covers
+ * one season that label sits at the top, and where it covers ten it sits on
+ * each row. A top-level `null` would be worse than nothing: null already means
+ * "not measured" throughout this codebase (rule 6), and a second meaning for it
+ * is the ambiguity that rule exists to prevent. `seasons[].season` is what a
+ * consumer must render against.
+ */
+export interface PlayerCareerResponse {
+  seasons: PlayerCareerSeason[];
 }
 
 export interface FixturesResponse {

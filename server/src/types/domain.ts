@@ -69,26 +69,42 @@ export interface PlayerSeasonTotals {
   photo: string;
 }
 
-/** One player's line for one match. A double gameweek gives two in one round. */
-export interface PlayerGameweek {
-  /**
-   * The fixture's surrogate id. Present because `round` is not a key —
-   * two rows can share it (rule 13) — and anything keying rows on the round
-   * silently collapses a double gameweek.
-   */
-  fixture: number;
-  /** The round the match was actually played in (rule 12). */
-  round: number;
-  /** teams.fpl_team_code of the opponent. */
-  opponent_team: number;
-  was_home: boolean;
-
+/**
+ * The stats that exist on a match row and on a season's sum of them alike.
+ *
+ * Split out because the two shapes below have to agree column for column: a
+ * stat added to the gameweek table and forgotten in the season summary reads as
+ * a real absence rather than as an oversight, and rule 6 means the absence is
+ * indistinguishable from "nobody measured it". Sharing the declaration makes
+ * that particular divergence impossible.
+ *
+ * The nullable ones are nullable because the column does not exist in every
+ * season. From docs/data-profile.md section 6, verified against the loaded
+ * rows rather than assumed:
+ *
+ *   - `expected_goals_conceded` and the xG family: 2022-23 onward.
+ *   - `tackles`, `clearances_blocks_interceptions`, `recoveries`: 2016-17,
+ *     2017-18, 2018-19 — then a six-season gap — then 2025-26. Not a
+ *     "modern stats only" family: they are the one group where the OLD seasons
+ *     have data the middle ones do not.
+ *   - `defensive_contribution`: 2025-26 only.
+ *
+ * Everything else here is present in all ten and is therefore a number, never
+ * null. Zero in those columns is a measurement.
+ */
+interface MatchStats {
   total_points: number;
   minutes: number;
   goals_scored: number;
   assists: number;
   clean_sheets: number;
   goals_conceded: number;
+  own_goals: number;
+  penalties_saved: number;
+  penalties_missed: number;
+  yellow_cards: number;
+  red_cards: number;
+  saves: number;
   bonus: number;
   bps: number;
 
@@ -101,12 +117,94 @@ export interface PlayerGameweek {
   expected_goals: number | null;
   expected_assists: number | null;
   expected_goal_involvements: number | null;
+  expected_goals_conceded: number | null;
+
+  /** NULL in 2019-20 through 2024-25 — measured before and after, not during. */
+  tackles: number | null;
+  clearances_blocks_interceptions: number | null;
+  recoveries: number | null;
+  /** NULL in every season but 2025-26, where the scoring rule was introduced. */
+  defensive_contribution: number | null;
+}
+
+/** One player's line for one match. A double gameweek gives two in one round. */
+export interface PlayerGameweek extends MatchStats {
+  /**
+   * The fixture's surrogate id. Present because `round` is not a key —
+   * two rows can share it (rule 13) — and anything keying rows on the round
+   * silently collapses a double gameweek.
+   */
+  fixture: number;
+  /** The round the match was actually played in (rule 12). */
+  round: number;
+  /** teams.fpl_team_code of the opponent. */
+  opponent_team: number;
+  was_home: boolean;
 
   /** £0.1m units at the time of the match (rule 9). */
   value: number;
   selected: number;
   transfers_in: number;
   transfers_out: number;
+}
+
+/**
+ * One season of a player's career: the sum of his match rows, plus the
+ * season-level attributes that come from `player_seasons`.
+ *
+ * There is no `id`, name or `photo` here. Those are properties of the player,
+ * not of the season, and the career is addressed by the player's code — so
+ * repeating them on every row would be eight copies of one fact with eight
+ * chances to disagree. What is repeated is what genuinely changes between rows:
+ * the club, the position and the price.
+ *
+ * **The club is the END-of-season snapshot (rule 17).** `players_raw.csv` is a
+ * bootstrap dump taken when the season finished, so a player who moved in
+ * January is recorded under his new club for the whole row. This field cannot
+ * answer "who was he playing for in gameweek N" and nothing rendering it may
+ * imply that it can — that answer comes from the fixture on each
+ * `PlayerGameweek`, which is exactly what the row expands into.
+ */
+export interface PlayerCareerSeason extends MatchStats {
+  /** Rule 8's '2016-17'. This row's own label — see API identity rule 7. */
+  season: string;
+
+  /** teams.fpl_team_code of the end-of-season club (rule 17). */
+  team: number;
+  /**
+   * Denormalised deliberately. A career spans clubs outside the current
+   * twenty — Middlesbrough, Hull, Sunderland, Cardiff — so a code-to-name map
+   * built from any single season cannot resolve them all, and the consumer
+   * would print a bare integer for precisely the oldest rows. One row is one
+   * season is one club, so there is nothing here to look up.
+   */
+  team_name: string;
+  team_short_name: string;
+
+  /** 1=GK, 2=DEF, 3=MID, 4=FWD (rule 10). Position is season-level. */
+  element_type: number;
+  /** £0.1m units, raw (rule 9). Not aliased to `now_cost`: on a 2016-17 row
+   *  "now" is nine years ago. */
+  start_cost: number | null;
+  end_cost: number | null;
+
+  /**
+   * Match rows in the season — every fixture his club played that he was
+   * listed for, appeared or not.
+   *
+   * Distinct from `appearances`, and the distinction is the whole reason it
+   * exists: `matches = 0` means the season has no data for him yet, while
+   * `matches = 38, appearances = 0` means he was in the squad all season and
+   * never got on. Both render as an empty-looking table and they mean opposite
+   * things.
+   */
+  matches: number;
+  /** Matches he actually played (minutes > 0). Not rounds (rule 13). */
+  appearances: number;
+  /** NULL before 2022-23 — not measured, not zero (rule 6). */
+  starts: number | null;
+  /** total_points / appearances. See the repository for the rounding. */
+  points_per_game: number;
 }
 
 export interface Team {

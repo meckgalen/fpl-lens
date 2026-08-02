@@ -31,7 +31,7 @@ before it starts and fails with a message naming the one to run first:
 `ingest:fixtures` needs `team_seasons`, and `ingest:gameweeks` needs
 `player_seasons` and `fixtures` to resolve its three season-scoped ids.
 
-`npm test` runs 19 tests against the populated database, all passing, in three
+`npm test` runs 33 tests against the populated database, all passing, in four
 files:
 
 - `server/src/ingest/player-gameweeks.test.ts` — the ingest acceptance suite.
@@ -43,20 +43,34 @@ files:
   season-scoped element id resolves as a code.
 - `server/src/repositories/wire-types.test.ts` — decimals arrive as numbers and
   unmeasured stats arrive as null, on the aggregate and on the gameweek rows.
+- `server/src/repositories/career.test.ts` — the career query. Season set and
+  order, the nine acceptance values, the summary cross-checked against the
+  gameweek rows it claims to sum, the nullability matrix across all ten seasons
+  on one player, and the three shapes an empty season takes.
 
-**All three routes read Postgres.** `GET /api/bootstrap`,
-`GET /api/player/:code` and `GET /api/fixtures` go through
-`server/src/repositories/`, and no SQL exists outside that directory.
+**Phase 1 step 1 is done: the player detail page shows a career.** It has three
+sections — the header card, "This Season", and "Previous Seasons", which is one
+summary row per season with the gameweeks underneath every one of them. The FPL
+site shows that summary table and stops; expanding it is the app's reason to
+exist. See "Phase 1" below for what the step decided.
+
+**All four routes read Postgres.** `GET /api/bootstrap`,
+`GET /api/player/:code`, `GET /api/player/:code/career` and `GET /api/fixtures`
+go through `server/src/repositories/`, and no SQL exists outside that directory.
 `server/src/services/fplApi.ts` and its 5-minute cache are still there and still
 unused by the routes — it is the ingestion source for the live season, not dead
 code.
 
-Every route serves one season, defaulting to the latest in the database
-(computed, not hardcoded) and accepting `?season=2019-20`. An unknown season is
-a 400 listing the ten that exist. Every response now names the season it
-resolved, and every page header displays it. The client sends `?season=` only
-on `/api/player/:code`, where it forwards the season bootstrap resolved so the
-two requests cannot disagree; nothing yet *chooses* a season.
+The three season-scoped routes serve one season, defaulting to the latest in the
+database (computed, not hardcoded) and accepting `?season=2019-20`. An unknown
+season is a 400 listing the ten that exist. Every one of them names the season it
+resolved, and every page header displays it. `/api/player/:code/career` is the
+exception and spans all of them: it takes no `?season=` and rejects one rather
+than ignoring it, and its rows carry the label instead (API identity rule 7).
+
+The client sends `?season=` on `/api/player/:code` only — forwarding the season
+bootstrap resolved for "This Season", and the row's own season when a previous
+one is expanded. Nothing yet *chooses* a season in the sense a selector would.
 
 `GET /api/bootstrap` runs a ~90ms aggregate per request. No cache and no
 materialized view: it is fast enough, and a cache is a second source of truth.
@@ -120,7 +134,7 @@ fpl-lens/
 │   │   ├── db/                # pool, connection config
 │   │   ├── ingest/            # CSV loaders + live API sync
 │   │   ├── repositories/      # DB query layer — the ONLY place SQL may live
-│   │   ├── routes/fpl.ts      # /api/bootstrap, /api/player/:code, /api/fixtures
+│   │   ├── routes/fpl.ts      # /api/bootstrap, /api/player/:code[/career], /api/fixtures
 │   │   ├── services/fplApi.ts # live FPL API client, cache; ingest source only
 │   │   └── types/
 │   │       ├── wire.ts        # what upstreams send: strings, season-scoped ids
@@ -141,11 +155,13 @@ fpl-lens/
 │   │   │   ├── Dashboard.tsx  # three rankings over season aggregates
 │   │   │   ├── Players.tsx    # the list: own inline search, sort, expand
 │   │   │   ├── Fixtures.tsx   # by gameweek, with difficulty
-│   │   │   └── PlayerDetail.tsx
+│   │   │   └── PlayerDetail.tsx  # header / This Season / Previous Seasons
 │   │   └── components/
 │   │       ├── ui/            # Card, Table, Badge, Switch, Input
 │   │       ├── PlayerHeader.tsx
 │   │       ├── GameweekFilters.tsx
+│   │       ├── GameweekSection.tsx # a season's gameweeks + the 4 empty states
+│   │       ├── CareerTable.tsx     # one row per season, each expandable
 │   │       ├── StatsTable.tsx
 │   │       ├── PosBadge.tsx   # PosBadge, StatusDot, FDRBadge, PlayerAvatar
 │   │       ├── Countdown.tsx
@@ -323,18 +339,34 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
 6. **`is_current` / `is_next` are false on every event.** They describe a live
    season. Over a completed one there is no current gameweek, and nominating the
    last one would be a guess dressed as data.
-7. **Every response names the season it describes.** `GET /api/bootstrap`,
-   `GET /api/player/:code` and `GET /api/fixtures` each return a top-level
-   `season`. It is the season `resolveSeason()` actually used, never the one
-   requested — so it stays true when the parameter is absent and the default
-   applies, and it keeps being true if the defaulting rule changes. The database
-   holds ten seasons and a response carrying the wrong one is indistinguishable
-   from the right one at a glance: same players, same round numbers, same column
-   names. Without this key the only way to place a payload is to recognise the
-   opponent abbreviations. Any consumer showing data from a response must label
-   it with that response's own `season`, not with one it got from somewhere
-   else — which is why the Fixtures page labels itself from the fixtures
-   response and the player detail page from the detail response.
+7. **Every response labels its data with the season that data came from. Which
+   level the label sits at depends on whether the response spans seasons.**
+
+   - **One season → a top-level `season`.** `GET /api/bootstrap`,
+     `GET /api/player/:code` and `GET /api/fixtures` each return one. It is the
+     season `resolveSeason()` actually used, never the one requested — so it
+     stays true when the parameter is absent and the default applies, and it
+     keeps being true if the defaulting rule changes.
+   - **Many seasons → no top-level key, and a `season` on every row.**
+     `GET /api/player/:code/career` is the first such response. Its body is
+     `{ seasons: [...] }` and each element carries its own `season`, which is
+     what a consumer must render against.
+
+   A top-level `season: null` on a career response was considered and rejected.
+   Null already means "not measured" everywhere in this codebase (rule 6), and a
+   second meaning for it is the ambiguity that rule exists to prevent; it would
+   also be constant across every career response, so it would be ceremony rather
+   than data. A `seasons: string[]` manifest was rejected for duplicating what
+   the rows already carry, and so being able to disagree with them.
+
+   The requirement is unchanged in substance. The database holds ten seasons and
+   a payload carrying the wrong one is indistinguishable from the right one at a
+   glance: same players, same round numbers, same column names. Without the
+   label the only way to place it is to recognise the opponent abbreviations.
+   Any consumer showing data from a response must label it with that response's
+   own season — which is why the Fixtures page labels itself from the fixtures
+   response, the player detail page from the detail response, and each career
+   row from itself.
 8. **Decimals are numbers on the wire, not strings.** `expected_goals` is
    `7.57`, not `"7.57"`. Postgres returns `numeric` and int8 as text and the FPL
    API sends its decimals quoted; both are parsed once, at the repository
@@ -373,6 +405,12 @@ one. `npm run migrate:down` reverts the last migration.
       an appearance floor, ICT index
 - [x] Fixtures page with difficulty ratings, by gameweek
 - [x] Every page header names the season it is showing
+- [x] Career history: one summary row per season on the detail page, each
+      expanding into that season's gameweeks
+- [x] The eleven columns FPL shows that we used to drop — xGC, tackles, CBI,
+      recoveries, defensive contribution, own goals, penalties saved and missed,
+      cards, saves — on both the gameweek rows and the season summary
+- [x] Four distinct empty states where there was one
 
 The live FPL API proxy in `services/fplApi.ts` still exists with its 5-minute
 cache, but no route calls it: it is the ingestion source for the live season.
@@ -403,7 +441,19 @@ around it.
   and re-resolve from `bootstrap.players`, and it belongs with the selector.
 - `GameweekHistory` still has no `kickoff_time` or `season`, so a row cannot be
   keyed globally, only within one player-season (`fixture` is enough for that,
-  and is what `StatsTable` uses). Nothing needs the wider key yet.
+  and is what `StatsTable` uses). Nothing needs the wider key yet — the career
+  table renders one `StatsTable` per expanded season, so keys never have to be
+  unique across seasons.
+- **Two of the four empty states cannot be reached from the UI**, and are held
+  by `career.test.ts` rather than by anything on screen. "Not in the game that
+  season" needs a player the current squad does not contain, and the player list
+  only holds players with a `player_seasons` row for the current season.
+  "Registered, no rows yet" needs a player-season with no matches, and none of
+  the ten seasons has one. Both become reachable with a live season or with
+  search across all players; neither is dead code.
+- **The 2025-26 "This Season" section shows a completed season under a
+  present-tense heading.** It is the latest in the database, so it is correct
+  and reads oddly. It resolves itself when 2026-27 is ingested.
 - `Player` carries no `birth_date` and `Team` no `code`, both of which exist in
   the database. They are not in any response because nothing renders them.
 - The UI has a working light/dark toggle, but neither theme is the one in Design
@@ -532,11 +582,64 @@ a maximum round from a count is wrong in both:
 other seasons are 38 and 38. `PlayerDetail.tsx` therefore takes the round
 numbers from the events themselves rather than counting them.
 
+## Phase 1
+
+Same rule as Phase 0: one item per session, committed between each, and the
+section below is the record of what each decided.
+
+- [x] **1. Career history on the player detail page.** Three sections — header
+      card, "This Season", "Previous Seasons". The last is
+      `GET /api/player/:code/career`, one row per season, and each row expands
+      into that season's gameweeks by re-using `GET /api/player/:code?season=X`
+      and the same `StatsTable`. Responses are cached per season on the client,
+      so collapsing and reopening issues no request.
+
+      **API identity rule 7 was rewritten rather than satisfied.** A career
+      spans ten seasons and has no single one to name. `season: null` was
+      rejected for overloading null, which means "not measured" everywhere else
+      (rule 6); `seasons: string[]` for duplicating what the rows carry. The
+      rule now scopes by response: one season means a top-level key, many means
+      a key on every row.
+
+      **Two premises in the task were false and the data corrected them.**
+      Saka's career is **8** seasons, not 9 — his first is 2018-19, and a ninth
+      arrives with 2026-27. And no player-season in the ten has zero gameweek
+      rows, so "the season has not started" is unreachable on current data.
+
+      Empty states went from one to **four**, because "no rows" turned out to
+      have two causes and only one of them is about time: a player never
+      registered for that season (Cresswell has nine seasons and no 2025-26) will
+      never fill in, while one the season has not reached yet will. The other two
+      are rows that are all zero — Onana's 2025-26 is 38 of them, and the table
+      renders — and rows excluded by the filters.
+
+      Two things the columns forced. The club is **denormalised onto the career
+      row** (`team_name`, `team_short_name`): a career crosses Middlesbrough,
+      Hull, Sunderland and Cardiff, which no single season's team list can name,
+      and the summary would print a bare integer on its oldest rows. For the
+      same reason in the other direction, `GET /api/player/:code?season=X` now
+      returns that season's `teams` — the opponent differs on every gameweek row,
+      so denormalising is not an option there.
+
+      At ~30 columns both tables scroll horizontally, so the Season and GW
+      columns are pinned left with the expand chevron in the Season cell. The
+      nested gameweek table takes `scroll={false}` and shares the outer scroll
+      container: `position: sticky` resolves against the nearest scrolling
+      ancestor, and its own `overflow-x-auto` would never be narrow enough to
+      scroll, so GW would have slid away with everything else.
+
+      One bug found in the browser and not by the tests: the per-season fetch
+      was fired **inside a `setExpanded` updater**, and React StrictMode
+      double-invokes updaters precisely to surface effects hidden in one — every
+      expand issued two requests. Moved out of the updater, with the in-flight
+      guard in a ref rather than in state, since a state guard is read from the
+      render that scheduled the click and two calls in a tick both see it empty.
+
 ## Deferred
 
-The gate used to be "not until Phase 0 is complete". Phase 0 is complete, so
-that sentence would now read as permission to start all of this, which is the
-opposite of the intent.
+The gate used to be "not until Phase 0 is complete". Phase 0 is complete, and
+Phase 1 has started, so that sentence would now read as permission to start all
+of this, which is the opposite of the intent.
 
 What gates the list now: **each item is picked deliberately, as the subject of a
 session, and never drifted into as a side effect of another task.** Nothing here
@@ -563,9 +666,11 @@ real again.
 - **LLM scouting reports.**
 - **Deploy on karpuz-prod** alongside TechRelative (Docker Compose, Nginx), responsive
   design, README with screenshots.
-- **A season selector in the UI.** The API already accepts `?season=` and
-  returns any of the ten; nothing sends it, so the app only ever shows the
-  latest. Phase 1.
+- **A season selector in the UI.** The API accepts `?season=` on all three
+  season-scoped routes and returns any of the ten. The detail page now sends it
+  per expanded career row, but nothing lets a user *choose* the season the app
+  is showing, so the Players, Dashboard and Fixtures pages are still fixed to
+  the latest. Carries the `detailPlayer` snapshot fix in Known Issues with it.
 
 ## Design Decisions
 

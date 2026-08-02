@@ -1,4 +1,9 @@
-import type { BootstrapData, PlayerDetailData, FixturesData } from '../types/fpl';
+import type {
+  BootstrapData,
+  PlayerCareerData,
+  PlayerDetailData,
+  FixturesData,
+} from '../types/fpl';
 
 const BASE = '/api';
 
@@ -25,6 +30,19 @@ export async function fetchPlayerDetail(
   // card from another year, with nothing on screen to say so.
   const res = await fetch(`${BASE}/player/${playerCode}?season=${encodeURIComponent(season)}`);
   if (!res.ok) throw new Error('Failed to fetch player detail');
+  return res.json();
+}
+
+/**
+ * Every season the player was registered for, newest first.
+ *
+ * No season parameter, and the server rejects one rather than ignoring it: a
+ * career is the whole of them. Each row names its own season, which is the
+ * label to render — there is no top-level one here.
+ */
+export async function fetchPlayerCareer(playerCode: number): Promise<PlayerCareerData> {
+  const res = await fetch(`${BASE}/player/${playerCode}/career`);
+  if (!res.ok) throw new Error('Failed to fetch player career');
   return res.json();
 }
 

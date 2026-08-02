@@ -40,14 +40,18 @@ export function TableHead({
   children,
   className = '',
   onClick,
+  title,
 }: {
   children: ReactNode;
   className?: string;
   onClick?: () => void;
+  /** Hover text, for the columns whose heading is a three-letter abbreviation. */
+  title?: string;
 }) {
   return (
     <th
       onClick={onClick}
+      title={title}
       className={cn(
         'h-10 px-3 text-left align-middle text-[10px] font-semibold uppercase tracking-[.08em] text-muted-foreground whitespace-nowrap',
         onClick && 'cursor-pointer select-none hover:text-foreground',
@@ -59,6 +63,19 @@ export function TableHead({
   );
 }
 
-export function TableCell({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <td className={cn('px-3 py-2.5 align-middle', className)}>{children}</td>;
+export function TableCell({
+  children,
+  className = '',
+  colSpan,
+}: {
+  children: ReactNode;
+  className?: string;
+  /** For a row that spans the table rather than lining up with its columns. */
+  colSpan?: number;
+}) {
+  return (
+    <td colSpan={colSpan} className={cn('px-3 py-2.5 align-middle', className)}>
+      {children}
+    </td>
+  );
 }

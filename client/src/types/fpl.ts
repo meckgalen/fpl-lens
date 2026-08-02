@@ -93,7 +93,58 @@ export interface GameweekEvent {
   is_next: boolean;
 }
 
-export interface GameweekHistory {
+/**
+ * The stats a match row and a season summary both carry, mirroring
+ * server/src/types/domain.ts.
+ *
+ * Shared so the two shapes cannot drift apart: a column added to the gameweek
+ * table and missed on the career row would render as `—` and read as "the
+ * season never measured it", which is a claim about the data rather than about
+ * the code.
+ *
+ * Which ones are nullable is a fact about the seasons, not about the stats:
+ *
+ *   - xG, xA, xGI, xGC: 2022-23 onward.
+ *   - tackles, CBI, recoveries: 2016-17 to 2018-19, then nothing for six
+ *     seasons, then 2025-26 again. Older seasons have these where newer ones
+ *     do not.
+ *   - defensive contribution: 2025-26 only.
+ *
+ * The rest exist in all ten, so 0 in them is a measurement and renders as 0.
+ */
+interface MatchStats {
+  total_points: number;
+  minutes: number;
+  goals_scored: number;
+  assists: number;
+  clean_sheets: number;
+  goals_conceded: number;
+  own_goals: number;
+  penalties_saved: number;
+  penalties_missed: number;
+  yellow_cards: number;
+  red_cards: number;
+  saves: number;
+  bonus: number;
+  bps: number;
+
+  influence: number;
+  creativity: number;
+  threat: number;
+  ict_index: number;
+
+  expected_goals: number | null;
+  expected_assists: number | null;
+  expected_goal_involvements: number | null;
+  expected_goals_conceded: number | null;
+
+  tackles: number | null;
+  clearances_blocks_interceptions: number | null;
+  recoveries: number | null;
+  defensive_contribution: number | null;
+}
+
+export interface GameweekHistory extends MatchStats {
   /**
    * The fixture's id. This is the row key — `round` is not unique, because a
    * double gameweek puts two matches in one round.
@@ -103,29 +154,44 @@ export interface GameweekHistory {
   opponent_team: number;
   was_home: boolean;
 
-  total_points: number;
-  minutes: number;
-  goals_scored: number;
-  assists: number;
-  clean_sheets: number;
-  goals_conceded: number;
-  bonus: number;
-  bps: number;
-
-  influence: number;
-  creativity: number;
-  threat: number;
-  ict_index: number;
-
-  /** null before 2022-23. */
-  expected_goals: number | null;
-  expected_assists: number | null;
-  expected_goal_involvements: number | null;
-
   value: number;
   selected: number;
   transfers_in: number;
   transfers_out: number;
+}
+
+/**
+ * One season of a career. Carries its own `season` label, because the response
+ * it arrives in spans ten of them and so has no top-level one to borrow.
+ *
+ * The club is on the row rather than looked up: a career crosses clubs that are
+ * in no current season, so no single season's team list can name them all. It
+ * is the **end-of-season** club — a January transfer is recorded under the new
+ * one for the whole row — so it answers "who did he finish the season at", not
+ * "who was he playing for in gameweek N". The expanded rows answer that.
+ */
+export interface PlayerCareerSeason extends MatchStats {
+  season: string;
+
+  team: number;
+  team_name: string;
+  team_short_name: string;
+  element_type: number;
+  /** £0.1m units at each end of the season. */
+  start_cost: number | null;
+  end_cost: number | null;
+
+  /**
+   * Match rows in the season, played or not. `matches: 0` means the season has
+   * no data for him; `matches: 38, appearances: 0` means he was in the squad
+   * all season and never got on. Both look empty and mean opposite things.
+   */
+  matches: number;
+  /** Matches he played (minutes > 0). Not rounds — a double gameweek is two. */
+  appearances: number;
+  /** null before 2022-23. */
+  starts: number | null;
+  points_per_game: number;
 }
 
 export interface PlayerFixture {
@@ -169,6 +235,24 @@ export interface PlayerDetailData {
   season: string;
   history: GameweekHistory[];
   fixtures: PlayerFixture[];
+  /**
+   * That season's clubs, so an opponent can be named without borrowing the
+   * bootstrap's list — which is the latest season's twenty and cannot name a
+   * club relegated years ago.
+   */
+  teams: Team[];
+}
+
+/**
+ * A career: every season, newest first, and **no top-level `season`**.
+ *
+ * Every other response here names the one season it describes. This one
+ * describes ten, so the label moves onto the rows: `seasons[].season` is what a
+ * consumer must render against. A top-level null would mean something else
+ * entirely — null is "not measured" everywhere else in this file.
+ */
+export interface PlayerCareerData {
+  seasons: PlayerCareerSeason[];
 }
 
 export interface FixturesData {

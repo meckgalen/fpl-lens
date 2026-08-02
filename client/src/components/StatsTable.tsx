@@ -7,6 +7,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 interface Props {
   history: GameweekHistory[];
   teams: Team[];
+  /**
+   * Whether this table owns its horizontal scrolling.
+   *
+   * True standalone. **False when nested inside the career table**, and it has
+   * to be: `position: sticky` resolves against the nearest scrolling ancestor,
+   * so a table wrapped in its own `overflow-x-auto` that is never narrow enough
+   * to scroll would pin GW to a container that does not move, and the column
+   * would slide away with the rest when the outer table scrolls. Sharing the
+   * outer scroller also means one scrollbar for the section rather than two
+   * nested ones.
+   */
+  scroll?: boolean;
 }
 
 type SortKey = keyof GameweekHistory;
@@ -22,6 +34,11 @@ interface Column {
 
 const num = (v: number) => String(v);
 
+/**
+ * Note `Tck` for tackles rather than FPL's `T`, which is already threat here.
+ * Two columns of numbers under the same one-letter heading is a table nobody
+ * can read; threat keeps the letter because it was here first.
+ */
 const COLUMNS: Column[] = [
   { key: 'round', label: 'GW', render: (g) => String(g.round), averaged: false },
   {
@@ -37,12 +54,38 @@ const COLUMNS: Column[] = [
   { key: 'assists', label: 'A', render: (g) => num(g.assists), averaged: true },
   { key: 'clean_sheets', label: 'CS', render: (g) => num(g.clean_sheets), averaged: true },
   { key: 'goals_conceded', label: 'GC', render: (g) => num(g.goals_conceded), averaged: true },
+  { key: 'own_goals', label: 'OG', render: (g) => num(g.own_goals), averaged: true },
+  { key: 'penalties_saved', label: 'PS', render: (g) => num(g.penalties_saved), averaged: true },
+  { key: 'penalties_missed', label: 'PM', render: (g) => num(g.penalties_missed), averaged: true },
+  { key: 'yellow_cards', label: 'YC', render: (g) => num(g.yellow_cards), averaged: true },
+  { key: 'red_cards', label: 'RC', render: (g) => num(g.red_cards), averaged: true },
+  { key: 'saves', label: 'S', render: (g) => num(g.saves), averaged: true },
   { key: 'expected_goals', label: 'xG', render: (g) => fmtNum(g.expected_goals, 2), averaged: true },
   { key: 'expected_assists', label: 'xA', render: (g) => fmtNum(g.expected_assists, 2), averaged: true },
   {
     key: 'expected_goal_involvements',
     label: 'xGI',
     render: (g) => fmtNum(g.expected_goal_involvements, 2),
+    averaged: true,
+  },
+  {
+    key: 'expected_goals_conceded',
+    label: 'xGC',
+    render: (g) => fmtNum(g.expected_goals_conceded, 2),
+    averaged: true,
+  },
+  { key: 'tackles', label: 'Tck', render: (g) => fmtNum(g.tackles, 0), averaged: true },
+  {
+    key: 'clearances_blocks_interceptions',
+    label: 'CBI',
+    render: (g) => fmtNum(g.clearances_blocks_interceptions, 0),
+    averaged: true,
+  },
+  { key: 'recoveries', label: 'R', render: (g) => fmtNum(g.recoveries, 0), averaged: true },
+  {
+    key: 'defensive_contribution',
+    label: 'DC',
+    render: (g) => fmtNum(g.defensive_contribution, 0),
     averaged: true,
   },
   { key: 'ict_index', label: 'ICT', render: (g) => fmtNum(g.ict_index, 1), averaged: true },
@@ -55,6 +98,27 @@ const COLUMNS: Column[] = [
   { key: 'selected', label: 'Selected', render: (g) => g.selected.toLocaleString(), averaged: false },
 ];
 
+/**
+ * The pinned first column.
+ *
+ * Thirty-one columns do not fit, so the card scrolls horizontally — and a row
+ * of numbers with the round scrolled off the left edge cannot be attributed to
+ * a gameweek at all. GW therefore stays put.
+ *
+ * The background has to be opaque and its own: a transparent sticky cell shows
+ * the columns sliding underneath it. `bg-card` and `bg-muted` are both defined
+ * per theme, so this follows the light/dark toggle. The hover tint is a shade
+ * stronger here than the `bg-muted/50` on the rest of the row, because a
+ * translucent hover cannot be layered over an opaque base without compounding;
+ * it reads as the pinned column being distinct, which it is.
+ *
+ * The right-hand rule is a box-shadow rather than a border because Tailwind's
+ * reset collapses table borders, and a collapsed border belongs to the table
+ * rather than to the cell — so it scrolls away with the columns it was meant to
+ * separate.
+ */
+const STICKY_COL = 'sticky left-0 z-10 bg-card group-hover:bg-muted shadow-[1px_0_0_0_hsl(var(--border))]';
+
 /** The sortable/averageable value of a cell, or null where there is none. */
 function numericValue(gw: GameweekHistory, key: SortKey): number | null {
   const v = gw[key];
@@ -63,7 +127,7 @@ function numericValue(gw: GameweekHistory, key: SortKey): number | null {
   return typeof v === 'number' ? v : null;
 }
 
-export default function StatsTable({ history, teams }: Props) {
+export default function StatsTable({ history, teams, scroll = true }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('round');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
@@ -112,16 +176,20 @@ export default function StatsTable({ history, teams }: Props) {
     return mean.toFixed(1);
   };
 
-  return (
-    <Card className="overflow-x-auto">
-      <Table>
+  // Built first and wrapped after, rather than through a component chosen at
+  // render time: a component defined inside the body is a new type on every
+  // render, so React would unmount and remount the table and lose the sort.
+  const table = (
+    <Table>
         <TableHeader>
           <TableRow>
-            {COLUMNS.map((col) => (
+            {COLUMNS.map((col, i) => (
               <TableHead
                 key={col.key}
                 onClick={() => handleSort(col.key)}
-                className={`text-right ${sortKey === col.key ? 'text-foreground' : ''}`}
+                className={`text-right ${sortKey === col.key ? 'text-foreground' : ''} ${
+                  i === 0 ? STICKY_COL : ''
+                }`}
               >
                 {col.label}
                 {sortKey === col.key && (
@@ -138,11 +206,13 @@ export default function StatsTable({ history, teams }: Props) {
               renders wrong (rule 13). Not an edge case: 2025-26 alone has three
               such rounds — 26 (79 players), 33 (248) and 36 (82). */}
           {sorted.map((gw) => (
-            <TableRow key={gw.fixture}>
-              {COLUMNS.map((col) => (
+            <TableRow key={gw.fixture} className="group">
+              {COLUMNS.map((col, i) => (
                 <TableCell
                   key={col.key}
-                  className="text-right font-display text-[13px] tabular-nums text-foreground whitespace-nowrap"
+                  className={`text-right font-display text-[13px] tabular-nums text-foreground whitespace-nowrap ${
+                    i === 0 ? STICKY_COL : ''
+                  }`}
                 >
                   {col.render(gw, teamMap)}
                 </TableCell>
@@ -153,7 +223,13 @@ export default function StatsTable({ history, teams }: Props) {
             {COLUMNS.map((col, i) => (
               <TableCell
                 key={col.key}
-                className="text-right font-display text-[12px] tabular-nums text-muted-foreground whitespace-nowrap"
+                className={`text-right font-display text-[12px] tabular-nums text-muted-foreground whitespace-nowrap ${
+                  // The averages row is already tinted, so its pinned cell takes
+                  // the opaque `muted` rather than the card colour.
+                  i === 0
+                    ? 'sticky left-0 z-10 bg-muted shadow-[1px_0_0_0_hsl(var(--border))]'
+                    : ''
+                }`}
               >
                 {i === 0
                   ? 'AVG'
@@ -166,7 +242,12 @@ export default function StatsTable({ history, teams }: Props) {
             ))}
           </TableRow>
         </TableBody>
-      </Table>
-    </Card>
+    </Table>
+  );
+
+  return scroll ? (
+    <Card className="overflow-x-auto">{table}</Card>
+  ) : (
+    <div className="rounded-lg border border-border bg-card">{table}</div>
   );
 }

@@ -29,6 +29,7 @@ import { pool } from '../db/pool.js';
 import { latestSeason, listSeasons, seasonExists } from '../repositories/seasons.js';
 import { listTeams } from '../repositories/teams.js';
 import {
+  getPlayerCareer,
   getPlayerHistory,
   getPlayerUpcomingFixtures,
   listPlayerTotals,
@@ -39,6 +40,7 @@ import type {
   BootstrapResponse,
   ErrorResponse,
   FixturesResponse,
+  PlayerCareerResponse,
   PlayerDetailResponse,
 } from '../types/api.js';
 
@@ -153,17 +155,62 @@ router.get('/player/:code', async (req: Request, res: Response) => {
     }
 
     // history: matches played. fixtures: what is left to play, which is empty
-    // for every completed season.
-    const [history, fixtures] = await Promise.all([
+    // for every completed season. teams: that season's clubs, so the opponent
+    // column can be named without borrowing the bootstrap's — which is the
+    // latest season's twenty and cannot name a club relegated in 2017.
+    const [history, fixtures, teams] = await Promise.all([
       getPlayerHistory(pool, fplCode, season),
       getPlayerUpcomingFixtures(pool, fplCode, season),
+      listTeams(pool, season),
     ]);
 
-    const body: PlayerDetailResponse = { season, history, fixtures };
+    const body: PlayerDetailResponse = { season, history, fixtures, teams };
     res.json(body);
   } catch (err) {
     console.error('Player query failed:', err);
     res.status(500).json({ error: 'Failed to load player data' } satisfies ErrorResponse);
+  }
+});
+
+/**
+ * GET /api/player/:code/career — one summary row per season, newest first.
+ *
+ * The only response in the API that spans seasons, and so the only one with no
+ * top-level `season`. API identity rule 7 asks that every piece of data on
+ * screen be labelled with the season it came from; over ten seasons that label
+ * belongs on the row, and `seasons[].season` carries it. A top-level null would
+ * overload null, which means "not measured" everywhere else here (rule 6).
+ *
+ * `?season=` is rejected rather than ignored. Accepting a parameter and
+ * silently doing something else with it is how a caller ends up certain it
+ * filtered when it did not.
+ */
+router.get('/player/:code/career', async (req: Request, res: Response) => {
+  try {
+    const fplCode = Number(req.params.code);
+    if (!Number.isInteger(fplCode)) {
+      res.status(400).json({ error: 'Invalid player code' } satisfies ErrorResponse);
+      return;
+    }
+
+    if (req.query.season !== undefined) {
+      res.status(400).json({
+        error: 'A career spans every season; ?season= is not accepted here. Use /api/player/:code?season= for one.',
+        available: await listSeasons(pool),
+      } satisfies ErrorResponse);
+      return;
+    }
+
+    if (!(await playerExists(pool, fplCode))) {
+      res.status(404).json({ error: `No player with code ${fplCode}` } satisfies ErrorResponse);
+      return;
+    }
+
+    const body: PlayerCareerResponse = { seasons: await getPlayerCareer(pool, fplCode) };
+    res.json(body);
+  } catch (err) {
+    console.error('Career query failed:', err);
+    res.status(500).json({ error: 'Failed to load player career' } satisfies ErrorResponse);
   }
 });
 
