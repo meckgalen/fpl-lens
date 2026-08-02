@@ -68,7 +68,13 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
         const name = `${p.first_name} ${p.second_name} ${p.web_name}`.toLowerCase();
         return name.includes(q);
       })
-      .sort((a, c) => sortDir * (numForKey(c, sort) - numForKey(a, sort)));
+      // Ascending, then flipped by sortDir, so -1 is descending and matches the
+      // ▾ the header draws for it. It used to be `c - a` here, descending
+      // already, which sortDir then inverted: the default view was the
+      // lowest-scoring players under a descending arrow. The old default sort
+      // key was `form`, which is null, so the comparator returned NaN, sort left
+      // the array in the order the API sent it, and the inversion never showed.
+      .sort((a, c) => sortDir * (numForKey(a, sort) - numForKey(c, sort)));
   }, [b.players, search, pos, sort, sortDir]);
 
   const colWidth = 4 + cols.length;

@@ -4,7 +4,7 @@ import { Badge } from '../components/ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table';
 import { PlayerAvatar, PosBadge } from '../components/PosBadge';
 import { Countdown } from '../components/Countdown';
-import { POSITION_MAP, fmtNum } from '../types/fpl';
+import { NO_DEADLINE, POSITION_MAP, fmtNum } from '../types/fpl';
 import { currentGameweek, nextGameweek, useBootstrap } from '../lib/bootstrap';
 
 /**
@@ -31,7 +31,7 @@ export default function Dashboard() {
 
   const cur = currentGameweek(b);
   const next = nextGameweek(b);
-  const deadline = next?.deadline_time ? new Date(next.deadline_time).getTime() : Date.now();
+  const deadline = next?.deadline_time ? new Date(next.deadline_time).getTime() : null;
 
   // Every ranking below used to sort on `form`, which the database has no
   // source for and which now arrives null: parseFloat(null) is NaN, a NaN
@@ -85,7 +85,7 @@ export default function Dashboard() {
         hour: '2-digit',
         minute: '2-digit',
       })
-    : 'TBD';
+    : NO_DEADLINE;
 
   return (
     <div>

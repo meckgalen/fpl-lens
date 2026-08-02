@@ -137,6 +137,14 @@ export function statusBucket(code: string | null | undefined): 'fit' | 'doubt' |
 export const NO_VALUE = '—';
 
 /**
+ * Shown wherever a deadline would go and there is none. Distinct from NO_VALUE
+ * because it reads as a date that is not yet known rather than a measurement
+ * nobody took, and because all three deadline call sites must agree — they did
+ * not, and two of them rendered an expired clock.
+ */
+export const NO_DEADLINE = 'TBD';
+
+/**
  * Format a numeric that may be absent. Returns the placeholder rather than
  * 'NaN', which is what `parseFloat(null).toFixed(2)` produces.
  */

@@ -79,7 +79,7 @@ export default function App() {
         minute: '2-digit',
       })
     : null;
-  const deadlineTs = next?.deadline_time ? new Date(next.deadline_time).getTime() : Date.now();
+  const deadlineTs = next?.deadline_time ? new Date(next.deadline_time).getTime() : null;
 
   if (error) {
     return (
