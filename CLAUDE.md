@@ -11,28 +11,35 @@ with filters.
 MVP scaffold is complete and still reads directly from the live FPL API. **Active work
 is Phase 0: replacing that with a Postgres data layer backfilled from historical CSVs.**
 
-Phase 0 steps 1 through 4 are done. The raw CSVs for all ten seasons are in
+Phase 0 steps 1 through 5 are done. The raw CSVs for all ten seasons are in
 `data/raw/` and profiled in `docs/data-profile.md`. Postgres 16 runs in
 docker-compose and the schema exists, created by
 `server/migrations/1785550165663_initial-schema.ts`.
 
-Two ingest scripts populate five of the six tables. Both are idempotent, run in
-one transaction, and assert their own results:
+**All six tables are populated.** Three ingest scripts do it. All three are
+idempotent, run in one transaction, and assert their own results:
 
-| Table            | Rows                 | Populated by             |
-| ---------------- | -------------------- | ------------------------ |
-| `teams`          | 34                   | `npm run ingest:dimensions` |
-| `team_seasons`   | 200 (20 per season)  | `npm run ingest:dimensions` |
-| `players`        | 2623                 | `npm run ingest:dimensions` |
-| `player_seasons` | 7338                 | `npm run ingest:dimensions` |
-| `fixtures`       | 3800 (380 per season)| `npm run ingest:fixtures`   |
+| Table              | Rows                    | Populated by                |
+| ------------------ | ----------------------- | --------------------------- |
+| `teams`            | 34                      | `npm run ingest:dimensions` |
+| `team_seasons`     | 200 (20 per season)     | `npm run ingest:dimensions` |
+| `players`          | 2623                    | `npm run ingest:dimensions` |
+| `player_seasons`   | 7338                    | `npm run ingest:dimensions` |
+| `fixtures`         | 3800 (380 per season)   | `npm run ingest:fixtures`   |
+| `player_gameweeks` | 253509                  | `npm run ingest:gameweeks`  |
 
-`ingest:fixtures` depends on `ingest:dimensions` having run: it resolves
-season-scoped team ids through `team_seasons` and fails with a clear message if
-that table is not populated.
+The scripts must be run in that order. Each asserts its predecessors' row counts
+before it starts and fails with a message naming the one to run first:
+`ingest:fixtures` needs `team_seasons`, and `ingest:gameweeks` needs
+`player_seasons` and `fixtures` to resolve its three season-scoped ids.
 
-**`player_gameweeks` is the only empty table.** Step 5, fact ingest, is next. The
-routes still hit the live API; `server/src/db/pool.ts` is not yet imported by
+`npm test` runs the acceptance suite in
+`server/src/ingest/player-gameweeks.test.ts` against the populated database: the
+nine Saka 2025-26 metrics, Salah 2017-18 and De Bruyne 2019-20 (both sourced
+independently of the CSVs), plus the dedup, double/blank gameweek and rule 6
+nullability boundaries. 11 tests, all passing.
+
+The routes still hit the live API; `server/src/db/pool.ts` is not yet imported by
 `index.ts`, and nothing is read from Postgres until step 6.
 
 The app currently cannot show anything useful, because it is preseason (2026/27 GW1
@@ -306,9 +313,14 @@ One session per step. Commit between each.
       `player_seasons` from `teams.csv` and `players_raw.csv`.
 - [x] **4. Fixture ingest.** Populate `fixtures` from `fixtures.csv` for 2018-19
       onward and derive it from `merged_gw.csv` for 2016-17 and 2017-18 per rule 14.
-- [ ] **5. Fact ingest.** Populate `player_gameweeks` from `merged_gw.csv` via `COPY`,
-      resolving `element` and `opponent_team` through the season maps. Roughly 200k to
-      250k rows total. Use `COPY` through node-postgres, not an ORM row by row.
+- [x] **5. Fact ingest.** `server/src/ingest/ingest-gameweeks.ts` populates
+      `player_gameweeks` with 253,509 rows from `merged_gw.csv`, resolving `element`,
+      `fixture` and `opponent_team` through the season maps. `COPY` through
+      node-postgres into a temp staging table, then one
+      `INSERT ... ON CONFLICT (player_id, fixture_id) DO UPDATE`. Exclusions are
+      pinned by count, not absorbed: 322 Assistant Manager rows in 2024-25, 59
+      postponed-fixture duplicates in 2019-20, 10 byte-identical duplicates in
+      2025-26. Nothing else is dropped — an unresolved id throws.
 - [ ] **6. Repository and cutover.** Add `repositories/`, then swap
       `GET /api/player/:id` to read from Postgres while keeping the response shape
       byte-identical so the client stays untouched.
@@ -339,8 +351,9 @@ run many times.
 
 ### Acceptance test
 
-After step 4, summing `player_gameweeks` for Bukayo Saka in 2025-26 must produce all
-nine of these:
+Written, passing, and kept: `server/src/ingest/player-gameweeks.test.ts`, run with
+`npm test`. Summing `player_gameweeks` for Bukayo Saka in 2025-26 produces all nine
+of these:
 
 | Metric         | Expected |
 | -------------- | -------- |
@@ -354,9 +367,22 @@ nine of these:
 | Bonus          | 18       |
 | BPS            | 570      |
 
-If minutes match but points do not, rows were lost in a blank gameweek. Write this as
-a real test and repeat it for two or three more players across different seasons,
-including one before 2022-23 to exercise the xG nullability path.
+If minutes match but points do not, rows were lost in a blank gameweek. The suite
+repeats the sum for Salah 2017-18 (a latin1 season, `starts` NULL), De Bruyne
+2019-20 (the postponed-fixture dedup, and a double gameweek) and Saka 2019-20,
+which exercises the xG nullability path three times over.
+
+Expected values come from outside the CSVs wherever possible: the two Saka seasons
+were taken from the official API's `history_past`, which is a separate pipeline
+from the vaastav files. Note that `history_past` reports `starts: 0` before
+2022-23 while we store NULL — that is rule 6, not a discrepancy.
+
+**Two volume checks in the ingest do not share their derivation with the pinned
+row counts**, and so can catch loss those counts cannot: every season must have
+exactly 380 distinct `fixture_id`s, and `SUM(minutes)` must land within 1% below
+380 × 2 × 11 × 90 = 752,400. The minutes figure is reported, never pinned to a
+number — red cards and stoppage time make it approximate. Observed range is 0.13%
+to 0.52% below.
 
 ## Deferred
 
