@@ -1,12 +1,20 @@
 /**
  * The single pg connection pool for the process.
  *
- * Not wired into index.ts yet. Routes keep reading the live FPL API until
- * Phase 0 step 5 (repository and cutover).
+ * Read by the repositories in ../repositories, which the routes call. The
+ * ingest scripts connect through the same pool.
  */
 
 import pg from 'pg';
 import { dbConfig } from './config.js';
+
+/**
+ * Anything that can run a query: the pool itself, or a client checked out of
+ * it inside a transaction. Repository functions take one of these as their
+ * first argument rather than reaching for the pool directly, so a caller can
+ * run them inside an existing transaction and a test can pass a stub.
+ */
+export type Queryable = Pick<pg.Pool, 'query'> | Pick<pg.PoolClient, 'query'>;
 
 export const pool = new pg.Pool({
   connectionString: dbConfig.connectionString,

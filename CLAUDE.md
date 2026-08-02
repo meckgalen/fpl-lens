@@ -39,12 +39,26 @@ nine Saka 2025-26 metrics, Salah 2017-18 and De Bruyne 2019-20 (both sourced
 independently of the CSVs), plus the dedup, double/blank gameweek and rule 6
 nullability boundaries. 11 tests, all passing.
 
-The routes still hit the live API; `server/src/db/pool.ts` is not yet imported by
-`index.ts`, and nothing is read from Postgres until step 6.
+**Step 6 is done: all three routes read Postgres.** `GET /api/bootstrap`,
+`GET /api/player/:code` and `GET /api/fixtures` go through
+`server/src/repositories/`, and no SQL exists outside that directory.
+`server/src/services/fplApi.ts` and its 5-minute cache are still there and still
+unused by the routes — it is the ingestion source for the live season, not dead
+code.
 
-The app currently cannot show anything useful, because it is preseason (2026/27 GW1
-deadline is 21 Aug 2026) and the live API returns an empty current-season history
-array. Historical data is the only data that exists right now.
+Every route serves one season, defaulting to the latest in the database
+(computed, not hardcoded) and accepting `?season=2019-20`. An unknown season is
+a 400 listing the ten that exist. The client does not send the parameter yet.
+
+`GET /api/bootstrap` runs a ~90ms aggregate per request. No cache and no
+materialized view: it is fast enough, and a cache is a second source of truth.
+
+The app now shows the 2025-26 season in full — 841 players, 380 fixtures, 38
+gameweeks — instead of the empty current-season history the live API returns
+during preseason (2026/27 GW1 deadline is 21 Aug 2026).
+
+**The client has not been updated yet and still passes an FPL element id to
+`/api/player/:code`.** That is step 7's first job. See "API identity rules".
 
 ## Tech Stack
 
@@ -92,9 +106,9 @@ fpl-lens/
 │   │   ├── index.ts           # Express entry, port 3001
 │   │   ├── db/                # pool, connection config
 │   │   ├── ingest/            # CSV loaders + live API sync
-│   │   ├── repositories/      # DB query layer
-│   │   ├── routes/fpl.ts      # GET /api/bootstrap, GET /api/player/:id
-│   │   ├── services/fplApi.ts # live FPL API client with in-memory cache
+│   │   ├── repositories/      # DB query layer — the ONLY place SQL may live
+│   │   ├── routes/fpl.ts      # /api/bootstrap, /api/player/:code, /api/fixtures
+│   │   ├── services/fplApi.ts # live FPL API client, cache; ingest source only
 │   │   └── types/             # wire types (FPL/CSV shapes) + domain types
 │   ├── package.json
 │   └── tsconfig.json
@@ -248,6 +262,41 @@ is silently wrong.
     lowercase `'none'`: none of them occur in any of the three files, and `'-'`
     could be legitimate in a text field.
 
+## API Identity Rules
+
+The storage rules above keep season-scoped ids out of the database. These keep
+them out of the API. Added in step 6; they are the reason the cutover has a
+deliberate breaking change in it.
+
+1. **A code is the external contract. A season-scoped FPL id is not.** Anything
+   that appears in a URL or in a response body is a permanent code:
+   `players.fpl_code` for players, `teams.fpl_team_code` for teams. FPL reassigns
+   element ids and team ids every August, so `/api/player/328` would address a
+   different footballer each season and every stored URL would rot at rollover
+   without erroring. This is rule 2 and rule 5 applied one layer outwards.
+2. **The season-scoped ids stay in the ingest layer**, where `player_seasons`
+   and `team_seasons` translate them. No repository returns one.
+3. **Concretely:** `players[].id` is `fpl_code`; `teams[].id`, `players[].team`
+   and `history[].opponent_team` are all `fpl_team_code`;
+   `GET /api/player/:code` takes a `fpl_code`. `fixtures[].id` is our own
+   surrogate `fixtures.id`, which is permanent and verified stable across
+   re-ingest.
+4. **Fields with no source in the database are null, not invented.** `form`,
+   `selected_by_percent`, `status`, `news`, `chance_of_playing_next_round` and
+   `events[].deadline_time` describe the live game and arrive with the bootstrap
+   sync. `fixtures[].code` is FPL's permanent fixture code, which was never
+   ingested. The keys stay present so the shape does not move.
+5. **`photo` and `points_per_game` are derived, because they genuinely are.**
+   `photo` is `${fpl_code}.jpg`, which is how FPL builds it.
+   `points_per_game` is total points over **matches appeared in**
+   (`minutes > 0`), not over rounds — rule 13 requires saying which, and this is
+   the one that reproduces FPL's own value. It rounds half-to-even, matching
+   FPL's Python; Postgres `numeric` rounds half away from zero and disagreed
+   with the live API on ten players before that was fixed.
+6. **`is_current` / `is_next` are false on every event.** They describe a live
+   season. Over a completed one there is no current gameweek, and nominating the
+   last one would be a guess dressed as data.
+
 ## Getting Started
 
 ```bash
@@ -277,17 +326,24 @@ one. `npm run migrate:down` reverts the last migration.
 
 ## Known Issues
 
+- **The client still sends an FPL element id to `/api/player/:code`, which now
+  expects `players.fpl_code`.** Player detail is broken until step 7 changes it.
+  The fix is small: bootstrap already returns the code as `players[].id`, so the
+  client only has to keep round-tripping the id it was given.
+- The five live-only bootstrap fields are `null` now, so the header card renders
+  an empty Form, `null%` Ownership and the "Unavailable" status colour until the
+  bootstrap sync lands. Not a bug in the cutover; see API identity rule 4.
+- `PlayerHeader` does `parseFloat(player.expected_goals).toFixed(2)`, which
+  renders `NaN` when xG is legitimately NULL. Invisible today because the default
+  season is 2025-26; visible the moment `?season=` reaches a pre-2022-23 season.
 - Gameweek range filter defaults to "from 1 to 1", so it shows a single gameweek even
-  when data exists.
+  when data exists. The `events[]` array now reports 38 finished gameweeks rather
+  than 0, so the bound it reads is at least correct.
 - `history_past` is fetched from `element-summary` and then discarded. It is never
-  rendered. Superseded by Phase 0, which will provide full per-gameweek history for
+  rendered. Superseded by Phase 0, which provides full per-gameweek history for
   those seasons.
-- The header card currently displays 2025-26 carryover totals from bootstrap
-  (`total_points`, `minutes`, `goals_scored`, ICT, bonus, bps). These reset to zero at
-  the 21 Aug rollover and the card will look broken. Price, ownership, form and status
-  are already live 2026/27 values.
-- Empty state reads "No data for the selected filters", which is misleading during
-  preseason when the cause is an empty history array, not the filters.
+- Empty state reads "No data for the selected filters", which is misleading when
+  the cause is an empty history array, not the filters.
 - `client/src/types/fpl.ts` mirrors the FPL wire format directly. Numerics arrive as
   strings (`expected_goals: string`, `form: string`) and every consumer parses them ad
   hoc. There is no `code`, `team_code` or `birth_date` on `Player`, no `code` on
@@ -321,12 +377,20 @@ One session per step. Commit between each.
       pinned by count, not absorbed: 322 Assistant Manager rows in 2024-25, 59
       postponed-fixture duplicates in 2019-20, 10 byte-identical duplicates in
       2025-26. Nothing else is dropped — an unresolved id throws.
-- [ ] **6. Repository and cutover.** Add `repositories/`, then swap
-      `GET /api/player/:id` to read from Postgres while keeping the response shape
-      byte-identical so the client stays untouched.
+- [x] **6. Repository and cutover.** `server/src/repositories/{seasons,teams,
+      players,fixtures}.ts` hold every query; the three routes read Postgres
+      through them. Response shapes are unchanged bar the identity changes in
+      "API Identity Rules" and the five null live-only fields. Verified with a
+      field-by-field diff against responses captured from the live API before
+      the swap: no unexplained differences, and on the six players where the
+      live bootstrap's carryover totals disagree with ours, FPL's own
+      `history_past` backs ours.
 - [ ] **7. Types split.** Separate wire types (FPL and CSV shapes), domain types, and
       UI constants, with the mapper living at the ingestion boundary. Numerics become
-      `number`, not `string`.
+      `number`, not `string`. **Starts with the client fix step 6 deliberately left
+      undone:** `fetchPlayerDetail` must send `players[].id`, which is now the
+      permanent `fpl_code`. Also move the wire mapping out of `routes/fpl.ts`,
+      where step 6 parked it on purpose to avoid colliding with this step.
 
 ### Target schema
 

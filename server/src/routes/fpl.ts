@@ -1,66 +1,83 @@
+/**
+ * The read API. Phase 0 step 6 moved all three routes off the live FPL API and
+ * onto Postgres.
+ *
+ * The response shapes are unchanged from the live-API era, deliberately, so the
+ * client keeps working untouched — with two intentional exceptions, both about
+ * identity:
+ *
+ *   1. Ids in responses are permanent codes, never season-scoped FPL ids.
+ *      `players[].id` is `players.fpl_code`, and every team id — `teams[].id`,
+ *      `players[].team`, `history[].opponent_team` — is `teams.fpl_team_code`.
+ *      FPL reassigns its element and team ids every August, so a URL or a
+ *      cached id built on one silently comes to mean somebody else. The
+ *      season-scoped ids stay in the ingest layer, where `player_seasons` and
+ *      `team_seasons` translate them.
+ *
+ *   2. Seven fields have no source in the database. `photo` and
+ *      `points_per_game` are derivable and are derived; the other five return
+ *      null. See the comment on the bootstrap handler.
+ *
+ * The database holds ten seasons where the FPL shape assumes one, so both
+ * player-facing routes take an optional ?season= and otherwise use the latest
+ * season present. The client does not send it yet.
+ *
+ * No SQL lives in this file. It all lives in ../repositories.
+ *
+ * ../services/fplApi.ts is intentionally not imported here any more. It is not
+ * dead code: it is the ingestion source for the live season.
+ */
+
 import { Router, Request, Response } from 'express';
-import { getBootstrap, getPlayerDetail, getFixtures } from '../services/fplApi.js';
+import { pool } from '../db/pool.js';
+import { latestSeason, listSeasons, seasonExists } from '../repositories/seasons.js';
+import { listTeams } from '../repositories/teams.js';
+import {
+  getPlayerHistory,
+  getPlayerUpcomingFixtures,
+  listPlayerTotals,
+  playerExists,
+} from '../repositories/players.js';
+import { listEvents, listFixtures } from '../repositories/fixtures.js';
 
 const router = Router();
 
-// GET /api/bootstrap — all players, teams, gameweeks
-router.get('/bootstrap', async (_req: Request, res: Response) => {
+/** Rule 8: '2016-17'. Rejected early so a typo cannot reach a query. */
+const SEASON_FORMAT = /^\d{4}-\d{2}$/;
+
+/**
+ * Resolve ?season=, defaulting to the latest season in the database.
+ *
+ * An unknown season is a 400 rather than a silent fall back to the default:
+ * quietly serving 2025-26 to someone who asked for 2019-20 is worse than
+ * saying no, because the response looks perfectly valid.
+ */
+async function resolveSeason(req: Request, res: Response): Promise<string | null> {
+  const requested = req.query.season;
+  if (requested === undefined) return latestSeason(pool);
+
+  const season = String(requested);
+  if (!SEASON_FORMAT.test(season) || !(await seasonExists(pool, season))) {
+    res.status(400).json({
+      error: `Unknown season '${season}'`,
+      available: await listSeasons(pool),
+    });
+    return null;
+  }
+  return season;
+}
+
+// GET /api/bootstrap — all players, teams, gameweeks for one season
+router.get('/bootstrap', async (req: Request, res: Response) => {
   try {
-    const data = await getBootstrap();
+    const season = await resolveSeason(req, res);
+    if (season === null) return;
 
-    // Build a teams lookup for the frontend
-    const teams = data.teams.map((t: any) => ({
-      id: t.id,
-      name: t.name,
-      short_name: t.short_name,
-      strength_overall_home: t.strength_overall_home,
-      strength_overall_away: t.strength_overall_away,
-      strength_attack_home: t.strength_attack_home,
-      strength_attack_away: t.strength_attack_away,
-      strength_defence_home: t.strength_defence_home,
-      strength_defence_away: t.strength_defence_away,
-    }));
-
-    // Slim down players to what the frontend needs
-    const players = data.elements.map((p: any) => ({
-      id: p.id,
-      first_name: p.first_name,
-      second_name: p.second_name,
-      web_name: p.web_name,
-      team: p.team,
-      element_type: p.element_type, // 1=GKP, 2=DEF, 3=MID, 4=FWD
-      now_cost: p.now_cost, // divide by 10 for actual price
-      total_points: p.total_points,
-      minutes: p.minutes,
-      goals_scored: p.goals_scored,
-      assists: p.assists,
-      clean_sheets: p.clean_sheets,
-      expected_goals: p.expected_goals,
-      expected_assists: p.expected_assists,
-      expected_goal_involvements: p.expected_goal_involvements,
-      ict_index: p.ict_index,
-      influence: p.influence,
-      creativity: p.creativity,
-      threat: p.threat,
-      bonus: p.bonus,
-      bps: p.bps,
-      form: p.form,
-      points_per_game: p.points_per_game,
-      selected_by_percent: p.selected_by_percent,
-      status: p.status, // a=available, d=doubtful, i=injured, s=suspended, u=unavailable
-      chance_of_playing_next_round: p.chance_of_playing_next_round,
-      news: p.news,
-      photo: p.photo,
-    }));
-
-    const events = data.events.map((e: any) => ({
-      id: e.id,
-      name: e.name,
-      deadline_time: e.deadline_time,
-      finished: e.finished,
-      is_current: e.is_current,
-      is_next: e.is_next,
-    }));
+    const [players, teams, events] = await Promise.all([
+      listPlayerTotals(pool, season),
+      listTeams(pool, season),
+      listEvents(pool, season),
+    ]);
 
     const positions = [
       { id: 1, name: 'Goalkeeper' },
@@ -69,90 +86,93 @@ router.get('/bootstrap', async (_req: Request, res: Response) => {
       { id: 4, name: 'Forward' },
     ];
 
-    res.json({ players, teams, events, positions });
+    // Deliberately no `season` key, tempting as it is: the brief is that the
+    // shape does not move except for the two identity changes, and an added
+    // key is still a moved shape. It belongs in the step 7 types split.
+    res.json({
+      players: players.map((p) => ({
+        ...p,
+        // Live-only fields, kept present so the response shape does not move.
+        // They describe the state of the game right now — who is injured, what
+        // the market thinks — which is not something a historical season has.
+        // They will be filled by the bootstrap sync that ingests the live
+        // season; until then, null rather than an invented value.
+        form: null,
+        selected_by_percent: null,
+        status: null,
+        news: null,
+        chance_of_playing_next_round: null,
+      })),
+      teams,
+      events,
+      positions,
+    });
   } catch (err) {
-    console.error('Bootstrap fetch failed:', err);
-    res.status(500).json({ error: 'Failed to fetch FPL data' });
+    console.error('Bootstrap query failed:', err);
+    res.status(500).json({ error: 'Failed to load FPL data' });
   }
 });
 
-// GET /api/player/:id — gameweek-by-gameweek history
-router.get('/player/:id', async (req: Request, res: Response) => {
+/**
+ * GET /api/player/:code — gameweek-by-gameweek history.
+ *
+ * :code is `players.fpl_code`, NOT an FPL element id. This is the one
+ * deliberate breaking change of step 6. The element id is reassigned every
+ * August, so /api/player/328 would address a different footballer each season
+ * and every bookmarked or stored URL would rot at rollover. The code is
+ * permanent.
+ */
+router.get('/player/:code', async (req: Request, res: Response) => {
   try {
-    const playerId = parseInt(req.params.id);
-    if (isNaN(playerId)) {
-      res.status(400).json({ error: 'Invalid player ID' });
+    const fplCode = Number(req.params.code);
+    if (!Number.isInteger(fplCode)) {
+      res.status(400).json({ error: 'Invalid player code' });
       return;
     }
 
-    const data = await getPlayerDetail(playerId);
+    const season = await resolveSeason(req, res);
+    if (season === null) return;
 
-    // data.history = past gameweek performances
-    // data.fixtures = upcoming fixtures
-    const history = data.history.map((gw: any) => ({
-      round: gw.round,
-      opponent_team: gw.opponent_team,
-      was_home: gw.was_home,
-      total_points: gw.total_points,
-      minutes: gw.minutes,
-      goals_scored: gw.goals_scored,
-      assists: gw.assists,
-      clean_sheets: gw.clean_sheets,
-      goals_conceded: gw.goals_conceded,
-      bonus: gw.bonus,
-      bps: gw.bps,
-      influence: gw.influence,
-      creativity: gw.creativity,
-      threat: gw.threat,
-      ict_index: gw.ict_index,
-      expected_goals: gw.expected_goals,
-      expected_assists: gw.expected_assists,
-      expected_goal_involvements: gw.expected_goal_involvements,
-      value: gw.value, // price at that GW (divide by 10)
-      selected: gw.selected,
-      transfers_in: gw.transfers_in,
-      transfers_out: gw.transfers_out,
-    }));
+    if (!(await playerExists(pool, fplCode))) {
+      res.status(404).json({ error: `No player with code ${fplCode}` });
+      return;
+    }
 
-    const fixtures = data.fixtures.map((f: any) => ({
-      event: f.event,
-      team_a: f.team_a,
-      team_h: f.team_h,
-      is_home: f.is_home,
-      difficulty: f.difficulty,
-    }));
+    // history: matches played. fixtures: what is left to play, which is empty
+    // for every completed season.
+    const [history, fixtures] = await Promise.all([
+      getPlayerHistory(pool, fplCode, season),
+      getPlayerUpcomingFixtures(pool, fplCode, season),
+    ]);
 
     res.json({ history, fixtures });
   } catch (err) {
-    console.error('Player detail fetch failed:', err);
-    res.status(500).json({ error: 'Failed to fetch player data' });
+    console.error('Player query failed:', err);
+    res.status(500).json({ error: 'Failed to load player data' });
   }
 });
 
-// GET /api/fixtures — all fixtures (optional ?event=N to filter)
+// GET /api/fixtures — one season's fixtures (optional ?event=N to filter)
 router.get('/fixtures', async (req: Request, res: Response) => {
   try {
-    const data = await getFixtures();
-    const eventParam = req.query.event ? parseInt(req.query.event as string) : null;
-    const fixtures = data
-      .filter((f: any) => (eventParam == null ? true : f.event === eventParam))
-      .map((f: any) => ({
-        id: f.id,
-        code: f.code,
-        event: f.event,
-        team_h: f.team_h,
-        team_a: f.team_a,
-        team_h_score: f.team_h_score,
-        team_a_score: f.team_a_score,
-        team_h_difficulty: f.team_h_difficulty,
-        team_a_difficulty: f.team_a_difficulty,
-        kickoff_time: f.kickoff_time,
-        finished: f.finished,
-      }));
+    const season = await resolveSeason(req, res);
+    if (season === null) return;
+
+    const raw = req.query.event;
+    let event: number | undefined;
+    if (raw !== undefined) {
+      event = Number(raw);
+      if (!Number.isInteger(event)) {
+        res.status(400).json({ error: 'Invalid event' });
+        return;
+      }
+    }
+
+    const fixtures = await listFixtures(pool, season, event);
     res.json({ fixtures });
   } catch (err) {
-    console.error('Fixtures fetch failed:', err);
-    res.status(500).json({ error: 'Failed to fetch fixtures' });
+    console.error('Fixtures query failed:', err);
+    res.status(500).json({ error: 'Failed to load fixtures' });
   }
 });
 
