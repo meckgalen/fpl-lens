@@ -49,6 +49,12 @@ import type { PoolClient } from 'pg';
 import { pool, closePool } from '../db/pool.js';
 import { getBootstrap, getFixtures } from '../services/fplApi.js';
 import { listPlayerTotals } from '../repositories/players.js';
+import {
+  buildFixtureRows,
+  teamCodesByFplId,
+  writeFixtures,
+  type FixtureRow,
+} from './sync-fixtures.js';
 import type { WireBootstrap, WireElement, WireEvent, WireFixture, WireTeam } from '../types/wire.js';
 
 /**
@@ -186,18 +192,7 @@ export interface EventRow {
   deadline_time: string;
 }
 
-export interface FixtureRow {
-  fpl_fixture_id: number;
-  gw: number | null;
-  home_fpl_team_code: number;
-  away_fpl_team_code: number;
-  kickoff_time: string | null;
-  finished: boolean;
-  home_score: number | null;
-  away_score: number | null;
-  home_difficulty: number | null;
-  away_difficulty: number | null;
-}
+export type { FixtureRow } from './sync-fixtures.js';
 
 export interface LiveSeason {
   season: string;
@@ -288,33 +283,10 @@ export function buildLiveSeason(bootstrap: WireBootstrap, wireFixtures: WireFixt
     deadline_time: required(normalise(event.deadline_time), `deadline for gameweek ${event.id}`),
   }));
 
-  const fixtures: FixtureRow[] = wireFixtures.map((fixture) => {
-    const home = codeByTeamId.get(fixture.team_h);
-    const away = codeByTeamId.get(fixture.team_a);
-    if (home === undefined || away === undefined) {
-      throw new Error(
-        `live ingest: fixture ${fixture.id} names season team ids ` +
-          `${fixture.team_h}/${fixture.team_a}, which are not both in the bootstrap`
-      );
-    }
-    return {
-      fpl_fixture_id: fixture.id,
-      // Nullable on purpose, and it belongs in the upsert's SET list: FPL
-      // leaves `event` empty on a fixture it has not scheduled and nulls it on
-      // a postponement until a new round is assigned. Writing NULL is the
-      // correct behaviour there; throwing would be the script failing on real
-      // data. All 380 carry a round today.
-      gw: fixture.event,
-      home_fpl_team_code: home,
-      away_fpl_team_code: away,
-      kickoff_time: normalise(fixture.kickoff_time),
-      finished: fixture.finished,
-      home_score: fixture.team_h_score,
-      away_score: fixture.team_a_score,
-      home_difficulty: fixture.team_h_difficulty,
-      away_difficulty: fixture.team_a_difficulty,
-    };
-  });
+  // Built by the shared module since item 5, because the gameweek sync writes
+  // the same rows and two implementations of one table's columns is how they
+  // drift.
+  const fixtures = buildFixtureRows(wireFixtures, codeByTeamId);
 
   return { season, teams, teamSeasons, players, playerSeasons, events, fixtures, excludedCodes };
 }
@@ -467,45 +439,8 @@ export async function writeLiveSeason(client: PoolClient, built: LiveSeason): Pr
   );
 
   // --- fixtures ------------------------------------------------------------
-  // Never delete-and-reinsert: fixtures.id is the FK target player_gameweeks
-  // will carry, and renumbering it would repoint match rows at other matches
-  // with no constraint violation to catch it.
-  await insertChunked(
-    client,
-    built.fixtures.map((f) => {
-      const home = teamIdByCode.get(f.home_fpl_team_code);
-      const away = teamIdByCode.get(f.away_fpl_team_code);
-      if (!home || !away) throw new Error(`unresolved team code on fixture ${f.fpl_fixture_id}`);
-      return [
-        season,
-        f.fpl_fixture_id,
-        f.gw,
-        home,
-        away,
-        f.kickoff_time,
-        f.finished,
-        f.home_score,
-        f.away_score,
-        f.home_difficulty,
-        f.away_difficulty,
-      ];
-    }),
-    11,
-    (v) => `INSERT INTO fixtures
-              (season, fpl_fixture_id, gw, home_team_id, away_team_id, kickoff_time,
-               finished, home_score, away_score, home_difficulty, away_difficulty)
-            VALUES ${v}
-            ON CONFLICT (season, fpl_fixture_id) DO UPDATE SET
-              gw              = EXCLUDED.gw,
-              home_team_id    = EXCLUDED.home_team_id,
-              away_team_id    = EXCLUDED.away_team_id,
-              kickoff_time    = EXCLUDED.kickoff_time,
-              finished        = EXCLUDED.finished,
-              home_score      = EXCLUDED.home_score,
-              away_score      = EXCLUDED.away_score,
-              home_difficulty = EXCLUDED.home_difficulty,
-              away_difficulty = EXCLUDED.away_difficulty`
-  );
+  // Delegated to ./sync-fixtures.ts, which the gameweek sync also calls.
+  await writeFixtures(client, season, built.fixtures);
 }
 
 // ----------------------------------------------------------------- snapshot
@@ -618,7 +553,13 @@ async function assertSeasonNotComplete(client: PoolClient, season: string): Prom
 
 export async function assertLiveSeason(
   client: PoolClient,
-  built: LiveSeason
+  built: LiveSeason,
+  /**
+   * `player_gameweeks` rows for this season **before** the write. The check
+   * below is that the number did not move; passing it in is what makes that a
+   * measurement rather than an assumption.
+   */
+  gameweekRowsBefore: number
 ): Promise<void> {
   const { season } = built;
   const failures: string[] = [];
@@ -627,6 +568,13 @@ export async function assertLiveSeason(
     const actual = await scalar(client, sql, [season]);
     if (actual !== expected) failures.push(`${label}: expected ${expected}, got ${actual}`);
   };
+
+  /** How much of this season has been played, which several checks below gate on. */
+  const played = await scalar(
+    client,
+    'SELECT count(*) AS n FROM fixtures WHERE season = $1 AND finished',
+    [season]
+  );
 
   await check(
     'team_seasons',
@@ -664,32 +612,47 @@ export async function assertLiveSeason(
   // sync inherits this script and will have to drop or rewrite it, and if it
   // does not, this is the assertion that will start failing on the first
   // postponement with nothing on screen explaining why.
-  const badRounds = await client.query<{ gw: number; n: string; clubs: string }>(
-    `SELECT f.gw, count(*) AS n, count(DISTINCT f.home_team_id) + count(DISTINCT f.away_team_id) AS clubs
-       FROM fixtures f
-      WHERE f.season = $1
-      GROUP BY f.gw
-     HAVING count(*) <> ${FIXTURES_PER_ROUND}
-         OR count(DISTINCT f.home_team_id) + count(DISTINCT f.away_team_id) <> ${CLUBS_PER_SEASON}`,
-    [season]
-  );
-  for (const row of badRounds.rows) {
-    failures.push(
-      `round ${row.gw}: ${row.n} fixtures across ${row.clubs} clubs — expected ` +
-        `${FIXTURES_PER_ROUND} and ${CLUBS_PER_SEASON} (publication-time check)`
+  // GATED ON THE DATA, not skipped: asserted only while the season has no
+  // finished fixture. Item 5 made this necessary — the check is exactly right
+  // for a freshly published schedule and false the moment a postponement moves
+  // a fixture between rounds, and gating it on "has anything been played" is
+  // the only condition that stays true through both. The invariants that
+  // survive a played season — 380 fixtures, 38 matches a club, 19 home and 19
+  // away — are asserted unconditionally above.
+  if (played === 0) {
+    const badRounds = await client.query<{ gw: number; n: string; clubs: string }>(
+      `SELECT f.gw, count(*) AS n, count(DISTINCT f.home_team_id) + count(DISTINCT f.away_team_id) AS clubs
+         FROM fixtures f
+        WHERE f.season = $1
+        GROUP BY f.gw
+       HAVING count(*) <> ${FIXTURES_PER_ROUND}
+           OR count(DISTINCT f.home_team_id) + count(DISTINCT f.away_team_id) <> ${CLUBS_PER_SEASON}`,
+      [season]
     );
+    for (const row of badRounds.rows) {
+      failures.push(
+        `round ${row.gw}: ${row.n} fixtures across ${row.clubs} clubs — expected ` +
+          `${FIXTURES_PER_ROUND} and ${CLUBS_PER_SEASON} (publication-time check)`
+      );
+    }
   }
 
   // Nothing here writes match data, and this is what says so out loud.
-  const gameweekRows = await scalar(
+  //
+  // It used to assert the count was zero, which was only ever a proxy for the
+  // real claim and stopped being true the day the gameweek sync ran. The claim
+  // was always "this script does not write match rows", and comparing the count
+  // across the write says exactly that, in every season state.
+  const gameweekRowsAfter = await scalar(
     client,
     'SELECT count(*) AS n FROM player_gameweeks WHERE season = $1',
     [season]
   );
-  if (gameweekRows !== 0) {
+  if (gameweekRowsAfter !== gameweekRowsBefore) {
     failures.push(
-      `player_gameweeks has ${gameweekRows} rows for ${season} — this ingest writes none, ` +
-        `so either the incremental sync ran or something copied the bootstrap's carryover totals`
+      `player_gameweeks for ${season} went from ${gameweekRowsBefore} to ${gameweekRowsAfter} ` +
+        `rows across this ingest — it writes none, so something copied the bootstrap's ` +
+        `carryover totals into the match table`
     );
   }
 
@@ -697,7 +660,11 @@ export async function assertLiveSeason(
   // runs. A pre-season element carries LAST season's totals; if any of them had
   // found their way into a stat column, this is where it would show as a
   // player with points in a season nobody has played.
-  const totals = await listPlayerTotals(client, season);
+  //
+  // Gated on the same condition, and for the same reason: once real matches are
+  // ingested these totals are supposed to be non-zero. Before any are, a single
+  // point is evidence of a leak.
+  const totals = gameweekRowsAfter === 0 ? await listPlayerTotals(client, season) : [];
   const scoring = totals.filter((p) => p.total_points !== 0 || p.minutes !== 0);
   if (scoring.length > 0) {
     const sample = scoring
@@ -791,9 +758,14 @@ async function main(): Promise<void> {
     await assertSeasonNotComplete(client, built.season);
 
     const before = await snapshot(client, built.season, teamCodes, playerCodes);
+    const gameweekRowsBefore = await scalar(
+      client,
+      'SELECT count(*) AS n FROM player_gameweeks WHERE season = $1',
+      [built.season]
+    );
     await writeLiveSeason(client, built);
     const after = await snapshot(client, built.season, teamCodes, playerCodes);
-    await assertLiveSeason(client, built);
+    await assertLiveSeason(client, built, gameweekRowsBefore);
     await client.query('COMMIT');
 
     const changed = Object.keys(after).filter((table) => after[table] !== before[table]);

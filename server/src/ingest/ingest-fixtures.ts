@@ -139,6 +139,12 @@ interface FixtureRow {
   away_fpl_team_id: number;
   kickoff_time: string;
   finished: boolean;
+  /**
+   * NULL for the two derived seasons: no fixtures.csv upstream means no such
+   * field, exactly as rule 14 already handles the difficulty ratings. A NULL
+   * means settled — see the item 5 migration and SETTLED_SQL.
+   */
+  finished_provisional: boolean | null;
   home_score: number | null;
   away_score: number | null;
   home_difficulty: number | null;
@@ -165,6 +171,7 @@ async function readFixturesCsv(season: Season): Promise<FixtureRow[]> {
     away_fpl_team_id: reqInt(r, 'team_a', where),
     kickoff_time: reqStr(r, 'kickoff_time', where),
     finished: reqStr(r, 'finished', where) === 'True',
+    finished_provisional: reqStr(r, 'finished_provisional', where) === 'True',
     home_score: optInt(r, 'team_h_score'),
     away_score: optInt(r, 'team_a_score'),
     home_difficulty: optInt(r, 'team_h_difficulty'),
@@ -241,6 +248,10 @@ async function deriveFixtures(season: Season): Promise<FixtureRow[]> {
       // Both derived seasons are complete, and merged_gw only ever contains
       // matches that were played.
       finished: true,
+      // Rule 14 again: 2016-17 and 2017-18 have no fixtures.csv, so the second
+      // flag has no source. NULL, never true — the same distinction rule 6
+      // draws everywhere else, and SETTLED_SQL reads it as settled.
+      finished_provisional: null,
       home_score: best.home_score,
       away_score: best.away_score,
       // Rule 14: difficulty ratings do not exist without a fixtures.csv.
@@ -440,15 +451,17 @@ async function write(client: PoolClient, fixtures: FixtureRow[]): Promise<void> 
       resolve(f.season, f.away_fpl_team_id, 'away'),
       f.kickoff_time,
       f.finished,
+      f.finished_provisional,
       f.home_score,
       f.away_score,
       f.home_difficulty,
       f.away_difficulty,
     ]),
-    11,
+    12,
     (v) => `INSERT INTO fixtures
               (season, fpl_fixture_id, gw, home_team_id, away_team_id, kickoff_time,
-               finished, home_score, away_score, home_difficulty, away_difficulty)
+               finished, finished_provisional, home_score, away_score,
+               home_difficulty, away_difficulty)
             VALUES ${v}
             ON CONFLICT (season, fpl_fixture_id) DO UPDATE SET
               gw = EXCLUDED.gw,
@@ -456,6 +469,7 @@ async function write(client: PoolClient, fixtures: FixtureRow[]): Promise<void> 
               away_team_id = EXCLUDED.away_team_id,
               kickoff_time = EXCLUDED.kickoff_time,
               finished = EXCLUDED.finished,
+              finished_provisional = EXCLUDED.finished_provisional,
               home_score = EXCLUDED.home_score,
               away_score = EXCLUDED.away_score,
               home_difficulty = EXCLUDED.home_difficulty,

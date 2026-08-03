@@ -72,9 +72,19 @@ const ALL_SEASONS = [
 /**
  * Every season present in `player_gameweeks`.
  *
- * Ten, and it stays ten until the incremental gameweek sync lands: the live
- * season ingest writes rosters, deadlines and fixtures, and deliberately not
- * one match row.
+ * Ten, and it stays ten until the incremental gameweek sync is **run** — item 5
+ * built that script but has not pointed it at 2026-27, because no match has
+ * been played. **The first real run makes this eleven and this test red**,
+ * which is the intended way to find out: add '2026-27' here and the list is
+ * true again.
+ *
+ * The `sum()` property test below was traced against a partly ingested season
+ * rather than left to be discovered in September, and it **holds**: a season
+ * ingested round by round is partial in its ROWS, not in its columns. Every row
+ * the live sync writes carries the modern stats, so `count(col)` equals
+ * `count(*)`, and the fifteen Opta-era columns are null on all of them, so it
+ * is 0. The test fires only if FPL starts supplying a column partway through a
+ * season, which is exactly the case it was written to catch.
  */
 const SEASONS_WITH_GAMEWEEKS = ALL_SEASONS.filter((s) => s !== '2026-27');
 

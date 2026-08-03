@@ -91,6 +91,27 @@ async function scalar(sql: string, params: unknown[] = []): Promise<number> {
   return Number(rows[0].n);
 }
 
+/**
+ * The ten seasons `ingest:gameweeks` owns.
+ *
+ * Named rather than expressed as a bound, because the live gameweek sync writes
+ * into this same table and every count in this file is a claim about the CSV
+ * backfill specifically. A `season < '2026-27'` would have worked today and
+ * quietly stopped meaning "the CSV seasons" the moment an eleventh was added.
+ */
+const CSV_SEASONS = [
+  '2016-17',
+  '2017-18',
+  '2018-19',
+  '2019-20',
+  '2020-21',
+  '2021-22',
+  '2022-23',
+  '2023-24',
+  '2024-25',
+  '2025-26',
+];
+
 const SAKA = 223340;
 const SALAH = 118748;
 const DE_BRUYNE = 61366;
@@ -100,11 +121,20 @@ describe('player_gameweeks acceptance', () => {
   it('is populated at all', async () => {
     // Everything below would fail with a confusing null-vs-number diff if the
     // ingest had not been run. Say why up front instead.
-    const n = await scalar('SELECT count(*) AS n FROM player_gameweeks');
+    //
+    // Scoped to the ten CSV seasons since item 5. The live gameweek sync writes
+    // into this same table, so an unscoped count stopped being a statement
+    // about `ingest:gameweeks` having run — it would start failing the day the
+    // first real round is ingested, with a message about the CSV backfill.
+    const n = await scalar(
+      'SELECT count(*) AS n FROM player_gameweeks WHERE season = ANY($1)',
+      [CSV_SEASONS]
+    );
     assert.equal(
       n,
       253509,
-      `expected 253509 rows, found ${n} — run 'npm run ingest:gameweeks' first`
+      `expected 253509 rows across the ten CSV seasons, found ${n} — ` +
+        `run 'npm run ingest:gameweeks' first`
     );
   });
 

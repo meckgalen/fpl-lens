@@ -38,6 +38,14 @@ import { parse } from 'csv-parse/sync';
 import type { PoolClient } from 'pg';
 import { from as copyFrom } from 'pg-copy-streams';
 import { pool, closePool } from '../db/pool.js';
+import {
+  ALL_COLUMNS,
+  INT_COLUMNS,
+  NULLABLE_INT_COLUMNS,
+  NULLABLE_NUM_COLUMNS,
+  NUM_COLUMNS,
+  UPDATABLE_COLUMNS,
+} from './gameweek-columns.js';
 import type { CsvRow } from '../types/wire.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -118,88 +126,13 @@ const IDEAL_MINUTES_PER_SEASON = 380 * 2 * 11 * 90;
 const MINUTES_TOLERANCE = 0.01;
 
 // ---------------------------------------------------------------- columns
-// Column groups drive both the CSV read and the COPY, so the two cannot drift.
-// Every name below is identical in merged_gw.csv and in player_gameweeks.
-
-/** Resolved keys. Built, not read: see rules 2, 5 and 12. */
-const KEY_COLUMNS = [
-  'player_id',
-  'fixture_id',
-  'season',
-  'gw',
-  'was_home',
-  'opponent_team_id',
-] as const;
-
-/** Integer stats present in all ten seasons. NOT NULL. */
-const INT_COLUMNS = [
-  'total_points',
-  'minutes',
-  'goals_scored',
-  'assists',
-  'clean_sheets',
-  'goals_conceded',
-  'own_goals',
-  'penalties_saved',
-  'penalties_missed',
-  'saves',
-  'yellow_cards',
-  'red_cards',
-  'bonus',
-  'bps',
-  'value',
-  'selected',
-  'transfers_in',
-  'transfers_out',
-] as const;
-
-/** Decimal stats present in all ten seasons. NOT NULL. */
-const NUM_COLUMNS = ['influence', 'creativity', 'threat', 'ict_index'] as const;
-
-/** Integer stats missing from at least one season. NULL there, never 0. */
-const NULLABLE_INT_COLUMNS = [
-  'starts',
-  'tackles',
-  'recoveries',
-  'clearances_blocks_interceptions',
-  'defensive_contribution',
-  'attempted_passes',
-  'big_chances_created',
-  'big_chances_missed',
-  'completed_passes',
-  'dribbles',
-  'errors_leading_to_goal',
-  'errors_leading_to_goal_attempt',
-  'fouls',
-  'key_passes',
-  'offside',
-  'open_play_crosses',
-  'penalties_conceded',
-  'tackled',
-  'target_missed',
-  'winning_goals',
-] as const;
-
-/** Decimal stats missing from at least one season. */
-const NULLABLE_NUM_COLUMNS = [
-  'expected_goals',
-  'expected_assists',
-  'expected_goal_involvements',
-  'expected_goals_conceded',
-] as const;
-
-const COPY_COLUMNS = [
-  ...KEY_COLUMNS,
-  ...INT_COLUMNS,
-  ...NUM_COLUMNS,
-  ...NULLABLE_INT_COLUMNS,
-  ...NULLABLE_NUM_COLUMNS,
-] as const;
-
-/** Everything except the conflict target, for the DO UPDATE clause. */
-const UPDATABLE_COLUMNS = COPY_COLUMNS.filter(
-  (c) => c !== 'player_id' && c !== 'fixture_id'
-);
+// The groups drive both the CSV read and the COPY, so the two cannot drift.
+//
+// They live in ./gameweek-columns.ts since item 5, because this is no longer
+// the only writer of player_gameweeks: ingest-live-gameweeks.ts loads the live
+// season into the same table, and one table with two private column lists is
+// how a stat gets stored by one path and silently dropped by the other.
+const COPY_COLUMNS = ALL_COLUMNS;
 
 /**
  * Columns in merged_gw.csv that deliberately get no column, so that a reader
@@ -689,21 +622,34 @@ async function assertDatabase(
   managerCodes: Set<number>
 ): Promise<SeasonReport[]> {
   const failures: string[] = [];
-  const check = async (label: string, sql: string, expected = 0, params: unknown[] = []) => {
+  const csvSeasons = [...SEASONS];
+  const check = async (label: string, sql: string, expected = 0, params: unknown[] = [csvSeasons]) => {
     const n = await scalar(client, sql, params);
     if (n !== expected) failures.push(`${label}: got ${n}, expected ${expected}`);
   };
 
   // --- volume ------------------------------------------------------------
-  await check('total rows', 'SELECT count(*) AS n FROM player_gameweeks', EXPECTED_TOTAL);
+  // Every query below is scoped to the ten CSV seasons with `season = ANY($1)`.
+  // Item 5 added a second writer to this table — ingest-live-gameweeks.ts loads
+  // the live season into it — so `count(*) FROM player_gameweeks` stopped being
+  // a statement about this script's work. Scoped rather than loosened to a
+  // lower bound: these are exact equalities because that is what catches a
+  // dropped row, and a bound wide enough to admit an eleventh season is wide
+  // enough to admit a missing match.
+  await check(
+    'total rows',
+    'SELECT count(*) AS n FROM player_gameweeks WHERE season = ANY($1)',
+    EXPECTED_TOTAL
+  );
   await check(
     'seasons present',
-    'SELECT count(DISTINCT season) AS n FROM player_gameweeks',
+    'SELECT count(DISTINCT season) AS n FROM player_gameweeks WHERE season = ANY($1)',
     SEASONS.length
   );
   const perSeason = await client.query<{ season: string; n: string; fixtures: string; minutes: string }>(
     `SELECT season, count(*) AS n, count(DISTINCT fixture_id) AS fixtures, sum(minutes) AS minutes
-       FROM player_gameweeks GROUP BY season ORDER BY season`
+       FROM player_gameweeks WHERE season = ANY($1) GROUP BY season ORDER BY season`,
+    [csvSeasons]
   );
   const report: SeasonReport[] = perSeason.rows.map((r) => ({
     season: r.season,
@@ -736,13 +682,15 @@ async function assertDatabase(
     'rows disagreeing with their fixture on season or gw',
     `SELECT count(*) AS n FROM player_gameweeks pg
        JOIN fixtures f ON f.id = pg.fixture_id
-      WHERE pg.season <> f.season OR pg.gw IS DISTINCT FROM f.gw`
+      WHERE pg.season = ANY($1)
+        AND (pg.season <> f.season OR pg.gw IS DISTINCT FROM f.gw)`
   );
   await check(
     'rows whose opponent is neither side of the fixture',
     `SELECT count(*) AS n FROM player_gameweeks pg
        JOIN fixtures f ON f.id = pg.fixture_id
-      WHERE pg.opponent_team_id NOT IN (f.home_team_id, f.away_team_id)`
+      WHERE pg.season = ANY($1)
+        AND pg.opponent_team_id NOT IN (f.home_team_id, f.away_team_id)`
   );
   // The player's own side is the side the opponent is not, so was_home is true
   // exactly when the opponent is the away team.
@@ -750,13 +698,14 @@ async function assertDatabase(
     'rows where was_home disagrees with the fixture',
     `SELECT count(*) AS n FROM player_gameweeks pg
        JOIN fixtures f ON f.id = pg.fixture_id
-      WHERE pg.was_home <> (pg.opponent_team_id = f.away_team_id)`
+      WHERE pg.season = ANY($1)
+        AND pg.was_home <> (pg.opponent_team_id = f.away_team_id)`
   );
   await check(
     'rows with no matching player_seasons row',
     `SELECT count(*) AS n FROM player_gameweeks pg
        LEFT JOIN player_seasons ps ON ps.player_id = pg.player_id AND ps.season = pg.season
-      WHERE ps.player_id IS NULL`
+      WHERE pg.season = ANY($1) AND ps.player_id IS NULL`
   );
 
   // --- rule 6: nullability, in both directions ----------------------------
@@ -764,9 +713,10 @@ async function assertDatabase(
     await check(
       `rows where ${column} is on the wrong side of its first-appearance boundary`,
       `SELECT count(*) AS n FROM player_gameweeks
-        WHERE (season = ANY($1::text[])) <> (${column} IS NOT NULL)`,
+        WHERE season = ANY($2)
+          AND (season = ANY($1::text[])) <> (${column} IS NOT NULL)`,
       0,
-      [seasons]
+      [seasons, csvSeasons]
     );
   }
 
@@ -776,17 +726,21 @@ async function assertDatabase(
       'rows belonging to an Assistant Manager',
       `SELECT count(*) AS n FROM player_gameweeks pg
          JOIN players p ON p.id = pg.player_id
-        WHERE p.fpl_code = ANY($1::int[])`,
+        WHERE pg.season = ANY($2) AND p.fpl_code = ANY($1::int[])`,
       0,
-      [[...managerCodes]]
+      [[...managerCodes], csvSeasons]
     );
   }
 
   // --- rule 12 ------------------------------------------------------------
   await check(
     "2019-20 rows in the Covid restart's rounds 39-47",
+    // Already scoped by its literal season, so it takes no parameter — and it
+    // has to say so, because the default is now the CSV season list and
+    // Postgres rejects a parameter a statement has no placeholder for.
     `SELECT count(*) AS n FROM player_gameweeks WHERE season = '2019-20' AND gw > 38`,
-    EXPECTED_GW_OVER_38
+    EXPECTED_GW_OVER_38,
+    []
   );
 
   if (failures.length > 0) {

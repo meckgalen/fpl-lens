@@ -142,6 +142,7 @@ function fixture(id: number, gw: number | null): WireFixture {
     team_a_difficulty: 4,
     kickoff_time: '2099-08-15T14:00:00Z',
     finished: false,
+    finished_provisional: false,
   };
 }
 

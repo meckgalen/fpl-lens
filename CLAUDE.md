@@ -22,7 +22,8 @@ item 4: clubs, roster, deadlines and the full fixture list, and **not one
 say "the ten seasons" has to pick which of the two it meant — see the constants
 in `career.test.ts`, which were one and are now two.
 
-**All seven tables are populated.** Four ingest scripts do it. All four are
+**All seven tables are populated.** Four ingest scripts do it, and a fifth
+exists but has never been run — see "the gameweek sync" below. All are
 idempotent, run in one transaction, and assert their own results:
 
 | Table              | Rows                  | Populated by                |
@@ -50,7 +51,17 @@ loosened to `>=`: the numbers are exact because that is what catches a dropped
 row, and a bound wide enough to admit a new season is wide enough to admit a
 missing match. The pinned figures are unchanged.
 
-`npm test` runs **two suites on two runners**: **48 server tests** and **51
+**The gameweek sync exists and has not been run.** `npm run ingest:live-gameweeks`
+loads match rows for the live season from the official API. Item 5 built and
+verified it; **it has never been pointed at 2026-27, because no match has been
+played.** `player_gameweeks` therefore still holds exactly the ten CSV seasons,
+and the two "no matches recorded / no rows yet" empty states stay until the
+first real run — they are gated on that table being empty, so playing the
+matches does not clear them and ingesting them does. The first real run also
+turns `SEASONS_WITH_GAMEWEEKS` in `career.test.ts` red, on purpose: that is how
+the eleventh season announces itself.
+
+`npm test` runs **two suites on two runners**: **62 server tests** and **51
 client tests**, all passing. They are counted separately on purpose — two
 runners print two summaries, and a combined figure would be maintained by hand
 against neither of them.
@@ -62,8 +73,24 @@ alone. Not `&&`, which would hide the client result behind a database problem,
 and not `;`, which reports only the last command's exit code and would let a red
 server suite pass silently.
 
-**Server — `node --import tsx --test`, against the populated database.** Five
+**Server — `node --import tsx --test`, against the populated database.** Six
 files:
+
+- `server/src/ingest/live-gameweeks.test.ts` — the gameweek sync, offline. Its
+  centrepiece is a **replay**: all 29,757 rows of 2025-26's `merged_gw.csv`
+  reshaped into the wire shape and run through the new mapper, then compared
+  field for field against what the CSV ingest stored. **29,747 of 29,747 rows
+  equivalent, no field mismatches**, with rule 12 removing exactly the ten known
+  duplicates. Plus the settled gate in both flag orderings, the partial round,
+  idempotency, the ordering trap, the round-less guard, the dedup tiebreak, and
+  that a failed request aborts the run.
+
+  **What the replay is evidence of, precisely:** it is an equivalence test
+  between two independently written mappers over the same bytes — strong about
+  the new code and **silent about the source**. It cannot show that the live
+  endpoint agrees with the CSV, because nothing can until a round is played.
+  The `history_past` cross-check in the item 5 record is the other half, and the
+  two are reported as two results rather than one verdict.
 
 - `server/src/ingest/live-season.test.ts` — the live ingest, offline. Every test
   writes a synthetic season (`2099-00`) inside a `BEGIN … ROLLBACK`, so it
@@ -254,6 +281,25 @@ The official API cannot serve previous seasons at gameweek granularity. It expos
 prior seasons only as totals via `history_past`, and current-season data is wiped at
 rollover. That is why the CSV backfill exists.
 
+**That is not an abstract limitation, and item 5 ran into it head on.** The
+obvious verification for the gameweek sync — point it at 2025-26 and diff the
+result against the stored rows — is impossible: `element-summary/{id}/history`
+returns `[]` today, because it serves only the current season and 2026-27 has
+not started. Every verification in item 5 is shaped by that fact.
+
+**Which endpoint the gameweek sync reads, and why:**
+
+- **`element-summary/{element_id}/`** — one request per player, and its
+  `history[]` is one entry per fixture with the full stat set. That is the shape
+  of `player_gameweeks`, a double gameweek included, which is what rule 13
+  exists for. This is the one used.
+- **`event/{gw}/live/`** — one request per *round* rather than per player, so
+  far cheaper. Not used, because **its shape cannot be verified until a round is
+  played**: before Gameweek 1 it returns `{"elements": []}`, so whether its
+  `stats` are per fixture or aggregated per round is unknowable, and adopting an
+  unverified shape for the table rule 13 protects is not a risk worth taking.
+  The cross-check that settles it is in Deferred.
+
 ## Project Structure
 
 ```
@@ -270,8 +316,12 @@ fpl-lens/
 │   │   ├── index.ts           # Express entry, port 3001
 │   │   ├── db/                # pool, connection config
 │   │   ├── ingest/            # CSV loaders + live API sync
+│   │   │   ├── gameweek-columns.ts    # the column list BOTH gameweek writers use
+│   │   │   ├── sync-fixtures.ts       # the fixtures writer, two callers
 │   │   │   ├── ingest-live-season.ts  # the live season: npm run ingest:live
-│   │   │   └── live-season.test.ts    # offline, in a rolled-back transaction
+│   │   │   ├── live-season.test.ts    # offline, in a rolled-back transaction
+│   │   │   ├── ingest-live-gameweeks.ts  # match rows: ingest:live-gameweeks
+│   │   │   └── live-gameweeks.test.ts # the 2025-26 replay + the gate
 │   │   ├── repositories/      # DB query layer — the ONLY place SQL may live
 │   │   ├── routes/fpl.ts      # /api/bootstrap, /api/player/:code[/career], /api/fixtures
 │   │   ├── services/fplApi.ts # live FPL API client, cache; ingest source only
@@ -598,6 +648,12 @@ Season 2026-27: teams=20 players=564 events=38 fixtures=380
 No change: every table this ingest writes is byte-identical to before the run.
 ```
 
+`npm run ingest:live-gameweeks` loads the live season's match rows. It has no
+ordering constraint either — it refreshes fixture state itself before reading it
+— and is safe to run mid-round: fixtures that have settled are ingested, ones
+still in play are skipped, and a later run picks them up without touching what
+is already there.
+
 `npm test` runs both suites. The server suite needs the database up and the
 three CSV ingest scripts to have been run; the client suite needs neither and
 can be run alone with `npm run test:client`.
@@ -633,6 +689,8 @@ can be run alone with `npm run test:client`.
 - [x] Upcoming fixtures on the detail page, with difficulty — populated for the
       first time, every previous season having been complete
 - [x] The player's photograph on the header card, with a placeholder fallback
+- [x] The incremental gameweek sync — **written and verified, not yet run**, so
+      no 2026-27 match rows exist and the two empty states remain
 
 The live FPL API proxy in `services/fplApi.ts` still exists with its 5-minute
 cache, but no route calls it: it is the ingestion source for the live season.
@@ -701,6 +759,21 @@ around it.
   current squad does not contain, and the player list only holds players with a
   `player_seasons` row for the default season. Search across all players would
   reach it. Both remain rendered and asserted by `GameweekSection.test.tsx`.
+- **We hold NULL for `defensive_contribution` in 2024-25 where FPL reports a
+  real number, on 44 of a 60-player sample.** Measured in item 5 against
+  `history_past`: Tarkowski 356, Virgil 300, Burn 286, down to Shaw 14. FPL
+  retro-computed that aggregate for 2024-25 without publishing its components —
+  `tackles`, `clearances_blocks_interceptions` and `recoveries` are all 0 there
+  — and the CSVs carry no such column before 2025-26. **It cannot be
+  backfilled**: `history_past` gives season totals and there is no per-gameweek
+  source, so distributing 356 across a season's matches would be invention. It
+  is a real gap in what we hold rather than a rule 6 artefact, and it will
+  matter to anything that ranks on defensive contribution across seasons.
+- **One player of that same 60 disagrees on the ICT family in 2024-25.** Maguire:
+  creativity 101.2 against FPL's 111.5, influence 409.4 against 411.4, threat 233
+  against 237. He has all 38 rows and his points and minutes agree, so it is not
+  row loss. Cause not established. 2025-26 is clean on all 27 columns for all 60,
+  so it is specific to 2024-25's CSV rather than to any code.
 - `Player` carries no `birth_date` and `Team` no `code`, both of which exist in
   the database. They are not in any response because nothing renders them.
 - The UI has a working light/dark toggle, but neither theme is the one in Design
@@ -720,17 +793,32 @@ around it.
   ingested**, because `is_current` is the latest gameweek whose deadline has
   passed (API identity rule 6). Right at every other moment of a season; wrong
   only in the gap between one season ending and the next being loaded.
-- **A fixture with no round reaches the client as `event: null`, and the
-  Fixtures page has no answer for it.** `fixtures.gw` is nullable by design —
-  the initial migration says so — because FPL leaves `event` empty on a fixture
-  it has not scheduled and nulls it on a postponement until a new round is
-  assigned. `listEvents` filters `gw IS NOT NULL`, so a round-less fixture can
-  neither invent a round nor remove one that other fixtures still populate.
-  `listFixtures` does not filter, so the row reaches the client with
-  `event: null`, and the Fixtures page groups by kickoff day — which is also
-  null on an unscheduled fixture. Unreachable today: all 380 of 2026-27's
-  fixtures carry both fields. It needs an answer before the first postponement
-  and belongs with the incremental sync item.
+- **A postponed fixture disappears from the Fixtures page, which shows nine
+  matches in a round of ten and gives no sign anything is missing.** Corrected
+  in item 5 — the previous wording here said such a fixture "reaches the client
+  with `event: null`", which was written from a plan rather than traced to the
+  code and is wrong. `Fixtures.tsx` always calls `fetchFixtures(targetGw)`, so
+  `listFixtures` filters `f.gw = $2` and a round-less fixture never reaches the
+  page at all; `formatDay` already renders `'TBD'` for a null kickoff. The page
+  looks complete and is not, which is the quiet-wrong-answer class this project
+  keeps refusing to ship.
+
+  `fixtures.gw` is nullable by design — the initial migration says so — because
+  FPL leaves `event` empty on an unscheduled fixture and nulls it on a
+  postponement until a new round is assigned. `listEvents` filters
+  `gw IS NOT NULL`, so such a fixture can neither invent a round nor remove one
+  that others still populate.
+
+  **Why the obvious detection does not work:** a round holding fewer than ten
+  fixtures is not a signal, because a genuine blank gameweek is exactly that and
+  is entirely normal. The only signal is the *existence* of a round-less fixture
+  in the season, so any fix has to look for those rather than count per round.
+
+  **The consequential failure is not the missing tab**, and item 5 closed that
+  half: match rows attached to a round-less fixture would sit in no gameweek at
+  all, invisible to every per-round query. The gameweek sync refuses to write
+  them and says why, with a test. Unreachable today either way — all 380 of
+  2026-27's fixtures carry a round.
 - **`end_cost` for 2026-27 is NULL and nothing will fill it until the season is
   over and the CSV backfill runs for it.** That is correct — a season in
   progress has not ended at a price — and it has one visible consequence
@@ -804,8 +892,9 @@ player_seasons   (player_id, season, fpl_element_id, team_id, position,
                   start_cost, now_cost, end_cost, UNIQUE(season, fpl_element_id))
 events           (season, gw, deadline_time timestamptz, PK(season, gw))
 fixtures         (id, season, fpl_fixture_id, gw, home_team_id, away_team_id,
-                  kickoff_time, finished, home_score, away_score, home_difficulty,
-                  away_difficulty, UNIQUE(season, fpl_fixture_id))
+                  kickoff_time, finished, finished_provisional, home_score,
+                  away_score, home_difficulty, away_difficulty,
+                  UNIQUE(season, fpl_fixture_id))
 player_gameweeks (player_id, season, gw, fixture_id, was_home, opponent_team_id,
                   <stat columns>, UNIQUE(player_id, fixture_id))
 ```
@@ -826,6 +915,29 @@ over, ask `end_cost`", so `COALESCE(now_cost, end_cost)` reads correctly on
 every row without the caller knowing which season it is looking at. That is what
 `listPlayerTotals` does, and it is what finally makes its `AS now_cost` alias
 true — it had been reading `end_cost` since step 6.
+
+**`finished` and `finished_provisional` are two flags, and "settled" is the
+conjunction.** FPL flips them at different moments — one at roughly full time,
+the other once the round's bonus is confirmed — and **which is which cannot be
+established from any season available today**: both are `True` on all 380 rows
+of completed 2025-26 and `false` on all 380 of unplayed 2026-27, so only a match
+in progress distinguishes them. The gameweek sync gates on the conjunction,
+which is true only once both have fired — the later of the two under either
+ordering — so it is right without needing the fact. **One cheap observation on
+22 August settles it**: hit `/api/fixtures/` during a live match and record both
+flags for a match in play and one that has just ended.
+
+In SQL that test is **`finished AND COALESCE(finished_provisional, true)`**,
+never the bare conjunction, and `SETTLED_SQL` in `sync-fixtures.ts` is the one
+place it is written. `finished AND NULL` is NULL rather than false, so the bare
+form silently excludes 2016-17 and 2017-18 — which have no `fixtures.csv` and
+therefore no provisional flag — from anything asking whether a match had
+settled, the exact opposite of the rule that NULL there means settled. Checked
+when it was added: nothing else in the codebase tests settledness, so nothing
+needed changing. The one to watch is `listEvents`'s `bool_and(f.finished)` —
+folding the new column into it without the COALESCE would return `finished:
+NULL` on every event of those two seasons, against a domain type that says
+`boolean`.
 
 `events` holds only deadlines. **Which rounds exist still comes from
 `fixtures`**, and `listEvents` LEFT JOINs `events` onto that rather than the
@@ -1220,6 +1332,130 @@ section below is the record of what each decided.
       21-24 August with both promoted clubs (HUL, COV) resolved. Price reads
       £9.5 from `now_cost`, which is the COALESCE working — `end_cost` is NULL.
 
+- [x] **5. The incremental gameweek sync.** `ingest:live-gameweeks` loads match
+      rows for the live season from `element-summary/{element_id}/`.
+      **Written and verified; never run against 2026-27**, because no match has
+      been played. The two "no matches recorded / no rows yet" empty states stay
+      until it is, and `SEASONS_WITH_GAMEWEEKS` stays at ten.
+
+      **The verification the task asked for was impossible, and that is the
+      first finding.** Replaying the sync against 2025-26 and diffing needs the
+      API to serve a previous season at gameweek granularity, and it does not:
+      `element-summary/12/` returns `history: []` today. `history_past` carries
+      eight seasons as totals and never per fixture. That is the same property
+      that made the CSV backfill necessary, met from the other direction.
+
+      **So verification is two results, deliberately never merged into one.**
+
+      1. **The replay: 29,747 of 29,747 rows equivalent, no field mismatches.**
+         All 29,757 rows of 2025-26's `merged_gw.csv` reshaped into the wire
+         shape and run through the new mapper, compared column by column against
+         what the CSV ingest stored; rule 12 removed exactly the ten known
+         duplicates. **The reshape was written from `types/wire.ts` and the CSV
+         header, never from the mapper** — otherwise it compares two copies of
+         one belief. That is licensed by a three-way column comparison done
+         before any of it was written: 11 columns the table stores were missing
+         from `WireGameweekHistory` and were added; 15 exist in neither and are
+         the Opta-era stats the live sync writes NULL for (rule 6); **0 wire
+         fields lacked a CSV column**; and the 9 remaining CSV columns are
+         upstream's own additions, every one already in `EXCLUDED_CSV_COLUMNS`.
+         26 + 11 = 37 and 46 − 9 = 37, so nothing needed a default.
+
+         What it proves: an equivalence between two independently written
+         mappers over the same bytes. What it cannot prove: that the live
+         endpoint agrees with the CSV. Nothing can, until a round is played.
+
+      2. **The independent cross-check: 60 of 60 players match on all 27
+         columns** for 2025-26, against `history_past` — a different pipeline.
+         Sampling was adversarial rather than convenient: 15 per position, at
+         most 4 per club, force-including a player who changed club mid-season
+         (King), one with a double gameweek (Forster) and one registered all
+         season who never played (Heaton). **Stated bias:** `history_past` only
+         exists for players still in the game, so of 2025-26's 841 players
+         **457 are reachable and 384 are not**.
+
+      **The defensive-contribution divergence is real and it is a 2024-25
+      problem, now measured.** The same check run over 2024-25 gives **16 of 60**
+      — **44 of 60 players** have a non-zero `defensive_contribution` in
+      `history_past` where we hold NULL, up to 356 for Tarkowski. FPL
+      retro-computed that aggregate for 2024-25 without exposing its components;
+      the CSVs have no such column before 2025-26, and no per-gameweek source
+      for it exists, so it cannot be backfilled — season totals cannot be
+      distributed across matches. Recorded in Known Issues with the number
+      rather than fixed. **A second, smaller finding from the same run:** one
+      player of the sixty (Maguire) disagrees on the ICT family in 2024-25
+      (creativity 101.2 against 111.5, influence 409.4 against 411.4). He has all
+      38 rows and his points and minutes agree, so it is not row loss; the cause
+      is not established, and it is 2024-25 CSV data rather than anything this
+      item wrote.
+
+      **The settled gate is the conjunction of two flags**, because which of
+      `finished` and `finished_provisional` flips first cannot be established
+      from a completed season (both true) or a pre-season one (both false). See
+      the schema section. It needed a column: `finished_provisional` was stored
+      nowhere. The migration does not backfill, so `ingest:fixtures` was re-run
+      and the result reported from the run rather than predicted — 380 non-null
+      for each season from 2018-19, 0 for the two derived ones.
+
+      **Three inherited pre-season assertions were replaced, not two.** The task
+      named the per-round fixture count and the "no gameweek rows" check; the
+      audit found a third, the carryover tripwire that asserts every player's
+      totals are zero, which is correct before any match and false after one.
+      All three are now **gated on the data**: the publication check runs only
+      while the season has no finished fixture, and the other two only while it
+      has no match rows. The "no rows" check became **"this ingest did not
+      change the count"**, measured across the write — which was always the
+      claim, and holds in every season state.
+
+      **`syncFixtures()` has two callers now.** The gameweek sync refreshes
+      fixture state itself rather than declaring `ingest:live` a prerequisite:
+      every 2026-27 fixture is `finished: false` from item 4's load, so a sync
+      that read the stored flags would write **zero rows after Gameweek 1,
+      correctly, for a reason nothing on screen explains**. Item 4's claim that
+      `ingest:live` has no ordering constraint still holds; what changed is that
+      it no longer owns the live season's fixtures alone. The trap has a test:
+      with the stored flags left stale, the sync must still ingest.
+
+      **Four unscoped assertions in `ingest-gameweeks.ts` plus its test's
+      precondition were scoped before they could break** — the same class item 4
+      hit, found this time by reading rather than by a red run. Fourteen queries
+      now carry `season = ANY($1)`. One of them needed an explicit empty
+      parameter list, because it is scoped by a literal season and Postgres
+      rejects a parameter a statement has no placeholder for.
+
+      **The `sum()` property test was traced against a partial season rather
+      than left for September, and it holds**: a season ingested round by round
+      is partial in its *rows*, not its columns, so `count(col)` equals
+      `count(*)` for the modern columns and 0 for the fifteen Opta-era ones. It
+      fires only if FPL starts supplying a column mid-season, which is what it
+      was written to catch.
+
+      **Mutation-checked. Three came back green and were fixed rather than
+      written up as covered:**
+
+      | Mutation | Result |
+      | --- | --- |
+      | settled gate removed | **red**, 3 tests |
+      | gate weakened to `finished` alone | **red**, 1 test |
+      | round-less guard removed | **red**, 1 test |
+      | fixtures refreshed *after* the build | **red**, 1 test |
+      | dedup tiebreak reversed | **green** → test added → **red** |
+      | `gw` read from the fixture, not the payload | **green** → test added → **red** |
+      | a failed request swallowed | **green** → made injectable, test added → **red** |
+
+      The three greens are the interesting ones. The dedup tiebreak is
+      unobservable in 2025-26 — rule 12 says why: its ten duplicates are
+      byte-identical, and the season where the choice matters (2019-20's
+      postponed fixture) predates the columns the wire type needs, so it cannot
+      be replayed. A synthetic pair that differs now pins it. The round source is
+      unobservable too: the payload's `round` equals the fixture's `gw` in all
+      253,509 stored rows. What *is* observable is the consequence — reading the
+      payload and asserting against the fixture makes a disagreement **stop the
+      run**, while reading the fixture makes the row agree with itself and
+      absorbs it silently — so that is what the test pins. And the fetch path had
+      no test at all because it needs the network, so `fetchAllHistories` now
+      takes an injectable fetcher and a stub proves one failure aborts the run.
+
 ## Deferred
 
 The gate used to be "not until Phase 0 is complete". Phase 0 is complete, and
@@ -1239,17 +1475,25 @@ loads a season's structure — roster, clubs, deadlines, fixtures — and runs t
 completion in about a second. The field sync stores values that are different
 every hour, and needs somewhere to put them and a policy for how often.
 
-- **The incremental gameweek sync.** After GW1 is played, `player_gameweeks`
-  needs the matches. It inherits `ingest-live-season.ts`, and two things in
-  there are written for a pre-season and will not survive contact with a played
-  one: the per-round fixture-count assertion (commented as publication-time
-  only) and the assertion that the season has no gameweek rows. The round-less
-  fixture entry in Known Issues belongs to this item too. **This is the only
-  thing that makes the two "no matches recorded / no rows yet" empty states go
-  away** — they are gated on `player_gameweeks` being empty, so playing the
-  matches does not clear them and ingesting them does. However long this item
-  takes after the season starts is how long the app stays honestly empty about a
-  season that is underway, which is the argument for it being the next one.
+- **Run the gameweek sync, and cross-check it against `event/{gw}/live`.**
+  The script exists (item 5); what is left is running it once a round has been
+  played, and building the check that could not be written before then.
+
+  **What the cross-check compares:** element-summary's per-fixture rows, summed
+  per player per round, against `event/{gw}/live`'s per-round `stats`. **What it
+  catches, which is the reason to build it:** if those disagree, one of the two
+  endpoints is aggregating a double gameweek — and our per-fixture rows are
+  wrong in exactly the rounds rule 13 exists for. Without that sentence the next
+  reader sees a redundant assertion and deletes it.
+
+  **And the reason to do it on 22 August rather than eventually:**
+  element-summary is **one request per player** (564 a run) and `event/live` is
+  **one request per round**. If the shapes agree, the cheap endpoint becomes
+  viable for routine syncing with the expensive one kept for verification. That
+  is a real saving, and it is only measurable while a round's data is fresh.
+
+  First run also flips `SEASONS_WITH_GAMEWEEKS` to eleven and turns
+  `career.test.ts` red, which is the intended announcement.
 - **The pre-season player list: this season's price and ownership beside the
   last completed season's totals, each labelled which it is.** Deliberately not
   FPL's approach of showing carryover totals under a "this season" heading. Left

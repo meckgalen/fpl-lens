@@ -141,6 +141,12 @@ export interface WireGameweekHistory {
   assists: number;
   clean_sheets: number;
   goals_conceded: number;
+  own_goals: number;
+  penalties_saved: number;
+  penalties_missed: number;
+  yellow_cards: number;
+  red_cards: number;
+  saves: number;
   bonus: number;
   bps: number;
   starts: number;
@@ -155,6 +161,18 @@ export interface WireGameweekHistory {
   expected_goals: string;
   expected_assists: string;
   expected_goal_involvements: string;
+  expected_goals_conceded: string;
+  /**
+   * Collected 2016-17..2018-19, dropped for six seasons, collected again from
+   * 2025-26 — the family that reads backwards (see domain.ts). Present on the
+   * live feed today, which is why they are typed unconditionally here: the wire
+   * type describes what this season's endpoint sends, and rule 6's nullability
+   * is applied when the row is built, not here.
+   */
+  tackles: number;
+  recoveries: number;
+  clearances_blocks_interceptions: number;
+  defensive_contribution: number;
 }
 
 /**
@@ -208,5 +226,13 @@ export interface WireFixture {
   team_h_difficulty: number;
   team_a_difficulty: number;
   kickoff_time: string | null;
+  /**
+   * Two flags, not one, and they flip at different moments — one at roughly
+   * full time, the other once the round's bonus is confirmed. Which is which
+   * cannot be determined from a completed season (both are true on all 380 rows
+   * of 2025-26) or from a pre-season one (both false on all 380 of 2026-27), so
+   * the gameweek sync gates on the conjunction rather than betting on either.
+   */
   finished: boolean;
+  finished_provisional: boolean;
 }

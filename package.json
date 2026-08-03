@@ -13,6 +13,7 @@
     "ingest:fixtures": "cd server && npm run ingest:fixtures",
     "ingest:gameweeks": "cd server && npm run ingest:gameweeks",
     "ingest:live": "cd server && npm run ingest:live",
+    "ingest:live-gameweeks": "cd server && npm run ingest:live-gameweeks",
     "test": "run-s --continue-on-error test:server test:client",
     "test:server": "cd server && npm test",
     "test:client": "cd client && npm test"
