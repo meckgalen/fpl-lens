@@ -326,6 +326,61 @@ describe('career: rule 6 — nullability follows the season, not the stat', () =
   });
 });
 
+describe('career: the condition that makes bare sum() safe', () => {
+  it('measures each nullable column for a whole season or for none of it', async () => {
+    // The career query sums the nullable columns with a bare `sum()` so NULL
+    // survives (rule 6). `sum()` also *skips* nulls, which is only harmless
+    // while a column is either measured for every row of a season or for none
+    // of them. A column measured for part of one would produce a total covering
+    // that part and render as though it covered the whole season — a number
+    // that is wrong by an unknown amount and looks exactly like a right one.
+    //
+    // That this holds today is currently luck. This makes it a claim, and it
+    // fails on the first partially ingested season, which is when the
+    // incremental sync needs to hear about it rather than after.
+    //
+    // Asked of the whole table, not through the career query it justifies: a
+    // GROUP BY over one player could satisfy this while the season as a whole
+    // did not.
+    const columns = [
+      'starts',
+      'expected_goals',
+      'expected_assists',
+      'expected_goal_involvements',
+      'expected_goals_conceded',
+      'tackles',
+      'recoveries',
+      'clearances_blocks_interceptions',
+      'defensive_contribution',
+    ] as const;
+
+    const { rows } = await pool.query<Record<string, string>>(
+      `SELECT season, count(*) AS total,
+              ${columns.map((c) => `count(${c}) AS ${c}`).join(', ')}
+         FROM player_gameweeks
+        GROUP BY season
+        ORDER BY season DESC`
+    );
+
+    assert.deepEqual(rows.map((r) => r.season), ALL_TEN, 'every season should be present');
+
+    for (const row of rows) {
+      const total = Number(row.total);
+      assert.ok(total > 0, `${row.season}: no rows at all`);
+
+      for (const column of columns) {
+        const measured = Number(row[column]);
+        assert.ok(
+          measured === 0 || measured === total,
+          `${row.season}: ${column} is measured on ${measured} of ${total} rows — ` +
+            `sum() would silently total only those, and the career row would present ` +
+            `a part-season figure as a whole-season one`
+        );
+      }
+    }
+  });
+});
+
 describe('career: the ways a season can look empty', () => {
   it('distinguishes a full season never played from an absent one', async () => {
     // Onana was at Man Utd all of 2025-26 and did not play a minute. Thirty-

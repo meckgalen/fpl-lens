@@ -128,6 +128,13 @@ export default function PlayerDetail({
     // Outside the updater deliberately. A state updater must be pure — React
     // calls it twice under StrictMode precisely to surface side effects hidden
     // in one, and a fetch in there fired every request twice.
+    //
+    // The `inFlight` ref would now absorb that second call, so moving this line
+    // back inside does not restore the observable bug and no test goes red
+    // (measured — see PlayerDetail.test.tsx). It is still wrong: React does not
+    // promise to invoke an updater exactly twice, and it can discard a render
+    // entirely, leaving a fetch started for a state change that never
+    // committed. The ref hides the symptom; this line is the fix.
     if (!isOpen && !detailBySeason[season]) void loadSeason(season);
   };
 

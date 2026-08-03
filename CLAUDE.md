@@ -31,7 +31,19 @@ before it starts and fails with a message naming the one to run first:
 `ingest:fixtures` needs `team_seasons`, and `ingest:gameweeks` needs
 `player_seasons` and `fixtures` to resolve its three season-scoped ids.
 
-`npm test` runs 33 tests against the populated database, all passing, in four
+`npm test` runs **two suites on two runners**: **34 server tests** and **14
+client tests**, all passing. They are counted separately on purpose — two
+runners print two summaries, and a combined figure would be maintained by hand
+against neither of them.
+
+The root script is `run-s --continue-on-error test:server test:client`, so the
+client suite runs even when the server suite is red and the overall exit code is
+still non-zero. `npm run test:server` and `npm run test:client` run either
+alone. Not `&&`, which would hide the client result behind a database problem,
+and not `;`, which reports only the last command's exit code and would let a red
+server suite pass silently.
+
+**Server — `node --import tsx --test`, against the populated database.** Four
 files:
 
 - `server/src/ingest/player-gameweeks.test.ts` — the ingest acceptance suite.
@@ -46,7 +58,36 @@ files:
 - `server/src/repositories/career.test.ts` — the career query. Season set and
   order, the nine acceptance values, the summary cross-checked against the
   gameweek rows it claims to sum, the nullability matrix across all ten seasons
-  on one player, and the three shapes an empty season takes.
+  on one player, the three shapes an empty season takes, and the property that
+  makes the query's bare `sum()` safe: every nullable column is measured for a
+  whole season or for none of it, never part of one.
+
+**Client — Vitest in jsdom, no database.** Components are rendered and the API
+is mocked at `services/api.ts`, not at `fetch`: mocking the transport would
+additionally pin URL shapes and `res.ok` handling, which the server suite
+already covers. Four files:
+
+- `client/src/test/render.test.tsx` — a test for the harness, not the app. The
+  suite's helper wraps in StrictMode, and everything `PlayerDetail.test.tsx`
+  claims depends on React's double-invocation being genuinely active. This
+  counts a probe component's renders and asserts two, both on the first render
+  and after a `rerender`.
+- `client/src/components/GameweekSection.test.tsx` — the four empty states, each
+  pinned by the wording that distinguishes it, including the sentence that must
+  **not** appear when a season is registered but empty. Two of the four are
+  unreachable from the UI and reachable here.
+- `client/src/pages/PlayerDetail.test.tsx` — expanding a career row issues one
+  request, reopening after a collapse issues none, and changing player clears
+  the cache. Payloads differ per (player, season) so a stale cache is visible
+  rather than merely absent.
+- `client/src/components/StatsTable.test.tsx` — rule 6 on screen: a null renders
+  `—` and a zero renders `0.00`, in the same column of the same table.
+
+Two runners rather than one, deliberately. The server suite's defining property
+is that it talks to Postgres, and `node:test` was already there and works. The
+client suite needs jsdom and a module mock, which is Vitest's job. Migrating the
+server suite to Vitest would be a tooling change wearing a testing item's
+clothes.
 
 **Phase 1 step 1 is done: the player detail page shows a career.** It has three
 sections — the header card, "This Season", and "Previous Seasons", which is one
@@ -151,22 +192,31 @@ fpl-lens/
 │   │   ├── lib/
 │   │   │   ├── bootstrap.ts   # BootstrapContext, current/next gameweek
 │   │   │   └── cn.ts          # class name join
+│   │   ├── test/              # harness only — no component lives here
+│   │   │   ├── setup.ts       # jest-dom matchers, explicit afterEach(cleanup)
+│   │   │   ├── factories.ts   # payload builders, return types annotated
+│   │   │   ├── render.tsx     # renderInApp: StrictMode + BootstrapContext
+│   │   │   └── render.test.tsx    # proves StrictMode is actually active
 │   │   ├── pages/
 │   │   │   ├── Dashboard.tsx  # three rankings over season aggregates
 │   │   │   ├── Players.tsx    # the list: own inline search, sort, expand
 │   │   │   ├── Fixtures.tsx   # by gameweek, with difficulty
-│   │   │   └── PlayerDetail.tsx  # header / This Season / Previous Seasons
+│   │   │   ├── PlayerDetail.tsx  # header / This Season / Previous Seasons
+│   │   │   └── PlayerDetail.test.tsx  # expand, collapse, cache reset
 │   │   └── components/
 │   │       ├── ui/            # Card, Table, Badge, Switch, Input
 │   │       ├── PlayerHeader.tsx
 │   │       ├── GameweekFilters.tsx
 │   │       ├── GameweekSection.tsx # a season's gameweeks + the 4 empty states
+│   │       ├── GameweekSection.test.tsx  # all four, by their wording
 │   │       ├── CareerTable.tsx     # one row per season, each expandable
 │   │       ├── StatsTable.tsx
+│   │       ├── StatsTable.test.tsx # rule 6: null renders —, zero renders 0
 │   │       ├── PosBadge.tsx   # PosBadge, StatusDot, FDRBadge, PlayerAvatar
 │   │       ├── Countdown.tsx
 │   │       └── PlayerSearch.tsx  # UNUSED: nothing imports it
 │   ├── vite.config.ts         # proxies /api to :3001
+│   ├── vitest.config.ts       # jsdom, setupFiles, clearMocks; no react plugin
 │   ├── package.json
 │   └── tsconfig.json
 ├── docker-compose.yml         # dev Postgres 16, host port 5434
@@ -393,6 +443,10 @@ another project's container already hold 5432 and 5433 on the dev machine. Chang
 `POSTGRES_PORT` and the port inside `DATABASE_URL` together if you need a different
 one. `npm run migrate:down` reverts the last migration.
 
+`npm test` runs both suites. The server suite needs the database up and the
+three ingest scripts to have been run; the client suite needs neither and can be
+run alone with `npm run test:client`.
+
 ## What's Built
 
 - [x] Postgres-backed read API through `server/src/repositories/`
@@ -411,6 +465,8 @@ one. `npm run migrate:down` reverts the last migration.
       recoveries, defensive contribution, own goals, penalties saved and missed,
       cards, saves — on both the gameweek rows and the season summary
 - [x] Four distinct empty states where there was one
+- [x] A client test suite: components in jsdom with the API mocked, running
+      alongside the server suite under one `npm test`
 
 The live FPL API proxy in `services/fplApi.ts` still exists with its 5-minute
 cache, but no route calls it: it is the ingestion source for the live season.
@@ -444,13 +500,15 @@ around it.
   and is what `StatsTable` uses). Nothing needs the wider key yet — the career
   table renders one `StatsTable` per expanded season, so keys never have to be
   unique across seasons.
-- **Two of the four empty states cannot be reached from the UI**, and are held
-  by `career.test.ts` rather than by anything on screen. "Not in the game that
-  season" needs a player the current squad does not contain, and the player list
-  only holds players with a `player_seasons` row for the current season.
-  "Registered, no rows yet" needs a player-season with no matches, and none of
-  the ten seasons has one. Both become reachable with a live season or with
-  search across all players; neither is dead code.
+- **Two of the four empty states cannot be reached from the UI.** "Not in the
+  game that season" needs a player the current squad does not contain, and the
+  player list only holds players with a `player_seasons` row for the current
+  season. "Registered, no rows yet" needs a player-season with no matches, and
+  none of the ten seasons has one. Both become reachable with a live season or
+  with search across all players; neither is dead code. Since Phase 1 item 2
+  both are rendered and asserted by `GameweekSection.test.tsx`, which is what
+  "unreachable from the UI" now means — the data conditions are pinned by
+  `career.test.ts`, the wording by the client suite.
 - **The 2025-26 "This Season" section shows a completed season under a
   present-tense heading.** It is the latest in the database, so it is correct
   and reads oddly. It resolves itself when 2026-27 is ingested.
@@ -634,6 +692,70 @@ section below is the record of what each decided.
       expand issued two requests. Moved out of the updater, with the in-flight
       guard in a ref rather than in state, since a state guard is read from the
       render that scheduled the click and two calls in a tick both see it empty.
+
+- [x] **2. Client-side testing.** The client had no tests, and everything item 1
+      added was verified by looking at a browser. Vitest in jsdom, React Testing
+      Library, the API mocked at `services/api.ts`. 14 tests in four files; see
+      the test inventory in Current State for what each holds. The step added
+      one server test and changed no component.
+
+      **Two runners, not one.** The server suite stays on `node:test` against a
+      real Postgres. Root `test` is
+      `run-s --continue-on-error test:server test:client` so a red server suite
+      does not hide the client result — verified by pointing `DATABASE_URL` at a
+      dead port: 34 server failures, 14 client passes, exit code 1.
+
+      **The mutation check found what the plan predicted, which changed what the
+      test is allowed to claim.** The obvious mutation — move `loadSeason` back
+      inside the `setExpanded` updater — does **not** turn the double-fetch test
+      red. Measured, all three:
+
+      | Mutation | Result |
+      | --- | --- |
+      | call moved back inside the updater | green |
+      | `inFlight` ref swapped back to state | green |
+      | both together — the bug as it happened | **red**, "expected 2 to be 1" |
+
+      The ref writes synchronously before its first `await`, so it absorbs
+      StrictMode's second updater invocation on its own. **That does not make
+      either half optional, and the comment in `PlayerDetail.tsx` says so.** The
+      ref suppresses the symptom; the call sitting outside the updater is what
+      makes the code correct, because React does not promise to invoke an
+      updater exactly twice and may discard a render entirely — leaving a fetch
+      started for a state change that never committed. None of that is
+      observable from outside the component, so no test pins it, and "either
+      half alone is green" must not be read as "either half alone is fine".
+
+      **`render.test.tsx` tests the harness rather than the app**, because the
+      whole `PlayerDetail` suite is worthless if StrictMode is not actually
+      active — and it would be worthless silently. It counts a probe
+      component's renders: two on mount, two more after a `rerender`. The second
+      half is the one that catches a helper that wraps by hand instead of
+      through RTL's `wrapper` option, which loses StrictMode on re-render only.
+
+      **The factories carry explicit return-type annotations.** Nothing in this
+      suite ever sees a real payload, so they are a second description of the
+      wire shape; the annotation is the only thing that fails `tsc` when a field
+      is added to `types/fpl.ts` and missed here.
+
+      **No `@vitejs/plugin-react` in the Vitest config.** Its jobs are Fast
+      Refresh, which no test wants, and the JSX transform, which Vite already
+      does from `tsconfig.json`'s `jsx: "react-jsx"`. Including it printed
+      deprecation warnings on every run, because Vitest 4 carries a newer Vite
+      than the app builds with.
+
+      **No `user-event`** — `fireEvent.click` covers a `<tr onClick>`, which is
+      all this item touches. That is a decision for this item, not a settled
+      one: keyboard handling on career rows is where it earns its place.
+
+      The server addition: the career query's bare `sum()` skips nulls, which is
+      safe only while a column is measured for a whole season or none of it. A
+      column measured for part of one would total that part and render as a
+      whole-season figure. `career.test.ts` now asserts it per season and per
+      column over all 253,509 rows. It holds today with a real split — tackles
+      are full in 2016-17..2018-19 and 2025-26 and zero in the six between — and
+      it fails on the first partially ingested season, which is when the
+      incremental sync needs to hear about it.
 
 ## Deferred
 
