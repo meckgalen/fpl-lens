@@ -1,7 +1,54 @@
+import { useState } from 'react';
 import type { Player, Team } from '../types/fpl';
 import { POSITION_MAP, fmtNum, fmtOr, fmtPrice, statusOf } from '../types/fpl';
 import { Card, CardContent } from './ui/Card';
-import { PosBadge } from './PosBadge';
+import { PlayerAvatar, PosBadge } from './PosBadge';
+
+/**
+ * The player's photograph, hot-linked from premierleague.com the way FPL's own
+ * site does. Nothing is stored or proxied — that would be an asset pipeline,
+ * which is a separate piece of work from showing one image.
+ *
+ * The URL was checked against the live host rather than written from memory,
+ * because the transformation is not the identity and the path has moved before.
+ * `player.photo` is FPL's `{code}.jpg`; the served asset is a PNG at a size
+ * suffix:
+ *
+ *   photo '223340.jpg'
+ *   -> https://resources.premierleague.com/premierleague/photos/players/250x250/p223340.png
+ *
+ * Measured at the time of writing: that URL returns 200 image/png for Saka,
+ * while the `premierleague25`- and `premierleague26`-prefixed variants some
+ * seasons used return 403 and 502.
+ *
+ * **The fallback is required, not decoration.** A newly published roster has
+ * players with no photograph for weeks — five of the six newest 2026-27 codes
+ * returned 403 when this was written — and they are exactly the players people
+ * look up in August. Without `onError` a large share of the new squad would
+ * render as a broken image.
+ */
+function PlayerPhoto({ photo, name }: { photo: string | null | undefined; name: string }) {
+  const [failed, setFailed] = useState(false);
+  const code = photo?.replace(/\.[a-z]+$/i, '');
+  const src = code ? `https://resources.premierleague.com/premierleague/photos/players/250x250/p${code}.png` : null;
+
+  return (
+    <div className="w-14 h-14 rounded-lg bg-muted flex items-end justify-center overflow-hidden flex-shrink-0">
+      {src && !failed ? (
+        <img
+          src={src}
+          alt={name}
+          className="w-full h-full object-cover object-top"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        // Not alt text: the name is already beside it, so a second copy would
+        // be announced twice. The placeholder is decorative.
+        <PlayerAvatar size={40} />
+      )}
+    </div>
+  );
+}
 
 interface Props {
   player: Player;
@@ -41,6 +88,8 @@ export default function PlayerHeader({ player, team, season }: Props) {
     <Card className="mb-4">
       <CardContent>
         <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <PlayerPhoto photo={player.photo} name={player.web_name} />
           <div>
             <h2 className="font-display text-xl font-semibold text-foreground">
               {player.first_name} {player.second_name}
@@ -60,6 +109,7 @@ export default function PlayerHeader({ player, team, season }: Props) {
                 </>
               )}
             </div>
+          </div>
           </div>
         </div>
 

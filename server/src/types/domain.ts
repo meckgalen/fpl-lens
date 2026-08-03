@@ -245,10 +245,34 @@ export interface UpcomingFixture {
   difficulty: number | null;
 }
 
-/** A gameweek, derived from the fixtures in it. There is no events table. */
+/**
+ * A gameweek: which rounds exist comes from the fixtures, when they lock comes
+ * from `events`.
+ *
+ * The split is deliberate. `fixtures` stays the authority on which rounds exist
+ * — it is the source that has been right about 2019-20 running to 47 and
+ * 2022-23 having no round 7 — and `events` only ever adds a deadline to a round
+ * already established that way. A second list of rounds could disagree with the
+ * first.
+ */
 export interface Gameweek {
   /** The round number. Not an index: 2019-20 runs 1-29 then 39-47. */
   id: number;
   name: string;
   finished: boolean;
+  /**
+   * When the round locks. NULL for the ten CSV-backfilled seasons, which have
+   * no `events` rows: the deadline is a live-game fact and the historical files
+   * do not carry it.
+   */
+  deadline_time: string | null;
+  /**
+   * Derived from `deadline_time` against the clock, never stored (API identity
+   * rule 6): `is_next` is the earliest round whose deadline is still ahead,
+   * `is_current` the latest whose deadline has passed. A season with no
+   * deadlines has both false on every round, which is what a completed season
+   * has always reported.
+   */
+  is_current: boolean;
+  is_next: boolean;
 }

@@ -25,6 +25,29 @@ after(closePool);
 
 const SAKA = 223340;
 
+/**
+ * The latest season that actually has match rows.
+ *
+ * Not the same thing as `latestSeason()` since item 4, and the difference is
+ * the point. `latestSeason()` is what the API defaults to — 2026-27, a roster
+ * and a schedule with no matches played — and that is the right season for the
+ * identity assertions below, because it is the one the bootstrap serves. It is
+ * the wrong season for the round trip that checks a player's history adds up to
+ * the totals beside it: over an unplayed season both sides are zero and the
+ * assertion passes while proving nothing.
+ *
+ * Derived here rather than imported, because no repository exposes it: nothing
+ * in the app wants this question answered, only this test does.
+ */
+async function latestSeasonWithMatches(): Promise<string> {
+  const { rows } = await pool.query<{ season: string }>(
+    'SELECT max(season) AS season FROM player_gameweeks'
+  );
+  const season = rows[0]?.season;
+  assert.ok(season, 'no season has gameweek rows — run the ingest scripts');
+  return season;
+}
+
 describe('API identity: /api/player/:code takes an fpl_code', () => {
   it('resolves every id bootstrap hands out', async () => {
     const season = await latestSeason(pool);
@@ -44,7 +67,10 @@ describe('API identity: /api/player/:code takes an fpl_code', () => {
   });
 
   it('returns that player’s history for the id bootstrap gave', async () => {
-    const season = await latestSeason(pool);
+    // Deliberately the latest season with matches rather than the default one.
+    // See latestSeasonWithMatches above: over an unplayed season this test
+    // would compare zero against zero and pass without touching a single row.
+    const season = await latestSeasonWithMatches();
     const players = await listPlayerTotals(pool, season);
     const saka = players.find((p) => p.id === SAKA);
     assert.ok(saka, 'Saka is missing from the bootstrap payload');

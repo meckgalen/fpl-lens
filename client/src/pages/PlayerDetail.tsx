@@ -3,9 +3,61 @@ import PlayerHeader from '../components/PlayerHeader';
 import GameweekFilters from '../components/GameweekFilters';
 import GameweekSection from '../components/GameweekSection';
 import CareerTable from '../components/CareerTable';
+import { FDRBadge } from '../components/PosBadge';
 import type { Player, PlayerCareerSeason, PlayerDetailData } from '../types/fpl';
 import { fetchPlayerCareer, fetchPlayerDetail } from '../services/api';
 import { useBootstrap } from '../lib/bootstrap';
+
+/** How many of the remaining fixtures to show. Enough to plan a transfer on. */
+const UPCOMING_SHOWN = 5;
+
+/**
+ * What the player has left to play.
+ *
+ * `PlayerDetailData.fixtures` has been served since step 6 and rendered
+ * nowhere, because it was empty for every one of the ten completed seasons —
+ * there is nothing left to play in a season that finished in May. 2026-27 is
+ * the first season where it comes back non-empty, so this is the first time
+ * there is anything to draw.
+ *
+ * It renders nothing at all when the list is empty, which keeps every
+ * historical season's page exactly as it was.
+ */
+function UpcomingFixtures({
+  fixtures,
+  teams,
+}: {
+  fixtures: PlayerDetailData['fixtures'];
+  teams: PlayerDetailData['teams'];
+}) {
+  if (fixtures.length === 0) return null;
+
+  const shortName = (code: number) => teams.find((t) => t.id === code)?.short_name ?? String(code);
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {fixtures.slice(0, UPCOMING_SHOWN).map((f) => {
+        const opponent = f.is_home ? f.team_a : f.team_h;
+        return (
+          <div
+            key={`${f.event}-${f.team_h}-${f.team_a}`}
+            className="flex items-center gap-2 rounded-md bg-muted/60 px-2.5 py-1.5"
+          >
+            <span className="text-[10px] uppercase tracking-[.07em] text-muted-foreground">
+              GW{f.event ?? '?'}
+            </span>
+            <span className="text-[13px] font-medium text-foreground">
+              {shortName(opponent)}
+              {/* Lower-case (a) is FPL's own notation for an away fixture. */}
+              <span className="text-muted-foreground"> {f.is_home ? '(H)' : '(A)'}</span>
+            </span>
+            <FDRBadge value={f.difficulty} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function SectionHeading({ title, note }: { title: string; note?: string }) {
   return (
@@ -182,6 +234,18 @@ export default function PlayerDetail({
 
       {!loading && !error && (
         <>
+          {current && current.fixtures.length > 0 && (
+            <>
+              <SectionHeading
+                title="Upcoming"
+                note={`next ${Math.min(UPCOMING_SHOWN, current.fixtures.length)} of ${
+                  current.fixtures.length
+                } left to play`}
+              />
+              <UpcomingFixtures fixtures={current.fixtures} teams={current.teams} />
+            </>
+          )}
+
           <SectionHeading title="This Season" note={b.season} />
           <GameweekFilters
             gwRange={gwRange}

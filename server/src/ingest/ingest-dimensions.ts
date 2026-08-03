@@ -483,12 +483,33 @@ async function write(client: PoolClient, built: Built): Promise<void> {
 
 // ------------------------------------------------------------- assertions
 
+/**
+ * What the ten CSV seasons contain. Every count below is scoped to those ten
+ * and not to the table as a whole, which is a change item 4 forced: the live
+ * season ingest adds an eleventh season with its own clubs and roster, so
+ * `count(*) FROM player_seasons` stopped being a statement about this script's
+ * work the day it landed.
+ *
+ * Scoped rather than loosened to `>=`. A lower bound would survive the live
+ * season and stop catching the loss these numbers exist to catch. `teams` and
+ * `players` have no season column, so they are counted through the seasons that
+ * reference them — which is also a stricter claim than the raw table count was,
+ * since a row nothing references no longer counts.
+ */
 const EXPECTED = {
   teams: 34,
   team_seasons: 200,
   players: 2623,
   player_seasons: 7338,
 } as const;
+
+/** The count query per table, scoped to the CSV seasons. */
+const SCOPED_COUNT: Record<keyof typeof EXPECTED, string> = {
+  teams: `SELECT count(DISTINCT team_id) AS n FROM team_seasons WHERE season = ANY($1)`,
+  team_seasons: `SELECT count(*) AS n FROM team_seasons WHERE season = ANY($1)`,
+  players: `SELECT count(DISTINCT player_id) AS n FROM player_seasons WHERE season = ANY($1)`,
+  player_seasons: `SELECT count(*) AS n FROM player_seasons WHERE season = ANY($1)`,
+};
 
 async function scalar(client: PoolClient, sql: string, params: unknown[] = []): Promise<number> {
   const { rows } = await client.query<{ n: string }>(sql, params);
@@ -498,17 +519,27 @@ async function scalar(client: PoolClient, sql: string, params: unknown[] = []): 
 async function assertDatabase(client: PoolClient, built: Built): Promise<void> {
   const failures: string[] = [];
 
+  const csvSeasons = [...SEASONS];
+
   for (const [table, expected] of Object.entries(EXPECTED)) {
-    const actual = await scalar(client, `SELECT count(*) AS n FROM ${table}`);
-    if (actual !== expected) failures.push(`${table}: expected ${expected}, got ${actual}`);
+    const actual = await scalar(client, SCOPED_COUNT[table as keyof typeof EXPECTED], [csvSeasons]);
+    if (actual !== expected) {
+      failures.push(`${table} across the ten CSV seasons: expected ${expected}, got ${actual}`);
+    }
   }
 
   const badSeasons = await client.query<{ season: string; n: string }>(
-    `SELECT season, count(*) AS n FROM team_seasons GROUP BY season HAVING count(*) <> 20`
+    `SELECT season, count(*) AS n FROM team_seasons
+      WHERE season = ANY($1) GROUP BY season HAVING count(*) <> 20`,
+    [csvSeasons]
   );
   for (const r of badSeasons.rows) failures.push(`team_seasons ${r.season}: ${r.n} rows, expected 20`);
 
-  const seasonCount = await scalar(client, `SELECT count(DISTINCT season) AS n FROM team_seasons`);
+  const seasonCount = await scalar(
+    client,
+    `SELECT count(DISTINCT season) AS n FROM team_seasons WHERE season = ANY($1)`,
+    [csvSeasons]
+  );
   if (seasonCount !== SEASONS.length) {
     failures.push(`team_seasons covers ${seasonCount} seasons, expected ${SEASONS.length}`);
   }

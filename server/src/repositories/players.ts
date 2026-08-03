@@ -223,7 +223,16 @@ export async function listPlayerTotals(
             p.web_name,
             t.fpl_team_code AS team,
             ${ELEMENT_TYPE_BY_POSITION} AS element_type,
-            ps.end_cost AS now_cost,
+            -- The price to show, and the COALESCE is what finally makes this
+            -- alias honest. It read end_cost AS now_cost from step 6 until
+            -- item 4, which was a small lie on every season: end_cost is the
+            -- price a season CLOSED at. now_cost is written by the live ingest
+            -- on every run and is NULL on the ten completed seasons --
+            -- deliberately not backfilled, since two columns holding one fact
+            -- is what this schema avoids -- so NULL here means "that season is
+            -- over, ask end_cost" and the fallback is right on every row
+            -- without anyone having to know which season they are looking at.
+            COALESCE(ps.now_cost, ps.end_cost) AS now_cost,
 
             ${SEASON_AGGREGATE},
 
@@ -235,7 +244,7 @@ export async function listPlayerTotals(
               ON pg.player_id = ps.player_id AND pg.season = ps.season
       WHERE ps.season = $1
       GROUP BY p.fpl_code, p.first_name, p.second_name, p.web_name,
-               t.fpl_team_code, ps.position, ps.end_cost
+               t.fpl_team_code, ps.position, ps.now_cost, ps.end_cost
       ORDER BY p.fpl_code`,
     [season]
   );

@@ -52,6 +52,16 @@ export interface WireElement {
   team_code: number;
   element_type: number;
   now_cost: number;
+  /**
+   * Movement since the season opened, in £0.1m units, negative when the price
+   * has fallen. `now_cost - cost_change_start` is the price the season started
+   * at, which is the derivation `player_seasons.start_cost` uses on both ingest
+   * paths — the CSV one reads the same field out of players_raw.csv.
+   */
+  cost_change_start: number;
+  /** Only on the live bootstrap and in players_raw.csv from 2024-25 onward. */
+  opta_code: string | null;
+  birth_date: string | null;
   total_points: number;
   minutes: number;
   goals_scored: number;

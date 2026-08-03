@@ -9,29 +9,48 @@ with filters.
 ## Current State
 
 **Phase 0 is complete. All seven steps are done, and the app reads from
-Postgres, not the live FPL API.** The raw CSVs for all ten seasons are in
-`data/raw/` and profiled in
-`docs/data-profile.md`. Postgres 16 runs in docker-compose and the schema
-exists, created by `server/migrations/1785550165663_initial-schema.ts`.
+Postgres, not the live FPL API.** The raw CSVs for the ten completed seasons are
+in `data/raw/` and profiled in `docs/data-profile.md`. Postgres 16 runs in
+docker-compose; the schema is `server/migrations/1785550165663_initial-schema.ts`
+plus `1785742016477_live-season.ts`, which item 4 added.
 
-**All six tables are populated.** Three ingest scripts do it. All three are
+**The database holds eleven seasons of registrations and ten of matches, and
+those are two different numbers now.** 2016-17 through 2025-26 are complete and
+came from the CSV backfill. 2026-27 came from the live FPL API in Phase 1
+item 4: clubs, roster, deadlines and the full fixture list, and **not one
+`player_gameweeks` row**, because none has been played. Anything that used to
+say "the ten seasons" has to pick which of the two it meant — see the constants
+in `career.test.ts`, which were one and are now two.
+
+**All seven tables are populated.** Four ingest scripts do it. All four are
 idempotent, run in one transaction, and assert their own results:
 
 | Table              | Rows                  | Populated by                |
 | ------------------ | --------------------- | --------------------------- |
-| `teams`            | 34                    | `npm run ingest:dimensions` |
-| `team_seasons`     | 200 (20 per season)   | `npm run ingest:dimensions` |
-| `players`          | 2623                  | `npm run ingest:dimensions` |
-| `player_seasons`   | 7338                  | `npm run ingest:dimensions` |
-| `fixtures`         | 3800 (380 per season) | `npm run ingest:fixtures`   |
+| `teams`            | 35                    | `ingest:dimensions` + `ingest:live` |
+| `team_seasons`     | 220 (20 per season)   | `ingest:dimensions` + `ingest:live` |
+| `players`          | 2690                  | `ingest:dimensions` + `ingest:live` |
+| `player_seasons`   | 7902                  | `ingest:dimensions` + `ingest:live` |
+| `fixtures`         | 4180 (380 per season) | `ingest:fixtures` + `ingest:live`   |
+| `events`           | 38 (2026-27 only)     | `npm run ingest:live`       |
 | `player_gameweeks` | 253509                | `npm run ingest:gameweeks`  |
 
-The scripts must be run in that order. Each asserts its predecessors' row counts
-before it starts and fails with a message naming the one to run first:
-`ingest:fixtures` needs `team_seasons`, and `ingest:gameweeks` needs
+The three CSV scripts must be run in that order. Each asserts its predecessors'
+row counts before it starts and fails with a message naming the one to run
+first: `ingest:fixtures` needs `team_seasons`, and `ingest:gameweeks` needs
 `player_seasons` and `fixtures` to resolve its three season-scoped ids.
+`ingest:live` has no ordering constraint — it owns its own season end to end —
+and can be run at any time, as often as you like.
 
-`npm test` runs **two suites on two runners**: **34 server tests** and **39
+**Every one of those preconditions is scoped to the ten CSV seasons**, which
+item 4 had to change. They were counts over whole tables (`teams = 34`,
+`player_seasons = 7338`), and the moment an eleventh season existed, re-running
+any CSV ingest failed on a season it does not own. They were scoped rather than
+loosened to `>=`: the numbers are exact because that is what catches a dropped
+row, and a bound wide enough to admit a new season is wide enough to admit a
+missing match. The pinned figures are unchanged.
+
+`npm test` runs **two suites on two runners**: **48 server tests** and **51
 client tests**, all passing. They are counted separately on purpose — two
 runners print two summaries, and a combined figure would be maintained by hand
 against neither of them.
@@ -43,8 +62,16 @@ alone. Not `&&`, which would hide the client result behind a database problem,
 and not `;`, which reports only the last command's exit code and would let a red
 server suite pass silently.
 
-**Server — `node --import tsx --test`, against the populated database.** Four
+**Server — `node --import tsx --test`, against the populated database.** Five
 files:
+
+- `server/src/ingest/live-season.test.ts` — the live ingest, offline. Every test
+  writes a synthetic season (`2099-00`) inside a `BEGIN … ROLLBACK`, so it
+  exercises the real upsert SQL without touching the eleven real seasons and
+  without the network. Covers the season derivation, that no stat field crosses
+  the boundary, that a second run changes nothing, that `start_cost` is
+  write-once, that a departed player keeps his row, that a promoted club matches
+  its existing row by code, and that a fixture with no round stores as NULL.
 
 - `server/src/ingest/player-gameweeks.test.ts` — the ingest acceptance suite.
   The nine Saka 2025-26 metrics, Salah 2017-18 and De Bruyne 2019-20 (both
@@ -52,15 +79,29 @@ files:
   rule 6 nullability boundaries.
 - `server/src/repositories/api-identity.test.ts` — `/api/player/:code` takes an
   `fpl_code`, the id bootstrap hands out is the one that resolves, and no
-  season-scoped element id resolves as a code.
+  season-scoped element id resolves as a code. The identity assertions run
+  against the **default** season, which is now the unplayed one; the round trip
+  that checks a history sums to the totals beside it runs against the latest
+  season **with matches**, because over an unplayed season it would compare zero
+  to zero and pass without reading a row.
 - `server/src/repositories/wire-types.test.ts` — decimals arrive as numbers and
   unmeasured stats arrive as null, on the aggregate and on the gameweek rows.
 - `server/src/repositories/career.test.ts` — the career query. Season set and
   order, the nine acceptance values, the summary cross-checked against the
-  gameweek rows it claims to sum, the nullability matrix across all ten seasons
-  on one player, the three shapes an empty season takes, and the property that
+  gameweek rows it claims to sum, the nullability matrix across every season on
+  one player, the three shapes an empty season takes, and the property that
   makes the query's bare `sum()` safe: every nullable column is measured for a
   whole season or for none of it, never part of one.
+
+  **It holds two season lists now, `ALL_SEASONS` (eleven) and
+  `SEASONS_WITH_GAMEWEEKS` (ten), and the split was the subtlest thing in
+  item 4.** They were one constant, `ALL_TEN`, used for two different questions:
+  the seasons a career spans (`player_seasons`) and the seasons present in
+  `player_gameweeks`. Those were the same list until 2026-27 and are not any
+  more. Editing the single constant to eleven would have turned the `sum()`
+  property test red with a message about a missing season, which reads exactly
+  like a broken ingest. They are named for what they mean rather than for how
+  many they hold, so the next August does not repeat it.
 
 **Client — Vitest in jsdom, no database.** Components are rendered and the API
 is mocked at `services/api.ts`, not at `fetch`: mocking the transport would
@@ -68,7 +109,7 @@ additionally pin URL shapes and `res.ok` handling, which the server suite
 already covers. `@testing-library/user-event` drives anything involving a
 keyboard — `fireEvent` dispatches a synthetic click and so cannot tell a
 `<button>` from a `<div onClick>`, which is the entire distinction item 3 turns
-on. Eight files:
+on. Eleven files:
 
 - `client/src/test/render.test.tsx` — a test for the harness, not the app. The
   suite's helper wraps in StrictMode, and everything `PlayerDetail.test.tsx`
@@ -103,6 +144,17 @@ on. Eight files:
   and the arrow stays out of the accessible name. Also a class-level tripwire on
   the button filling its cell, which is worth having and worth knowing the limit
   of — see the Phase 1 item 3 record.
+- `client/src/pages/Dashboard.preseason.test.tsx` — the three rankings with
+  nothing to rank. The load-bearing assertion is the **negative** one: the
+  message must not promise Gameweek 1. See item 4 for the window in which that
+  promise is false.
+- `client/src/pages/PlayerDetail.upcoming.test.tsx` — the Upcoming strip: five
+  of the remaining fixtures, the opponent read off the correct side of
+  `is_home`, a difficulty per fixture, and **nothing at all** when the list is
+  empty, which is every completed season.
+- `client/src/components/PlayerHeader.test.tsx` — the photo URL built from
+  `photo`, and the `onError` fallback to the placeholder, which is the common
+  case for a newly published roster rather than an edge one.
 
 Two runners rather than one, deliberately. The server suite's defining property
 is that it talks to Postgres, and `node:test` was already there and works. The
@@ -125,7 +177,16 @@ code.
 
 The three season-scoped routes serve one season, defaulting to the latest in the
 database (computed, not hardcoded) and accepting `?season=2019-20`. An unknown
-season is a 400 listing the ten that exist. Every one of them names the season it
+season is a 400 listing the eleven that exist.
+
+**The default follows the data, and since item 4 that means a season nobody has
+played yet.** The reasoning is written out beside `latestSeason()` in
+`server/src/repositories/seasons.ts`, which is where the next person will hit
+it. In short: the app is about the season being played, the pages that aggregate
+over `player_gameweeks` render explicit empty states rather than tables of
+zeroes, and the alternative — defaulting to the newest season with match data —
+would make the season everyone is actually playing invisible, because there is
+no season selector in the UI yet. Every one of them names the season it
 resolved, and every page header displays it. `/api/player/:code/career` is the
 exception and spans all of them: it takes no `?season=` and rejects one rather
 than ignoring it, and its rows carry the label instead (API identity rule 7).
@@ -137,9 +198,9 @@ one is expanded. Nothing yet *chooses* a season in the sense a selector would.
 `GET /api/bootstrap` runs a ~90ms aggregate per request. No cache and no
 materialized view: it is fast enough, and a cache is a second source of truth.
 
-The app now shows the 2025-26 season in full — 841 players, 380 fixtures, 38
-gameweeks — instead of the empty current-season history the live API returns
-during preseason (2026/27 GW1 deadline is 21 Aug 2026).
+The app defaults to **2026-27**: 564 players, 20 clubs, 380 unplayed fixtures
+and 38 real deadlines, with GW1 locking 21 Aug 2026 at 17:30Z. 2025-26 remains
+complete and reachable at `?season=2025-26` and through every career table.
 
 **Step 7 split the types, and the JSON changed with it.** Decimals are numbers,
 not strings: `expected_goals` is `7.57`, not `"7.57"`. `server/src/types/`
@@ -165,6 +226,20 @@ Live season, incremental, official FPL API (no auth needed):
 - `https://fantasy.premierleague.com/api/element-summary/{player_id}/` (per-GW history,
   upcoming fixtures, and `history_past` season totals)
 - `https://fantasy.premierleague.com/api/fixtures/`
+
+**The bootstrap carries no season label anywhere**, so `ingest:live` derives it
+from the earliest gameweek deadline: a deadline in August 2026 means `2026-27`.
+Any deadline from January onward belongs to the season that opened the previous
+August, which cannot arise on a full 38-event payload and costs one comparison
+to be right about if it ever does.
+
+**A pre-season bootstrap serves LAST season's totals on every element.** At the
+time of writing Saka's element carries minutes 2218, points 157 and starts 25 —
+his 2025-26 figures exactly — and 400 of the 564 elements carry nonzero stats
+the same way. This is the single biggest hazard in the live path: ingesting them
+produces a new season that looks completely plausible and is a copy of the old
+one. `ingest:live` reads structural fields only, and both the ingest's own
+assertions and two tests in `live-season.test.ts` exist to keep it that way.
 
 Historical backfill, 2016-17 onward, from
 [vaastav/Fantasy-Premier-League](https://github.com/vaastav/Fantasy-Premier-League),
@@ -195,6 +270,8 @@ fpl-lens/
 │   │   ├── index.ts           # Express entry, port 3001
 │   │   ├── db/                # pool, connection config
 │   │   ├── ingest/            # CSV loaders + live API sync
+│   │   │   ├── ingest-live-season.ts  # the live season: npm run ingest:live
+│   │   │   └── live-season.test.ts    # offline, in a rolled-back transaction
 │   │   ├── repositories/      # DB query layer — the ONLY place SQL may live
 │   │   ├── routes/fpl.ts      # /api/bootstrap, /api/player/:code[/career], /api/fixtures
 │   │   ├── services/fplApi.ts # live FPL API client, cache; ingest source only
@@ -221,16 +298,19 @@ fpl-lens/
 │   │   ├── pages/
 │   │   │   ├── Dashboard.tsx  # three rankings; each entry opens its player
 │   │   │   ├── Dashboard.test.tsx     # the click-through, all three rankings
+│   │   │   ├── Dashboard.preseason.test.tsx  # the three empty rankings
 │   │   │   ├── Players.tsx    # the list: own inline search, sort, expand
 │   │   │   ├── Players.test.tsx       # disclosure + sort, by keyboard
 │   │   │   ├── Fixtures.tsx   # by gameweek, with difficulty
-│   │   │   ├── PlayerDetail.tsx  # header / This Season / Previous Seasons
-│   │   │   └── PlayerDetail.test.tsx  # expand, collapse, cache reset
+│   │   │   ├── PlayerDetail.tsx  # header / Upcoming / This Season / Previous
+│   │   │   ├── PlayerDetail.test.tsx  # expand, collapse, cache reset
+│   │   │   └── PlayerDetail.upcoming.test.tsx  # the remaining fixtures strip
 │   │   └── components/
 │   │       ├── ui/            # Card, Table, Badge, Switch, Input
 │   │       │                  # + DisclosureButton: the one row toggle
 │   │       ├── OpenPlayerButton.tsx # a player's name, as a link to their page
-│   │       ├── PlayerHeader.tsx
+│   │       ├── PlayerHeader.tsx     # + the hot-linked player photo
+│   │       ├── PlayerHeader.test.tsx  # the photo URL and its fallback
 │   │       ├── GameweekFilters.tsx
 │   │       ├── GameweekSection.tsx # a season's gameweeks + the 4 empty states
 │   │       ├── GameweekSection.test.tsx  # all four, by their wording
@@ -402,10 +482,16 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
    surrogate `fixtures.id`, which is permanent and verified stable across
    re-ingest.
 4. **Fields with no source in the database are null, not invented.** `form`,
-   `selected_by_percent`, `status`, `news`, `chance_of_playing_next_round` and
-   `events[].deadline_time` describe the live game and arrive with the bootstrap
-   sync. `fixtures[].code` is FPL's permanent fixture code, which was never
-   ingested. The keys stay present so the shape does not move.
+   `selected_by_percent`, `status`, `news` and `chance_of_playing_next_round`
+   describe the live game and are still null on every season — item 4 ingested
+   the season's *structure*, not its per-sync snapshot; see Deferred, "live
+   field sync". `fixtures[].code` is FPL's permanent fixture code, which was
+   never ingested. The keys stay present so the shape does not move.
+
+   `events[].deadline_time` was on this list and has come off it. It has a
+   source now — the `events` table, filled by `ingest:live` — and is a real
+   timestamp for 2026-27. It is still null for the ten CSV seasons, which have
+   no `events` rows, because the historical files do not carry deadlines.
 5. **`photo` and `points_per_game` are derived, because they genuinely are.**
    `photo` is `${fpl_code}.jpg`, which is how FPL builds it.
    `points_per_game` is total points over **matches appeared in**
@@ -413,9 +499,42 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
    the one that reproduces FPL's own value. It rounds half-to-even, matching
    FPL's Python; Postgres `numeric` rounds half away from zero and disagreed
    with the live API on ten players before that was fixed.
-6. **`is_current` / `is_next` are false on every event.** They describe a live
-   season. Over a completed one there is no current gameweek, and nominating the
-   last one would be a guess dressed as data.
+6. **`is_current` / `is_next` are derived from the deadline and the clock, never
+   stored.** Rewritten in item 4, which gave the app a live season and so made
+   the old wording — "false on every event" — false itself. The reason it was
+   false is kept, because nine of the eleven seasons are still completed and
+   still report both as false.
+
+   The definitions, which the rule has to state because they are not
+   self-evident:
+
+   - **`is_next`** is the earliest gameweek whose deadline is still in the
+     future.
+   - **`is_current`** is the latest gameweek whose deadline has passed.
+
+   Before the first deadline of a season there is **no current gameweek at
+   all**, which is the correct answer for a pre-season and is the state the app
+   is in today.
+
+   Derived rather than stored, and that is the substance of the rule. FPL
+   publishes its own `is_current`/`is_next` on every bootstrap, and storing them
+   would make them a snapshot: right at sync time and wrong an hour later, with
+   nothing on screen to say which. Computed against `now()` they cannot go
+   stale between syncs.
+
+   **A season with no deadlines has both false on every round, by
+   construction.** The ten CSV-backfilled seasons have no `events` rows, so the
+   LEFT JOIN yields NULL and both comparisons are false — which is exactly the
+   behaviour the original rule described, now arrived at from the data instead
+   of from a hardcoded `false` in the route. Over a completed season there is
+   still no current gameweek, and nominating the last one would still be a guess
+   dressed as data.
+
+   Known consequence, recorded rather than fixed: once 2026-27 finishes, its
+   GW38 stays `is_current` until 2027-28 is ingested, because its deadline
+   remains the latest one that has passed. That is the right answer at every
+   other moment of a season's life, and the wrong-looking one only in the weeks
+   between a season ending and the next being loaded.
 7. **Every response labels its data with the season that data came from. Which
    level the label sits at depends on whether the response spans seasons.**
 
@@ -470,9 +589,18 @@ another project's container already hold 5432 and 5433 on the dev machine. Chang
 `POSTGRES_PORT` and the port inside `DATABASE_URL` together if you need a different
 one. `npm run migrate:down` reverts the last migration.
 
+`npm run ingest:live` loads the current season from the live FPL API. It is
+safe to run at any time and as often as you like — the transfer window means it
+is meant to be — and it reports whether anything actually changed:
+
+```
+Season 2026-27: teams=20 players=564 events=38 fixtures=380
+No change: every table this ingest writes is byte-identical to before the run.
+```
+
 `npm test` runs both suites. The server suite needs the database up and the
-three ingest scripts to have been run; the client suite needs neither and can be
-run alone with `npm run test:client`.
+three CSV ingest scripts to have been run; the client suite needs neither and
+can be run alone with `npm run test:client`.
 
 ## What's Built
 
@@ -497,6 +625,14 @@ run alone with `npm run test:client`.
 - [x] Every interactive element reachable by keyboard: the career and Players
       row toggles, and the sortable column headers on both tables
 - [x] Click-through from all three Dashboard rankings to a player's detail page
+- [x] The live season, ingested from the official API: clubs, roster, deadlines
+      and fixtures for 2026-27, re-runnable through the transfer window
+- [x] Real gameweek deadlines, and a countdown that counts down to one
+- [x] Pre-season empty states on the three Dashboard rankings, worded from the
+      data rather than the calendar
+- [x] Upcoming fixtures on the detail page, with difficulty — populated for the
+      first time, every previous season having been complete
+- [x] The player's photograph on the header card, with a placeholder fallback
 
 The live FPL API proxy in `services/fplApi.ts` still exists with its 5-minute
 cache, but no route calls it: it is the ingestion source for the live season.
@@ -510,11 +646,15 @@ quietly been fixed is worse than no issue list, because the next session plans
 around it.
 
 - The five live-only fields (`form`, `selected_by_percent`, `status`, `news`,
-  `chance_of_playing_next_round`) are `null` and stay null until a live
-  bootstrap sync exists. The UI renders `—` for them. `form` and
-  `selected_by_percent` were sortable columns on the Players page and are gone
-  rather than shown empty; they come back with the sync. See API identity
-  rule 4.
+  `chance_of_playing_next_round`) are `null` on every season, 2026-27 included,
+  and the UI renders `—` for them. Every player on the Players list shows status
+  "Unknown". **Item 4 did not fix this and was not meant to**: it ingests a
+  season's *structure* — who is registered, for which club, at what price, on
+  what schedule — and those five are a *snapshot* of the live game that is
+  different every hour. Storing them needs somewhere to put a value that is
+  never true for long, which is the "live field sync" item in Deferred. `form`
+  and `selected_by_percent` were sortable columns on the Players page and are
+  gone rather than shown empty. See API identity rule 4.
 - `client/src/components/PlayerSearch.tsx` is dead: nothing imports it. The
   Players page has its own inline search.
 - **The player object on the detail page is a snapshot.** `App.tsx` stores the
@@ -540,18 +680,27 @@ around it.
   and is what `StatsTable` uses). Nothing needs the wider key yet — the career
   table renders one `StatsTable` per expanded season, so keys never have to be
   unique across seasons.
-- **Two of the four empty states cannot be reached from the UI.** "Not in the
-  game that season" needs a player the current squad does not contain, and the
-  player list only holds players with a `player_seasons` row for the current
-  season. "Registered, no rows yet" needs a player-season with no matches, and
-  none of the ten seasons has one. Both become reachable with a live season or
-  with search across all players; neither is dead code. Since Phase 1 item 2
-  both are rendered and asserted by `GameweekSection.test.tsx`, which is what
-  "unreachable from the UI" now means — the data conditions are pinned by
-  `career.test.ts`, the wording by the client suite.
-- **The 2025-26 "This Season" section shows a completed season under a
-  present-tense heading.** It is the latest in the database, so it is correct
-  and reads oddly. It resolves itself when 2026-27 is ingested.
+- **One of the four empty states is still unreachable from the UI**, down from
+  two. "Registered, no rows yet" became real the day 2026-27 was ingested and is
+  what every 2026-27 player's "This Season" section shows — confirmed in the
+  browser, not inferred.
+
+  **The state is a fact about the data, not about the date**: a
+  `player_seasons` row exists and no `player_gameweeks` row does. Playing the
+  matches does not end it; **ingesting** them does. So it stays reachable past
+  21 Aug 2026 and until the incremental gameweek sync writes 2026-27's first
+  match rows — a later item with no date on it. If that gap runs a month, this
+  is what the page shows for a month into a season that has started.
+
+  Which is the correction the Dashboard's "No matches recorded" wording already
+  got, made here for the same reason: a calendar claim standing in for a data
+  one is wrong in exactly the window between a season starting and its data
+  landing.
+
+  "Not in the game that season" is still unreachable: it needs a player the
+  current squad does not contain, and the player list only holds players with a
+  `player_seasons` row for the default season. Search across all players would
+  reach it. Both remain rendered and asserted by `GameweekSection.test.tsx`.
 - `Player` carries no `birth_date` and `Team` no `code`, both of which exist in
   the database. They are not in any response because nothing renders them.
 - The UI has a working light/dark toggle, but neither theme is the one in Design
@@ -559,6 +708,40 @@ around it.
   (`30 5% 10%`), and the accent is indigo (`228 36% 42%`) rather than
   `#0f0f23`/`#00ff87`. Reconcile the spec with the build before any styling work
   — the decision of which one wins is still open.
+- **The Players list shows the 2026-27 roster with zero in every stat column**,
+  which is honest and is not what the page is for. The recorded intent is a
+  labelled split — this season's price and ownership beside the last completed
+  season's totals, each saying which it is, deliberately unlike FPL's own site,
+  which shows carryover totals under a "this season" heading. That was left out
+  of item 4 on purpose and is a named item in Deferred: ownership has no storage
+  yet, and the totals need a cross-season aggregate on the list query. Both are
+  features, and item 4 was an ingest.
+- **After 2026-27 finishes, its GW38 will stay `is_current` until 2027-28 is
+  ingested**, because `is_current` is the latest gameweek whose deadline has
+  passed (API identity rule 6). Right at every other moment of a season; wrong
+  only in the gap between one season ending and the next being loaded.
+- **A fixture with no round reaches the client as `event: null`, and the
+  Fixtures page has no answer for it.** `fixtures.gw` is nullable by design —
+  the initial migration says so — because FPL leaves `event` empty on a fixture
+  it has not scheduled and nulls it on a postponement until a new round is
+  assigned. `listEvents` filters `gw IS NOT NULL`, so a round-less fixture can
+  neither invent a round nor remove one that other fixtures still populate.
+  `listFixtures` does not filter, so the row reaches the client with
+  `event: null`, and the Fixtures page groups by kickoff day — which is also
+  null on an unscheduled fixture. Unreachable today: all 380 of 2026-27's
+  fixtures carry both fields. It needs an answer before the first postponement
+  and belongs with the incremental sync item.
+- **`end_cost` for 2026-27 is NULL and nothing will fill it until the season is
+  over and the CSV backfill runs for it.** That is correct — a season in
+  progress has not ended at a price — and it has one visible consequence
+  waiting: the career row renders `Price` as `start → end`, so 2026-27 will read
+  `£9.5 → —`. It cannot be seen today, because the detail page files the default
+  season under "This Season" and only *previous* seasons reach that table. It
+  becomes visible when a newer season is ingested and 2026-27 stops being the
+  default — not on any date, and in particular not when the season ends.
+  Showing `start → now` instead was considered and rejected: the
+  column says "end", and a season that has not ended did not end at today's
+  price.
 
 ## Phase 0, Persistence and Backfill — complete
 
@@ -618,7 +801,8 @@ teams            (id, fpl_team_code UNIQUE NOT NULL, name, short_name)
 team_seasons     (team_id, season, fpl_team_id, strength_*,
                   UNIQUE(season, fpl_team_id))
 player_seasons   (player_id, season, fpl_element_id, team_id, position,
-                  start_cost, end_cost, UNIQUE(season, fpl_element_id))
+                  start_cost, now_cost, end_cost, UNIQUE(season, fpl_element_id))
+events           (season, gw, deadline_time timestamptz, PK(season, gw))
 fixtures         (id, season, fpl_fixture_id, gw, home_team_id, away_team_id,
                   kickoff_time, finished, home_score, away_score, home_difficulty,
                   away_difficulty, UNIQUE(season, fpl_fixture_id))
@@ -629,6 +813,25 @@ player_gameweeks (player_id, season, gw, fixture_id, was_home, opponent_team_id,
 Index `player_gameweeks` on `(player_id, season)` and on `(season, gw)`. The unique
 constraints make re-ingestion idempotent, which matters because these scripts will be
 run many times.
+
+**The three price columns are three different facts and item 4 is where that
+started to matter.** `start_cost` is what the season opened at, written once.
+`end_cost` is what it closed at, and stays NULL while a season is in progress
+(rule 6 — a season that has not ended has not ended at a price). `now_cost` is
+the price at the last sync, refreshed on every run of `ingest:live`, and is
+**NULL on all ten completed seasons and deliberately never backfilled**:
+duplicating one fact into two columns with nothing keeping them equal is the
+failure this schema avoids everywhere else. NULL there means "that season is
+over, ask `end_cost`", so `COALESCE(now_cost, end_cost)` reads correctly on
+every row without the caller knowing which season it is looking at. That is what
+`listPlayerTotals` does, and it is what finally makes its `AS now_cost` alias
+true — it had been reading `end_cost` since step 6.
+
+`events` holds only deadlines. **Which rounds exist still comes from
+`fixtures`**, and `listEvents` LEFT JOINs `events` onto that rather than the
+other way round. Two independent lists of which rounds exist is a disagreement
+waiting to happen, and the fixture-derived one is the one that has been right
+about 2019-20 running to 47 and 2022-23 skipping round 7.
 
 ### Acceptance test
 
@@ -884,6 +1087,139 @@ section below is the record of what each decided.
       page that opened. The back link's stale label was found doing it — see
       Known Issues.
 
+- [x] **4. The 2026-27 season, from the live API.** `ingest:live` loads clubs,
+      roster, deadlines and the full fixture list from
+      `bootstrap-static` and `fixtures`, into the same six tables the CSV
+      backfill writes, plus a new `events` table. It writes **no**
+      `player_gameweeks` rows. Verified twice over: the ingest asserts the whole
+      season totals zero points through the same query the player list runs, and
+      two tests build the rows from payloads that differ only in their stats and
+      require the output to be identical.
+
+      **The trap this item is mostly built around.** A pre-season bootstrap
+      serves LAST season's totals on every element — Saka's read 2218 minutes,
+      157 points, 25 starts, which are his 2025-26 acceptance values exactly, and
+      400 of 564 elements carried nonzero stats. An ingest that took them would
+      produce a 2026-27 that looks entirely plausible and is a copy of 2025-26.
+      Nothing about it would look wrong.
+
+      **The default season decision, which had to be made before anything was
+      ingested.** `latestSeason()` is computed, so the moment 2026-27 had rows it
+      became the default and every aggregate page pointed at a season with no
+      matches. The default was kept following the data, and the pages were given
+      honest empty states instead — reasoning in full beside `latestSeason()`.
+      The alternative, defaulting to the newest season *with matches*, would have
+      left the season everybody is playing invisible: there is no season selector
+      yet, so it would have been reachable only as a career row filed under
+      "Previous Seasons".
+
+      **The Dashboard's wording is about the data, not the calendar**, and that
+      distinction is the item's one non-obvious piece of UI. "No matches recorded
+      for 2026-27 yet" is gated on every player having zero appearances — which
+      is what the three rankings are computed from — and not on the date. The two
+      come apart in a window this plan creates deliberately: GW1 is played on 21
+      August, the incremental sync is a later item, and in between every player
+      has zero appearances while Gameweek 1 is over. "Rankings start after
+      Gameweek 1" would then be promising something that had already happened.
+      It is item 1's empty-state distinction in the other direction, and the test
+      asserts the absence of the wrong wording, not just the presence of the
+      right one.
+
+      **Two upsert rules that point opposite ways, stated together because they
+      are easy to swap.** `start_cost` is written once, on insert, and is
+      `now_cost - cost_change_start` rather than `now_cost` — the two are equal
+      only while prices have not moved, and a first run made after GW1 would
+      otherwise freeze the wrong number permanently, there being no second
+      chance to write it. `deadline_time` is upserted on every run, because FPL
+      moves deadlines and a write-once deadline counts down to a time that has
+      passed.
+
+      **Nothing is ever deleted.** A player sold in August simply stops appearing
+      in the bootstrap; his `player_seasons` row stays. It records a registration
+      that really happened, he may already have gameweek rows whose career row
+      would otherwise vanish while the matches remained, and the feed that no
+      longer mentions him cannot put him back.
+
+      **Two writers, one column, and the flip-flop that found it.** `teams` and
+      `players` began with `DO UPDATE` on names, and the result was that Hull
+      became "Hull City" and Ipswich "Ipswich Town" on every live run and
+      reverted on every `ingest:dimensions` — a stored value depending on which
+      script ran last. It turned `career.test.ts` red, which is how it was found
+      rather than shipped. Both are now `DO NOTHING`: new clubs and new players
+      are inserted whole, existing rows are left alone. The tie is broken toward
+      the source that is written once per season rather than re-read constantly.
+      Cost, accepted: a name or birth date arriving on the live feed for a player
+      already stored waits for the next CSV refresh.
+
+      **Four preconditions in the CSV ingests had to be re-scoped**, and they
+      would have failed loudly rather than quietly — `ingest:fixtures` did fail,
+      on `team_seasons has 220 rows, expected 200`, which is how the fourth was
+      found. All are now scoped to the ten CSV seasons rather than relaxed to a
+      lower bound, so every pinned number is unchanged and still catches loss.
+
+      **`ALL_TEN` had to become two constants first.** It answered "every season
+      a career spans" and "every season with match rows" with one list, and those
+      diverged the day this landed. Splitting it before touching either test is
+      what stopped the `sum()` property test failing with a message that reads
+      like a broken ingest.
+
+      **Named additions, not scope that drifted in:** the Upcoming fixtures strip
+      on the detail page (the payload has carried `fixtures` since step 6 and
+      nothing rendered it, because it is empty for every completed season), and
+      the header-card photograph. The photo URL was verified against the live
+      host rather than recalled — `photo` is `{code}.jpg`, the asset is
+      `.../photos/players/250x250/p{code}.png` — and the `onError` fallback is
+      required rather than polish: five of the six newest 2026-27 codes had no
+      photograph, and those are the players people look up in August. Confirmed
+      in the browser on Burrowes, who renders the placeholder.
+
+      **Verification.** `npm test`: 48 server, 51 client, both green. `tsc
+      --noEmit` clean in both packages. `ingest:live` run twice, the second
+      reporting "No change: every table this ingest writes is byte-identical".
+      All three CSV ingests re-run green with the eleventh season present. The
+      `sum()` property test passes because 2026-27 contributes no
+      `player_gameweeks` group at all.
+
+      **An independent check, from a different pipeline:** the ingest reads
+      `/api/fixtures/`; the check reads `/api/element-summary/{id}/`, a different
+      endpoint with a different shape, and compares one club's 38 matches on
+      round, opponent and side. **0 mismatches.** The ingest's own assertions are
+      likewise derived from the competition format rather than from the feed's
+      counts: 20 clubs, 38 matches each, 19 home and 19 away. The per-round check
+      — 10 fixtures, each club once — is commented as **publication-time only**,
+      true of a freshly released schedule and false of a season in progress, as
+      2022-23's missing round 7 and 2019-20's 39-47 already prove in this
+      database.
+
+      **Mutation-checked, measured, not assumed:**
+
+      | Mutation | Result |
+      | --- | --- |
+      | `start_cost` added to the `DO UPDATE SET` clause | **red**, 1 test |
+      | a stat field reaches a built row | **red**, 3 tests |
+      | fixtures deleted and reinserted instead of upserted | **red**, 1 test |
+      | players missing from the feed pruned | **red**, 1 test |
+      | Dashboard wording changed to promise Gameweek 1 | **red**, 2 tests |
+      | Dashboard gated on the calendar instead of appearances | **red**, 1 test |
+      | photo `onError` fallback removed | **red**, 1 test |
+      | upcoming opponent read off the wrong side of `is_home` | **red**, 1 test |
+
+      **The browser pass, and what actually ends it.** A 2026-27 player's detail
+      page renders "Data will appear here once the 2026-27 season is underway."
+      from real data — the "registered, no rows yet" state item 1 wrote and
+      could not reach. The task framed this as a check that could not be repeated
+      after 21 Aug 2026, and the data says otherwise: the state is a
+      `player_seasons` row with no `player_gameweeks` rows, so what ends it is
+      the **incremental sync writing the first match rows**, not the matches
+      being played. It survives the season starting and lasts as long as that
+      item takes. The same page shows the
+      Upcoming strip populated for the first time (`next 5 of 38 left to play`:
+      GW1 COV (H) 2, GW2 AVL (A) 4, GW3 CHE (H) 4, GW4 SUN (A) 3, GW5 BHA (A) 3)
+      and the photograph. The Dashboard shows all three rankings empty with the
+      deadline counting down; the Fixtures page shows GW1's ten matches across
+      21-24 August with both promoted clubs (HUL, COV) resolved. Price reads
+      £9.5 from `now_cost`, which is the COALESCE working — `end_cost` is NULL.
+
 ## Deferred
 
 The gate used to be "not until Phase 0 is complete". Phase 0 is complete, and
@@ -896,10 +1232,32 @@ is a prerequisite for anything already built, so touching one while working on
 something else is scope creep rather than progress. Two of them have a real
 ordering constraint, marked below.
 
-Also still open, from Known Issues rather than from this list: a live bootstrap
-sync, which is what fills the five null fields and makes `form` and ownership
-real again.
+Also still open, from Known Issues rather than from this list: the **live field
+sync**, which is what fills the five null fields and makes `form` and ownership
+real again. Not to be confused with `ingest:live`, which item 4 built: that
+loads a season's structure — roster, clubs, deadlines, fixtures — and runs to
+completion in about a second. The field sync stores values that are different
+every hour, and needs somewhere to put them and a policy for how often.
 
+- **The incremental gameweek sync.** After GW1 is played, `player_gameweeks`
+  needs the matches. It inherits `ingest-live-season.ts`, and two things in
+  there are written for a pre-season and will not survive contact with a played
+  one: the per-round fixture-count assertion (commented as publication-time
+  only) and the assertion that the season has no gameweek rows. The round-less
+  fixture entry in Known Issues belongs to this item too. **This is the only
+  thing that makes the two "no matches recorded / no rows yet" empty states go
+  away** — they are gated on `player_gameweeks` being empty, so playing the
+  matches does not clear them and ingesting them does. However long this item
+  takes after the season starts is how long the app stays honestly empty about a
+  season that is underway, which is the argument for it being the next one.
+- **The pre-season player list: this season's price and ownership beside the
+  last completed season's totals, each labelled which it is.** Deliberately not
+  FPL's approach of showing carryover totals under a "this season" heading. Left
+  out of item 4 because it is two features rather than an ingest: ownership is a
+  live-snapshot field with nowhere to be stored (see the live field sync above),
+  and the totals need a second season's aggregate on the bootstrap query. Until
+  it lands the list shows the new roster with zeros, which is recorded in Known
+  Issues rather than left to look like a bug.
 - **Data view improvements:** fixture difficulty colouring, totals row, per-90 toggle,
   rolling form, multi-player comparison, styling polish.
 - **Expected points prediction:** transparent weighted formula, not black-box ML,
@@ -916,10 +1274,13 @@ real again.
 - **Deploy on karpuz-prod** alongside TechRelative (Docker Compose, Nginx), responsive
   design, README with screenshots.
 - **A season selector in the UI.** The API accepts `?season=` on all three
-  season-scoped routes and returns any of the ten. The detail page now sends it
-  per expanded career row, but nothing lets a user *choose* the season the app
-  is showing, so the Players, Dashboard and Fixtures pages are still fixed to
-  the latest. Carries the `detailPlayer` snapshot fix in Known Issues with it.
+  season-scoped routes and returns any of the eleven. The detail page now sends
+  it per expanded career row, but nothing lets a user *choose* the season the
+  app is showing, so the Players, Dashboard and Fixtures pages are fixed to the
+  default. **Item 4 raised the value of this**: the ten completed seasons are
+  now one navigation step further away than the unplayed one, and the Dashboard
+  in particular has real rankings for 2025-26 that a user currently cannot get
+  to. Carries the `detailPlayer` snapshot fix in Known Issues with it.
 
 ## Design Decisions
 

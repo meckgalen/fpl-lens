@@ -403,12 +403,17 @@ async function insertChunked(
  * season. team_seasons holds the mapping; nothing raw is ever inserted.
  */
 async function teamIdMap(client: PoolClient): Promise<Map<string, number>> {
+  // Scoped to the ten CSV seasons: the live ingest adds an eleventh with its
+  // own twenty clubs, and this precondition is a statement about step 3 having
+  // run, not about how many seasons exist. The map only needs the seasons this
+  // script writes for the same reason.
   const { rows } = await client.query<{ season: string; fpl_team_id: number; team_id: number }>(
-    'SELECT season, fpl_team_id, team_id FROM team_seasons'
+    'SELECT season, fpl_team_id, team_id FROM team_seasons WHERE season = ANY($1)',
+    [[...SEASONS]]
   );
   if (rows.length !== 200) {
     throw new Error(
-      `team_seasons has ${rows.length} rows, expected 200. ` +
+      `team_seasons has ${rows.length} rows for the ten CSV seasons, expected 200. ` +
         `Run 'npm run ingest:dimensions' first — step 4 depends on step 3.`
     );
   }
@@ -465,54 +470,80 @@ async function scalar(client: PoolClient, sql: string, params: unknown[] = []): 
   return Number(rows[0].n);
 }
 
+/**
+ * Every check below is scoped to the ten CSV seasons with `season = ANY($1)`,
+ * and that scope is not cosmetic. Item 4 added a live season to this same
+ * table: its 380 fixtures are unplayed, so a global "rows not finished" check
+ * would report 380 failures for a season this script never touched, and the
+ * global totals would be 4180 rather than 3800.
+ *
+ * Scoped rather than relaxed. These are exact equalities on purpose — they are
+ * what catches a fixture silently dropped — and a bound wide enough to admit an
+ * eleventh season would be wide enough to admit a missing match.
+ */
 async function assertDatabase(client: PoolClient): Promise<void> {
   const failures: string[] = [];
+  const csvSeasons = [...SEASONS];
   const check = async (label: string, sql: string, expected = 0) => {
-    const n = await scalar(client, sql);
+    const n = await scalar(client, sql, [csvSeasons]);
     if (n !== expected) failures.push(`${label}: got ${n}, expected ${expected}`);
   };
 
-  await check('fixtures total', 'SELECT count(*) AS n FROM fixtures', EXPECTED_TOTAL);
+  await check(
+    'fixtures total',
+    'SELECT count(*) AS n FROM fixtures WHERE season = ANY($1)',
+    EXPECTED_TOTAL
+  );
   await check(
     `seasons without exactly ${EXPECTED_PER_SEASON} fixtures`,
     `SELECT count(*) AS n FROM (
-       SELECT season FROM fixtures GROUP BY season HAVING count(*) <> ${EXPECTED_PER_SEASON}
+       SELECT season FROM fixtures WHERE season = ANY($1)
+        GROUP BY season HAVING count(*) <> ${EXPECTED_PER_SEASON}
      ) x`
   );
   await check(
     'seasons present',
-    'SELECT count(DISTINCT season) AS n FROM fixtures',
+    'SELECT count(DISTINCT season) AS n FROM fixtures WHERE season = ANY($1)',
     SEASONS.length
   );
   await check(
     'rows where home_team_id = away_team_id',
-    'SELECT count(*) AS n FROM fixtures WHERE home_team_id = away_team_id'
+    'SELECT count(*) AS n FROM fixtures WHERE season = ANY($1) AND home_team_id = away_team_id'
   );
   await check(
     'rows with only one score set',
     `SELECT count(*) AS n FROM fixtures
-      WHERE (home_score IS NULL) <> (away_score IS NULL)`
+      WHERE season = ANY($1) AND (home_score IS NULL) <> (away_score IS NULL)`
   );
-  await check('rows not finished', 'SELECT count(*) AS n FROM fixtures WHERE NOT finished');
+  await check(
+    'rows not finished',
+    'SELECT count(*) AS n FROM fixtures WHERE season = ANY($1) AND NOT finished'
+  );
   await check(
     'rows with difficulty on the wrong side of the fixtures.csv boundary',
     `SELECT count(*) AS n FROM fixtures
-      WHERE (season IN ('2016-17','2017-18'))
+      WHERE season = ANY($1)
+        AND (season IN ('2016-17','2017-18'))
             <> (home_difficulty IS NULL AND away_difficulty IS NULL)`
   );
   await check(
     'rows with exactly one difficulty set',
     `SELECT count(*) AS n FROM fixtures
-      WHERE (home_difficulty IS NULL) <> (away_difficulty IS NULL)`
+      WHERE season = ANY($1) AND (home_difficulty IS NULL) <> (away_difficulty IS NULL)`
   );
-  await check('rows with gw outside 1..47', 'SELECT count(*) AS n FROM fixtures WHERE gw < 1 OR gw > 47');
+  await check(
+    'rows with gw outside 1..47',
+    'SELECT count(*) AS n FROM fixtures WHERE season = ANY($1) AND (gw < 1 OR gw > 47)'
+  );
   await check(
     'team-seasons not playing exactly 19 home and 19 away',
     `SELECT count(*) AS n FROM (
        SELECT season, team_id
          FROM (SELECT season, home_team_id AS team_id, 1 AS h, 0 AS a FROM fixtures
+                WHERE season = ANY($1)
                UNION ALL
-               SELECT season, away_team_id,            0,      1      FROM fixtures) s
+               SELECT season, away_team_id,            0,      1      FROM fixtures
+                WHERE season = ANY($1)) s
         GROUP BY season, team_id
        HAVING sum(h) <> 19 OR sum(a) <> 19
      ) x`

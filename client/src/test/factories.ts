@@ -24,6 +24,7 @@ import type {
   Player,
   PlayerCareerSeason,
   PlayerDetailData,
+  PlayerFixture,
   Team,
 } from '../types/fpl';
 
@@ -178,6 +179,24 @@ export function aCareerSeason(
     clearances_blocks_interceptions: 129,
     recoveries: 149,
     defensive_contribution: 12,
+    ...overrides,
+  };
+}
+
+/**
+ * One fixture the player has left to play.
+ *
+ * Empty on every completed season — there is nothing left to play in a season
+ * that finished in May — so this builder exists only because a live season is
+ * now ingested and the list finally comes back with something in it.
+ */
+export function aPlayerFixture(overrides: Partial<PlayerFixture> = {}): PlayerFixture {
+  return {
+    event: 1,
+    team_h: 3,
+    team_a: 43,
+    is_home: true,
+    difficulty: 4,
     ...overrides,
   };
 }

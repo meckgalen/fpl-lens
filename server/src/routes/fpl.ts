@@ -111,15 +111,13 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
         chance_of_playing_next_round: null,
       })),
       teams,
-      events: events.map((e) => ({
-        ...e,
-        // ~90 minutes before the round's first kick-off, recorded nowhere.
-        deadline_time: null,
-        // A finished season has no current round, and nominating the last one
-        // would be a guess dressed as data (API identity rule 6).
-        is_current: false,
-        is_next: false,
-      })),
+      // Passed straight through since item 4. The deadline comes from `events`
+      // and the two flags are derived from it against the clock, both in
+      // listEvents. They were hardcoded null/false/false here while nothing in
+      // the database could answer them; over a completed season the values are
+      // the same, because a season with no deadlines has no current or next
+      // round (API identity rule 6).
+      events,
       positions,
     };
     res.json(body);

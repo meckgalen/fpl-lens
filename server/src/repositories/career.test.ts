@@ -40,7 +40,23 @@ const ONANA = 202641;
 const PERRI = 201595;
 const CRESSWELL = 55459;
 
-const ALL_TEN = [
+/**
+ * Two season lists, because there are now two different questions.
+ *
+ * They were one constant called ALL_TEN until item 4, and it answered both:
+ * every season a player can be registered for, and every season with match
+ * data. Those were the same ten seasons for as long as the database held only
+ * completed ones. 2026-27 has a roster, a schedule and no matches, so they are
+ * not the same list any more, and a single constant would have made one of the
+ * two tests below fail while looking like an ingest problem.
+ *
+ * Named for what they mean rather than for how many they hold, so the next
+ * season does not repeat this.
+ */
+
+/** Every season in `player_seasons` — what a career can span. */
+const ALL_SEASONS = [
+  '2026-27',
   '2025-26',
   '2024-25',
   '2023-24',
@@ -52,6 +68,15 @@ const ALL_TEN = [
   '2017-18',
   '2016-17',
 ];
+
+/**
+ * Every season present in `player_gameweeks`.
+ *
+ * Ten, and it stays ten until the incremental gameweek sync lands: the live
+ * season ingest writes rosters, deadlines and fixtures, and deliberately not
+ * one match row.
+ */
+const SEASONS_WITH_GAMEWEEKS = ALL_SEASONS.filter((s) => s !== '2026-27');
 
 /** Seasons that measured xG, xA, xGI, xGC and starts. */
 const HAS_XG = new Set(['2022-23', '2023-24', '2024-25', '2025-26']);
@@ -66,17 +91,33 @@ const sum = (rows: PlayerGameweek[], f: (r: PlayerGameweek) => number) =>
 
 describe('career: one row per season, newest first', () => {
   it('returns every season the player was registered for, and no others', async () => {
-    // Eight, not nine. Saka's first FPL season is 2018-19 — the task this was
-    // built for assumed nine, and the data says otherwise. A ninth appears when
-    // 2026-27 is ingested, not before.
+    // Nine as of item 4, and the arithmetic is worth keeping. Saka's first FPL
+    // season is 2018-19: the task item 1 was built for assumed nine when there
+    // were eight, and the data corrected it. The ninth is 2026-27, which
+    // arrived the day the live season was ingested — exactly as that comment
+    // predicted, which is why this one now says so rather than replacing it.
     const career = await getPlayerCareer(pool, SAKA);
     assert.deepEqual(
       career.map((r) => r.season),
-      ['2025-26', '2024-25', '2023-24', '2022-23', '2021-22', '2020-21', '2019-20', '2018-19']
+      [
+        '2026-27',
+        '2025-26',
+        '2024-25',
+        '2023-24',
+        '2022-23',
+        '2021-22',
+        '2020-21',
+        '2019-20',
+        '2018-19',
+      ]
     );
 
     const maguire = await getPlayerCareer(pool, MAGUIRE);
-    assert.deepEqual(maguire.map((r) => r.season), ALL_TEN, 'Maguire should span all ten seasons');
+    assert.deepEqual(
+      maguire.map((r) => r.season),
+      ALL_SEASONS,
+      'Maguire should span every season in the database'
+    );
   });
 
   it('names the club on the row, including one that is in no current season', async () => {
@@ -266,8 +307,14 @@ describe('career: rule 6 — nullability follows the season, not the stat', () =
   });
 
   it('never nulls a stat that every season measured', async () => {
+    // Including the season with no matches in it. A career row for 2026-27 is
+    // eleven columns of COALESCE over zero gameweek rows, and every one of them
+    // has to come back as the number 0 rather than as null: nobody has scored
+    // nothing yet, which is a measurement, unlike xG in 2016-17, which was
+    // never taken. The two look identical on screen and this is the line
+    // between them.
     const career = await getPlayerCareer(pool, MAGUIRE);
-    assert.equal(career.length, 10);
+    assert.equal(career.length, ALL_SEASONS.length);
 
     for (const row of career) {
       for (const field of [
@@ -362,7 +409,12 @@ describe('career: the condition that makes bare sum() safe', () => {
         ORDER BY season DESC`
     );
 
-    assert.deepEqual(rows.map((r) => r.season), ALL_TEN, 'every season should be present');
+    assert.deepEqual(
+      rows.map((r) => r.season),
+      SEASONS_WITH_GAMEWEEKS,
+      'every season with match data should be present — and only those. 2026-27 has a ' +
+        'roster and no matches, so it contributes no group here at all'
+    );
 
     for (const row of rows) {
       const total = Number(row.total);

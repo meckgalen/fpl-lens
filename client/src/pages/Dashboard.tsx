@@ -28,6 +28,30 @@ import { currentGameweek, nextGameweek, useBootstrap } from '../lib/bootstrap';
 const MIN_APPEARANCES = 10;
 
 /**
+ * What the three rankings say when there is nothing to rank.
+ *
+ * **The wording is about the data, not the calendar, and that is the whole
+ * point of it.** "Rankings start after Gameweek 1" would be a claim about time
+ * sitting under a gate that is a claim about data, and the two come apart in a
+ * window that is guaranteed to exist: GW1 is played on 21 August, the
+ * incremental gameweek sync is a later item, and in between every player has
+ * zero appearances while Gameweek 1 is over. Promising something that has
+ * already happened is worse than saying nothing.
+ *
+ * This is the distinction item 1 drew between its two no-rows empty states, in
+ * the other direction: there, "once the season is underway" was rejected for a
+ * player who was never registered, because it promised something that would
+ * never arrive.
+ */
+function NoMatchesYet({ season }: { season: string }) {
+  return (
+    <p className="text-center text-sm text-muted-foreground py-8">
+      No matches recorded for {season} yet.
+    </p>
+  );
+}
+
+/**
  * The three rankings had no click handler at all — not a broken one, none — so
  * the career view item 1 built was reachable only through the Players list.
  * `onOpenDetail` is the prop that list already takes, filled by `App.tsx` with
@@ -75,6 +99,23 @@ export default function Dashboard({
     () => [...b.players].sort((a, c) => c.ict_index - a.ict_index).slice(0, 7),
     [b.players]
   );
+
+  /**
+   * Whether any match in this season has been recorded at all.
+   *
+   * Gated on appearances rather than on the date, because appearances are what
+   * all three rankings are computed from: with none, "Top Performers" is six
+   * players tied on zero in whatever order the array arrived, "Best points per
+   * match" is empty because nobody clears the appearance floor, and "ICT
+   * Leaders" is seven more zeroes. Sorting produced those lists; it did not
+   * produce a ranking, and the page should not present them as one.
+   *
+   * True for a season whose fixtures have not started, which is the state
+   * 2026-27 is in — and, deliberately, still true after Gameweek 1 is played
+   * and before it is ingested. See NoMatchesYet above for why the wording has
+   * to match the gate.
+   */
+  const noMatchesYet = useMemo(() => b.players.every((p) => p.appearances === 0), [b.players]);
 
   const gwAverage = cur ? '–' : '–'; // FPL bootstrap event objects carry avg in `average_entry_score` when surfaced; placeholder for now
   const topScore = '–';
@@ -133,6 +174,9 @@ export default function Dashboard({
             <CardTitle>Top Performers · Total points</CardTitle>
             <Badge variant="secondary">Season</Badge>
           </CardHeader>
+          {noMatchesYet ? (
+            <NoMatchesYet season={b.season} />
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -170,6 +214,7 @@ export default function Dashboard({
               ))}
             </TableBody>
           </Table>
+          )}
         </Card>
 
         <Card>
@@ -181,6 +226,7 @@ export default function Dashboard({
             <Badge variant="primary-tint">min {MIN_APPEARANCES} apps</Badge>
           </CardHeader>
           <CardContent className="pt-3 pb-2">
+            {noMatchesYet && <NoMatchesYet season={b.season} />}
             {bestPerMatch.map((p, i) => (
               <div
                 key={p.id}
@@ -227,7 +273,8 @@ export default function Dashboard({
           <Badge variant="primary-tint">Season</Badge>
         </CardHeader>
         <CardContent className="pt-3 pb-2">
-          {ictTop.map((p, i) => (
+          {noMatchesYet && <NoMatchesYet season={b.season} />}
+          {!noMatchesYet && ictTop.map((p, i) => (
             <div
               key={p.id}
               className={`flex items-center gap-3 py-2.5 ${i < ictTop.length - 1 ? 'border-b border-border' : ''}`}

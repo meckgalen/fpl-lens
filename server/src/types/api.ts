@@ -43,21 +43,17 @@ export interface LiveOnlyPlayerFields {
 
 export type ApiPlayer = PlayerSeasonTotals & LiveOnlyPlayerFields;
 
-/** A gameweek as served: derived fields, plus the deadline we cannot know. */
-export type ApiEvent = Gameweek & {
-  /**
-   * ~90 minutes before the round's first kick-off, and recorded nowhere in the
-   * database. Null until the live sync (API identity rule 4).
-   */
-  deadline_time: string | null;
-  /**
-   * Both false, always, over a completed season. There is no "current" round in
-   * a season that ended years ago, and nominating the last one would be a guess
-   * dressed as data (API identity rule 6).
-   */
-  is_current: boolean;
-  is_next: boolean;
-};
+/**
+ * A gameweek as served.
+ *
+ * Identical to the domain type since item 4: `deadline_time`, `is_current` and
+ * `is_next` used to be added by the route as null/false/false, because nothing
+ * in the database could answer them. The live season ingest gave the first two
+ * a source and the third a derivation, so the repository answers all three now
+ * and the route passes them through. Over a completed season the values are
+ * unchanged — no deadlines, so no current or next round (API identity rule 6).
+ */
+export type ApiEvent = Gameweek;
 
 /** A fixture as served, with FPL's permanent fixture code we never ingested. */
 export type ApiFixture = Fixture & {

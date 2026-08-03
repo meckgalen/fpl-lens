@@ -369,21 +369,35 @@ const REQUIRED_PLAYER_SEASONS = 7338;
 const REQUIRED_FIXTURES = 3800;
 const REQUIRED_TEAM_SEASONS = 200;
 
+/**
+ * All three queries are scoped to the ten CSV seasons, and both effects are
+ * wanted. The counts stay exact — they are preconditions saying "the two
+ * scripts before this one have run", and a lower bound would pass on a
+ * half-populated dimension table. And the maps only ever need to resolve ids
+ * for the seasons this script reads, so an eleventh season from the live ingest
+ * has no business being in them.
+ */
 async function loadMaps(client: PoolClient): Promise<Maps> {
+  const csvSeasons = [...SEASONS];
+
   const playerSeasons = await client.query<{
     season: string;
     fpl_element_id: number;
     player_id: number;
-  }>('SELECT season, fpl_element_id, player_id FROM player_seasons');
+  }>('SELECT season, fpl_element_id, player_id FROM player_seasons WHERE season = ANY($1)', [
+    csvSeasons,
+  ]);
   requireRows(playerSeasons.rowCount ?? 0, REQUIRED_PLAYER_SEASONS, 'player_seasons', 'dimensions');
 
   const fixtures = await client.query<{ season: string; fpl_fixture_id: number; id: number }>(
-    'SELECT season, fpl_fixture_id, id FROM fixtures'
+    'SELECT season, fpl_fixture_id, id FROM fixtures WHERE season = ANY($1)',
+    [csvSeasons]
   );
   requireRows(fixtures.rowCount ?? 0, REQUIRED_FIXTURES, 'fixtures', 'fixtures');
 
   const teamSeasons = await client.query<{ season: string; fpl_team_id: number; team_id: number }>(
-    'SELECT season, fpl_team_id, team_id FROM team_seasons'
+    'SELECT season, fpl_team_id, team_id FROM team_seasons WHERE season = ANY($1)',
+    [csvSeasons]
   );
   requireRows(teamSeasons.rowCount ?? 0, REQUIRED_TEAM_SEASONS, 'team_seasons', 'dimensions');
 

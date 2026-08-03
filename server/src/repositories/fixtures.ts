@@ -14,6 +14,9 @@ import type { Fixture, Gameweek } from '../types/domain.js';
 
 const KICKOFF_UTC = `to_char(f.kickoff_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`;
 
+/** Same treatment for the gameweek deadline, and for the same reason. */
+const DEADLINE_UTC = `to_char(deadline_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`;
+
 /**
  * One season's fixtures, optionally a single gameweek.
  *
@@ -53,31 +56,65 @@ export async function listFixtures(
 }
 
 /**
- * The gameweek list, derived from `fixtures` — there is no events table, and
- * the parts that are genuinely derivable are derived rather than guessed.
+ * The gameweek list.
  *
- *   id       the round number
- *   name     'Gameweek {n}', as the FPL API names them
- *   finished true when every fixture in the round has been played
+ *   id            the round number
+ *   name          'Gameweek {n}', as the FPL API names them
+ *   finished      true when every fixture in the round has been played
+ *   deadline_time from `events`, NULL for the ten CSV seasons
+ *   is_current    derived, see below
+ *   is_next       derived, see below
  *
- * The rows are NOT `1..n`. 2019-20 runs 1-29 and then 39-47, the nine rounds in
+ * **Which rounds exist comes from `fixtures`, and only from `fixtures`.** The
+ * rows are NOT `1..n`: 2019-20 runs 1-29 and then 39-47, the nine rounds in
  * between having been emptied by the Covid suspension and replayed at the end;
- * 2022-23 has no round 7, postponed after the Queen's death. Anything treating
- * the length of this array as the highest round number is wrong in both, in
- * opposite directions.
+ * 2022-23 has no round 7, postponed after the Queen's death. That derivation
+ * has been right about both, so `events` joins onto it rather than the other
+ * way round — a second list of rounds is a list that can disagree.
  *
- * deadline_time, is_current and is_next are not derivable and are not invented
- * here — the route adds them. See ../types/api.ts.
+ * The join is a LEFT JOIN for the same reason. Every one of the ten backfilled
+ * seasons has fixtures and no deadlines, and a round with no deadline is still
+ * a round.
+ *
+ * **is_current and is_next are computed here, from the deadline against the
+ * clock, and never stored.** FPL publishes its own flags on every bootstrap and
+ * storing them would make them a snapshot: correct at sync time and wrong every
+ * hour after it. Derived, they cannot go stale between syncs. The definitions:
+ *
+ *   is_next     the earliest round whose deadline is still in the future
+ *   is_current  the latest round whose deadline has passed
+ *
+ * Before the first deadline of a season there is no current round at all, which
+ * is the right answer for a pre-season and is the state 2026-27 is in today.
+ * A season with no `events` rows has both false on every round — which is
+ * exactly what API identity rule 6 has always said about a completed season,
+ * now arrived at by construction instead of by a hardcoded false in the route.
  */
 export async function listEvents(db: Queryable, season: string): Promise<Gameweek[]> {
   const { rows } = await db.query<Gameweek>(
-    `SELECT f.gw AS id,
-            'Gameweek ' || f.gw AS name,
-            bool_and(f.finished) AS finished
-       FROM fixtures f
-      WHERE f.season = $1 AND f.gw IS NOT NULL
-      GROUP BY f.gw
-      ORDER BY f.gw`,
+    `WITH rounds AS (
+       SELECT f.gw AS id,
+              bool_and(f.finished) AS finished,
+              max(e.deadline_time) AS deadline_time
+         FROM fixtures f
+         LEFT JOIN events e ON e.season = f.season AND e.gw = f.gw
+        WHERE f.season = $1 AND f.gw IS NOT NULL
+        GROUP BY f.gw
+     )
+     SELECT id,
+            'Gameweek ' || id AS name,
+            finished,
+            ${DEADLINE_UTC} AS deadline_time,
+            deadline_time IS NOT NULL
+              AND deadline_time <= now()
+              AND deadline_time = max(deadline_time) FILTER (WHERE deadline_time <= now()) OVER ()
+              AS is_current,
+            deadline_time IS NOT NULL
+              AND deadline_time > now()
+              AND deadline_time = min(deadline_time) FILTER (WHERE deadline_time > now()) OVER ()
+              AS is_next
+       FROM rounds
+      ORDER BY id`,
     [season]
   );
   return rows;

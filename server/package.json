@@ -11,6 +11,7 @@
     "ingest:dimensions": "tsx src/ingest/ingest-dimensions.ts",
     "ingest:fixtures": "tsx src/ingest/ingest-fixtures.ts",
     "ingest:gameweeks": "tsx src/ingest/ingest-gameweeks.ts",
+    "ingest:live": "tsx src/ingest/ingest-live-season.ts",
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
