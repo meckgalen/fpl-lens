@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { PlayerCareerSeason } from '../types/fpl';
 import { NO_VALUE, POSITION_MAP, fmtNum } from '../types/fpl';
 import { Card } from './ui/Card';
+import { DisclosureButton } from './ui/DisclosureButton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 
 interface Props {
@@ -133,6 +134,9 @@ function fmtPriceCell(cost: number | null): string {
  */
 const STICKY_COL = 'sticky left-0 z-10 shadow-[1px_0_0_0_hsl(var(--border))]';
 
+/** The row a season's toggle points `aria-controls` at while it is open. */
+const detailRowId = (season: string) => `career-gameweeks-${season}`;
+
 export default function CareerTable({ seasons, expanded, onToggle, renderExpanded }: Props) {
   return (
     <Card className="overflow-x-auto">
@@ -155,10 +159,19 @@ export default function CareerTable({ seasons, expanded, onToggle, renderExpande
                 <TableCell
                   className={`${STICKY_COL} bg-card group-hover:bg-muted font-display text-[13px] font-semibold text-foreground whitespace-nowrap`}
                 >
-                  <span className="inline-block w-3 text-muted-foreground">
-                    {isOpen ? '▾' : '▸'}
-                  </span>
-                  {s.season}
+                  {/* The row keeps its own onClick, so a mouse can still open a
+                      season by clicking anywhere along it. This is the control
+                      a keyboard and a screen reader get, and it carries the
+                      season as its text so its accessible name is "2024-25"
+                      rather than "button". DisclosureButton stops the click
+                      propagating, or the row handler would toggle it back. */}
+                  <DisclosureButton
+                    expanded={isOpen}
+                    controls={detailRowId(s.season)}
+                    onToggle={() => onToggle(s.season)}
+                  >
+                    {s.season}
+                  </DisclosureButton>
                 </TableCell>
                 {COLUMNS.map((col) => (
                   <TableCell
@@ -173,7 +186,11 @@ export default function CareerTable({ seasons, expanded, onToggle, renderExpande
               // key is distinct from the summary row's so React never has to
               // choose between two rows claiming the same season.
               isOpen && (
-                <TableRow key={`${s.season}-detail`} className="hover:bg-transparent">
+                <TableRow
+                  key={`${s.season}-detail`}
+                  id={detailRowId(s.season)}
+                  className="hover:bg-transparent"
+                >
                   <TableCell colSpan={COLUMNS.length + 1} className="p-0">
                     <div className="px-3 py-3 bg-muted/30">{renderExpanded(s.season)}</div>
                   </TableCell>

@@ -4,7 +4,9 @@ import { Badge } from '../components/ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table';
 import { PlayerAvatar, PosBadge } from '../components/PosBadge';
 import { Countdown } from '../components/Countdown';
+import { OpenPlayerButton } from '../components/OpenPlayerButton';
 import { NO_DEADLINE, POSITION_MAP, fmtNum, fmtPrice } from '../types/fpl';
+import type { Player } from '../types/fpl';
 import { currentGameweek, nextGameweek, useBootstrap } from '../lib/bootstrap';
 
 /**
@@ -25,7 +27,18 @@ import { currentGameweek, nextGameweek, useBootstrap } from '../lib/bootstrap';
  */
 const MIN_APPEARANCES = 10;
 
-export default function Dashboard() {
+/**
+ * The three rankings had no click handler at all — not a broken one, none — so
+ * the career view item 1 built was reachable only through the Players list.
+ * `onOpenDetail` is the prop that list already takes, filled by `App.tsx` with
+ * `setDetailPlayer`: one route into the detail page rather than two that can
+ * drift apart.
+ */
+export default function Dashboard({
+  onOpenDetail,
+}: {
+  onOpenDetail: (player: Player) => void;
+}) {
   const b = useBootstrap();
   const teamMap = useMemo(() => Object.fromEntries(b.teams.map((t) => [t.id, t.short_name])), [b.teams]);
 
@@ -140,7 +153,11 @@ export default function Dashboard() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div className="font-medium text-[13px] text-foreground">{p.web_name}</div>
+                    <OpenPlayerButton
+                      player={p}
+                      onOpenDetail={onOpenDetail}
+                      className="font-medium text-[13px] text-foreground"
+                    />
                     <div className="text-[10px] text-muted-foreground mt-0.5">{teamMap[p.team]}</div>
                   </TableCell>
                   <TableCell>
@@ -174,7 +191,11 @@ export default function Dashboard() {
                   <PlayerAvatar size={26} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium text-[13px] text-foreground">{p.web_name}</div>
+                  <OpenPlayerButton
+                    player={p}
+                    onOpenDetail={onOpenDetail}
+                    className="font-medium text-[13px] text-foreground"
+                  />
                   <div className="flex items-center gap-1.5 mt-1">
                     <Badge variant="secondary" className="text-[9px] py-0 px-1.5">
                       {teamMap[p.team]}
@@ -216,7 +237,11 @@ export default function Dashboard() {
                 <PlayerAvatar size={22} />
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-[13px] text-foreground truncate">{p.web_name}</div>
+                <OpenPlayerButton
+                  player={p}
+                  onOpenDetail={onOpenDetail}
+                  className="font-medium text-[13px] text-foreground truncate max-w-full"
+                />
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <PosBadge pos={POSITION_MAP[p.element_type]} />
                   <span className="text-[10px] text-muted-foreground">

@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState } from 'react';
 import { Card } from '../components/ui/Card';
+import { DisclosureButton } from '../components/ui/DisclosureButton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table';
 import { PlayerAvatar, PosBadge, StatusDot } from '../components/PosBadge';
 import { POSITION_MAP, fmtNum, fmtPrice, statusBucket } from '../types/fpl';
@@ -17,6 +18,9 @@ import { useBootstrap } from '../lib/bootstrap';
  */
 type SortKey = 'pts' | 'ppm' | 'price' | 'goals' | 'assists';
 const POSITIONS = ['ALL', 'GKP', 'DEF', 'MID', 'FWD'] as const;
+
+/** The row a player's toggle points `aria-controls` at while it is open. */
+const expandedRowId = (playerCode: number) => `player-summary-${playerCode}`;
 
 const numForKey = (p: Player, k: SortKey): number => {
   switch (k) {
@@ -109,7 +113,20 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
       </div>
 
       <div className="flex gap-2.5 items-center mb-4 flex-wrap">
-        <div className="flex items-center gap-2 px-3 h-9 rounded-md border border-input bg-card shadow-sm">
+        {/* The search input carried a bare `outline-none` and no replacement, so
+            focus landed in a text field with nothing on screen saying so — the
+            worst of the focus defects, because there is no visible cursor
+            anywhere else to fall back on.
+
+            The ring goes on the wrapper, not the input: `Input.tsx` puts the
+            border and the ring on the same element, and here the border is on
+            this div while the input inside is deliberately borderless. A ring
+            around the text alone would sit inside the border it belongs
+            outside. `focus-within` rather than `focus-visible` because the
+            element being outlined is not the element receiving focus; for a
+            text field the two fire together anyway, since browsers match
+            `:focus-visible` on text inputs even when they are clicked. */}
+        <div className="flex items-center gap-2 px-3 h-9 rounded-md border border-input bg-card shadow-sm focus-within:ring-2 focus-within:ring-ring">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="2.2">
             <circle cx="11" cy="11" r="8" />
             <path d="m21 21-4.35-4.35" />
@@ -154,9 +171,17 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
                   key={c.v}
                   className={`text-right ${sort === c.v ? 'text-foreground' : ''}`}
                   onClick={() => handleSort(c.v)}
+                  // -1 is descending here, which is what the ▾ draws for it.
+                  sortDirection={
+                    sort === c.v ? (sortDir < 0 ? 'descending' : 'ascending') : 'none'
+                  }
                 >
                   {c.l}
-                  {sort === c.v && <span className="ml-0.5 opacity-50 text-[9px]">{sortDir < 0 ? '▾' : '▴'}</span>}
+                  {sort === c.v && (
+                    <span aria-hidden="true" className="ml-0.5 opacity-50 text-[9px]">
+                      {sortDir < 0 ? '▾' : '▴'}
+                    </span>
+                  )}
                 </TableHead>
               ))}
             </TableRow>
@@ -175,8 +200,23 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="font-medium text-[13px] text-foreground">{p.web_name}</div>
-                      <div className="text-[10px] text-muted-foreground mt-0.5">{teamMap[p.team]}</div>
+                      {/* The same disclosure the career table uses, so one
+                          gesture works identically in both. The button carries
+                          the player's name, which makes that its accessible
+                          name — 200 rows of an icon-only button would announce
+                          "button" 200 times. The club stays outside it: it is
+                          context for the row, not part of the control's name. */}
+                      <DisclosureButton
+                        expanded={expanded === p.id}
+                        controls={expandedRowId(p.id)}
+                        onToggle={() => setExpanded(expanded === p.id ? null : p.id)}
+                        className="font-medium text-[13px] text-foreground"
+                      >
+                        {p.web_name}
+                      </DisclosureButton>
+                      <div className="text-[10px] text-muted-foreground mt-0.5 pl-4">
+                        {teamMap[p.team]}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <PosBadge pos={POSITION_MAP[p.element_type]} />
@@ -200,7 +240,7 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
                   </TableRow>
 
                   {expanded === p.id && (
-                    <tr>
+                    <tr id={expandedRowId(p.id)}>
                       <td colSpan={colWidth} className="p-0">
                         <div className="px-4 py-3 bg-muted/50 flex gap-8 flex-wrap items-center">
                           {[

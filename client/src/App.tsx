@@ -157,7 +157,7 @@ export default function App() {
             <PlayerDetail player={detailPlayer} onBack={() => setDetailPlayer(null)} />
           ) : (
             <>
-              {page === 'dashboard' && <Dashboard />}
+              {page === 'dashboard' && <Dashboard onOpenDetail={setDetailPlayer} />}
               {page === 'players' && <Players onOpenDetail={setDetailPlayer} />}
               {page === 'fixtures' && <Fixtures />}
             </>

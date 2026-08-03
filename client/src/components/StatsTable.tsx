@@ -187,13 +187,21 @@ export default function StatsTable({ history, teams, scroll = true }: Props) {
               <TableHead
                 key={col.key}
                 onClick={() => handleSort(col.key)}
+                // Direction is announced by aria-sort, so the arrow below is
+                // decorative and hidden. Every column here sorts, so the ones
+                // that are not the current key say so rather than say nothing.
+                sortDirection={
+                  sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'
+                }
                 className={`text-right ${sortKey === col.key ? 'text-foreground' : ''} ${
                   i === 0 ? STICKY_COL : ''
                 }`}
               >
                 {col.label}
                 {sortKey === col.key && (
-                  <span className="ml-0.5 opacity-50 text-[9px]">{sortDir === 'asc' ? '▴' : '▾'}</span>
+                  <span aria-hidden="true" className="ml-0.5 opacity-50 text-[9px]">
+                    {sortDir === 'asc' ? '▴' : '▾'}
+                  </span>
                 )}
               </TableHead>
             ))}
