@@ -16,7 +16,8 @@
     "ingest:live-gameweeks": "cd server && npm run ingest:live-gameweeks",
     "test": "run-s --continue-on-error test:server test:client",
     "test:server": "cd server && npm test",
-    "test:client": "cd client && npm test"
+    "test:client": "cd client && npm test",
+    "verify:history-past": "cd server && npm run verify:history-past --"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

@@ -13,7 +13,8 @@
     "ingest:gameweeks": "tsx src/ingest/ingest-gameweeks.ts",
     "ingest:live": "tsx src/ingest/ingest-live-season.ts",
     "ingest:live-gameweeks": "tsx src/ingest/ingest-live-gameweeks.ts",
-    "test": "node --import tsx --test \"src/**/*.test.ts\""
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "verify:history-past": "tsx src/verify/history-past-check.ts"
   },
   "dependencies": {
     "@types/pg-copy-streams": "^1.2.5",
