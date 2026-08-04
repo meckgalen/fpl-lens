@@ -46,6 +46,7 @@ import {
   NUM_COLUMNS,
   UPDATABLE_COLUMNS,
 } from './gameweek-columns.js';
+import { HOLED_COLUMNS, applyHoles, findHoles, summariseHoles, type Hole } from './holes.js';
 import type { CsvRow } from '../types/wire.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -578,10 +579,85 @@ async function assertStage(client: PoolClient): Promise<void> {
 }
 
 /**
+ * The holes the source is known to carry, by column and round.
+ *
+ * Pinned rather than merely reported, because a hole appearing or disappearing
+ * is news either way. The fixture counts come from the detector; **the rounds
+ * come from item 6's `history_past` cross-check**, which is a different
+ * pipeline from the CSVs — so this is not a check sharing its derivation with
+ * the thing it checks.
+ *
+ * Rounds 8 and 12 hold fewer than ten fixtures because 2022-23 lost matches to
+ * the postponements after the Queen's death and replayed them in later rounds,
+ * which also emptied round 7 entirely.
+ */
+const EXPECTED_HOLES: Record<string, { season: Season; rounds: number[]; fixtures: number }> = {
+  starts: { season: '2022-23', rounds: [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15], fixtures: 136 },
+  expected_goals: { season: '2022-23', rounds: [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15], fixtures: 136 },
+  expected_assists: { season: '2022-23', rounds: [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15], fixtures: 136 },
+  expected_goals_conceded: { season: '2022-23', rounds: [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15], fixtures: 136 },
+  expected_goal_involvements: {
+    season: '2022-23',
+    rounds: [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 29],
+    fixtures: 152,
+  },
+};
+
+/**
+ * What a change to the pinned set most likely means.
+ *
+ * This pins a fact about vaastav's CSV, not about football. If that repository
+ * regenerates the 2022-23 file with the gap filled, this assertion goes red on
+ * a genuine improvement — and a bare "expected 136, got 0" reads as data
+ * corruption. So the message says what to do about it, in both directions: a
+ * hole that has shrunk is upstream fixing its scrape, one that has grown is
+ * upstream losing more of it, and either way `history_past` is the second
+ * source that settles which.
+ */
+const HOLE_CHANGE_ADVICE =
+  'The upstream CSV may have been regenerated. Verify against history_past ' +
+  '(npm run verify:history-past) and update EXPECTED_HOLES rather than assuming loss.';
+
+function assertExpectedHoles(holes: readonly Hole[]): string[] {
+  const failures: string[] = [];
+  for (const column of HOLED_COLUMNS) {
+    const found = holes.filter((h) => h.columns.includes(column));
+    const expected = EXPECTED_HOLES[column];
+    const rounds = [...new Set(found.map((h) => h.gw))].sort((a, b) => (a ?? 0) - (b ?? 0));
+    const wanted = expected.rounds.join(',');
+    const got = rounds.join(',');
+    if (got !== wanted) {
+      failures.push(
+        `${column}: holed in rounds [${got || 'none'}], expected [${wanted}] of ${expected.season}. ` +
+          HOLE_CHANGE_ADVICE
+      );
+    }
+    if (found.length !== expected.fixtures) {
+      failures.push(
+        `${column}: ${found.length} holed fixtures, expected ${expected.fixtures}. ` + HOLE_CHANGE_ADVICE
+      );
+    }
+    if (found.some((h) => h.season !== expected.season)) {
+      const seasons = [...new Set(found.map((h) => h.season))].join(', ');
+      failures.push(`${column}: holed in [${seasons}], expected ${expected.season} alone. ` + HOLE_CHANGE_ADVICE);
+    }
+  }
+  return failures;
+}
+
+/**
  * Seasons in which each drifting column is measured. Asserted in both
  * directions: NULL everywhere it is absent AND non-NULL everywhere it is
  * present. One-directional checks miss the case that matters most — a column
  * quietly stored as 0 for a season that never measured it.
+ *
+ * **The biconditional now holds outside the holed fixtures rather than over
+ * every row.** Until item 7 it was exact: a column was non-NULL on every row of
+ * a season that measured it. Half 1 makes that false by design — 2022-23
+ * measures `starts` and the expected family from round 16, and the rounds
+ * before now store NULL rather than a zero nobody measured. The holed set is
+ * pinned separately by `EXPECTED_HOLES`, so nothing is loosened: every row is
+ * still accounted for, by one assertion or the other.
  */
 const MEASURED_IN: Record<string, readonly Season[]> = {
   starts: ['2022-23', '2023-24', '2024-25', '2025-26'],
@@ -619,7 +695,8 @@ interface SeasonReport {
 
 async function assertDatabase(
   client: PoolClient,
-  managerCodes: Set<number>
+  managerCodes: Set<number>,
+  holes: readonly Hole[]
 ): Promise<SeasonReport[]> {
   const failures: string[] = [];
   const csvSeasons = [...SEASONS];
@@ -709,14 +786,20 @@ async function assertDatabase(
   );
 
   // --- rule 6: nullability, in both directions ----------------------------
+  // Holed fixtures are excluded per column, not globally: a fixture holed on
+  // `expected_goal_involvements` alone (2022-23 round 29) must still be checked
+  // for the other four. Excluding the whole fixture would stop the assertion
+  // seeing four columns it is still exactly right about.
   for (const [column, seasons] of Object.entries(MEASURED_IN)) {
+    const holedFixtures = holes.filter((h) => h.columns.includes(column)).map((h) => h.fixtureId);
     await check(
       `rows where ${column} is on the wrong side of its first-appearance boundary`,
       `SELECT count(*) AS n FROM player_gameweeks
         WHERE season = ANY($2)
+          AND NOT (fixture_id = ANY($3::int[]))
           AND (season = ANY($1::text[])) <> (${column} IS NOT NULL)`,
       0,
-      [seasons, csvSeasons]
+      [seasons, csvSeasons, holedFixtures]
     );
   }
 
@@ -779,10 +862,29 @@ async function main(): Promise<void> {
     console.log(`  staged ${staged} rows, excluding ${managerCodes.size} Assistant Manager element(s)`);
 
     await assertStage(client);
-    const affected = await insertFromStage(client);
-    console.log(`  INSERT ... ON CONFLICT DO UPDATE touched ${affected} rows`);
 
-    const report = await assertDatabase(client, managerCodes);
+    // Rule 6 at fixture grain, applied to the staging table so the real table
+    // never holds the zeros even transiently. All ten seasons are staged by
+    // now, which the per-season measured-elsewhere guard in findHoles needs:
+    // asked one season at a time it would still be right, but asking once is
+    // simpler and matches how the rule is stated.
+    const holes = await findHoles(client, STAGE, HOLED_COLUMNS);
+    const holeFailures = assertExpectedHoles(holes);
+    if (holeFailures.length > 0) {
+      throw new Error(`hole assertions failed:\n  - ${holeFailures.join('\n  - ')}`);
+    }
+    const nulled = await applyHoles(client, STAGE, holes);
+    console.log(`\n  Holes in the source: ${holes.length} fixtures, ${nulled} rows set to NULL`);
+    for (const line of summariseHoles(holes)) console.log(`    ${line}`);
+    console.log(
+      '    A column totalling 0 across all 22 players of a played match is not a\n' +
+        '    football result. Stored as NULL: nobody measured it (rule 6).'
+    );
+
+    const affected = await insertFromStage(client);
+    console.log(`\n  INSERT ... ON CONFLICT DO UPDATE touched ${affected} rows`);
+
+    const report = await assertDatabase(client, managerCodes, holes);
     await client.query('COMMIT');
 
     console.log(

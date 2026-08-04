@@ -17,6 +17,13 @@
  *      claim a measurement nobody took, so the types make the absence
  *      unignorable rather than letting a `?? 0` paper over it.
  *
+ *      **The boundary is a round rather than a season in one case**, and it is
+ *      the reason these are nullable on a season that "has" them: 2022-23
+ *      collects `starts` and the expected family only from **round 16**. The
+ *      upstream scraper wrote 0 for rounds 1-15 — a measurement nobody took,
+ *      stored as though somebody had — and those cells are NULL since Phase 1
+ *      item 7. See `ingest/holes.ts`.
+ *
  * Field names still follow FPL's, deliberately. The split worth having is
  * between string-and-season-scoped and number-and-permanent, which is where
  * every bug in this project has actually lived. Renaming `web_name` to
@@ -51,7 +58,7 @@ export interface PlayerSeasonTotals {
   threat: number;
   ict_index: number;
 
-  /** NULL before 2022-23 — not measured, not zero (rule 6). */
+  /** NULL before 2022-23, and before round 16 of it — not measured, not zero (rule 6). */
   starts: number | null;
   expected_goals: number | null;
   expected_assists: number | null;
@@ -82,7 +89,13 @@ export interface PlayerSeasonTotals {
  * season. From docs/data-profile.md section 6, verified against the loaded
  * rows rather than assumed:
  *
- *   - `expected_goals_conceded` and the xG family: 2022-23 onward.
+ *   - `expected_goals_conceded` and the xG family: 2022-23 onward — but within
+ *     2022-23, from **round 16 only**. `starts` has the same boundary. The
+ *     profile is right that the columns are present all season; it reports
+ *     column presence, not column content, and the values before round 16 were
+ *     zeros nobody measured. A season total therefore comes back `null` for any
+ *     player who played through that stretch (see `measuredSum` in
+ *     repositories/players.ts) and a real number for one who did not.
  *   - `tackles`, `clearances_blocks_interceptions`, `recoveries`: 2016-17,
  *     2017-18, 2018-19 — then a six-season gap — then 2025-26. Not a
  *     "modern stats only" family: they are the one group where the OLD seasons
@@ -113,7 +126,7 @@ interface MatchStats {
   threat: number;
   ict_index: number;
 
-  /** NULL before 2022-23 (rule 6). */
+  /** NULL before 2022-23, and on its rounds 1-15, which nobody measured (rule 6). */
   expected_goals: number | null;
   expected_assists: number | null;
   expected_goal_involvements: number | null;
@@ -201,7 +214,7 @@ export interface PlayerCareerSeason extends MatchStats {
   matches: number;
   /** Matches he actually played (minutes > 0). Not rounds (rule 13). */
   appearances: number;
-  /** NULL before 2022-23 — not measured, not zero (rule 6). */
+  /** NULL before 2022-23, and before round 16 of it — not measured, not zero (rule 6). */
   starts: number | null;
   /** total_points / appearances. See the repository for the rounding. */
   points_per_game: number;

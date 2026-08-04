@@ -39,6 +39,12 @@ const MAGUIRE = 95658;
 const ONANA = 202641;
 const PERRI = 201595;
 const CRESSWELL = 55459;
+/**
+ * A January 2023 signing: first appeared in 2022-23 round 22, so none of his
+ * rows fall in that season's holed rounds. The control for the hole rule
+ * degrading per player rather than per season.
+ */
+const ENZO = 448047;
 
 /**
  * Two season lists, because there are now two different questions.
@@ -89,6 +95,16 @@ const ALL_SEASONS = [
 const SEASONS_WITH_GAMEWEEKS = ALL_SEASONS.filter((s) => s !== '2026-27');
 
 /** Seasons that measured xG, xA, xGI, xGC and starts. */
+/**
+ * Seasons whose files carry the xG family and `starts` at all.
+ *
+ * **A season being in this set no longer means every player has a total for
+ * them.** 2022-23 carries the columns from round 1 and the *values* from round
+ * 16, so a player who played through the hole gets NULL and one who arrived in
+ * January gets a number — see `ingest/holes.ts`. The set answers "does the
+ * season have this column", which is still the right question for the seasons
+ * either side of the boundary and the wrong one on its own for 2022-23.
+ */
 const HAS_XG = new Set(['2022-23', '2023-24', '2024-25', '2025-26']);
 /** Seasons that measured tackles, CBI and recoveries — note the six-year gap. */
 const HAS_DEFENSIVE = new Set(['2016-17', '2017-18', '2018-19', '2025-26']);
@@ -258,18 +274,29 @@ describe('career: the summary agrees with the rows underneath it', () => {
 });
 
 describe('career: rule 6 — nullability follows the season, not the stat', () => {
+  /**
+   * The five columns 2022-23 measures only from round 16 — see the hole rule in
+   * `ingest/holes.ts`. Held apart from `HAS_XG` because "the season measures
+   * this" and "this player's total is a real number" stopped being the same
+   * question when the holes became NULL.
+   */
+  const HOLED_IN_2022_23 = [
+    'expected_goals',
+    'expected_assists',
+    'expected_goal_involvements',
+    'expected_goals_conceded',
+    'starts',
+  ] as const;
+
   it('leaves the xG family and starts null before 2022-23', async () => {
+    // Maguire played through 2022-23's holed rounds, so his 2022-23 row is now
+    // null on all five — see the pair of tests below for why that is the
+    // answer rather than a regression. Every other season is unchanged.
     const career = await getPlayerCareer(pool, MAGUIRE);
 
     for (const row of career) {
-      const measured = HAS_XG.has(row.season);
-      for (const field of [
-        'expected_goals',
-        'expected_assists',
-        'expected_goal_involvements',
-        'expected_goals_conceded',
-        'starts',
-      ] as const) {
+      const measured = HAS_XG.has(row.season) && row.season !== '2022-23';
+      for (const field of HOLED_IN_2022_23) {
         if (measured) {
           assert.equal(
             typeof row[field],
@@ -285,6 +312,59 @@ describe('career: rule 6 — nullability follows the season, not the stat', () =
         }
       }
     }
+  });
+
+  it('returns null for a 2022-23 player who played through the hole', async () => {
+    // The user-visible half of item 7. Maguire has all 38 rows and started
+    // nearly all of them; before the fix his career row read 24 starts against
+    // a real 38, because the fourteen holed rounds stored 0 and sum() added
+    // them in. Fourteen rounds of a measurement nobody took have no honest
+    // total, so the row now says so.
+    const row = bySeason(await getPlayerCareer(pool, MAGUIRE)).get('2022-23');
+    assert.ok(row);
+
+    assert.equal(row.matches, 38, 'the rows are all present — this is not row loss');
+    assert.ok(row.minutes > 0);
+    for (const field of HOLED_IN_2022_23) {
+      assert.strictEqual(row[field], null, `${field} covers only part of the season`);
+    }
+  });
+
+  it('returns a real number for a 2022-23 player who arrived after the hole', async () => {
+    // The control that makes the test above mean something, and the property
+    // the Deferred entry predicted: **the rule degrades per player, not per
+    // season.** Enzo Fernández signed in January 2023 and first appeared in
+    // round 22, so he missed the rounds 1-15 block entirely.
+    //
+    // Without this, "2022-23 is null" would be satisfied just as well by a
+    // change that blanked the whole season — which is the outcome the ICT
+    // decision in item 7 rejected, and which nothing else here would catch.
+    const row = bySeason(await getPlayerCareer(pool, ENZO)).get('2022-23');
+    assert.ok(row);
+
+    assert.equal(row.starts, 18);
+    assert.equal(row.matches, 18);
+    for (const field of ['starts', 'expected_goals', 'expected_assists', 'expected_goals_conceded'] as const) {
+      assert.equal(
+        typeof row[field],
+        'number',
+        `${field} should be a real number for a player with no holed rows`
+      );
+    }
+
+    // Except one, and it is the better half of this test. 2022-23 round 29 is
+    // holed on `expected_goal_involvements` **alone** while the other four are
+    // fine, and Enzo played it — twice, it being a double gameweek for him
+    // (rule 13). So a single real player shows the rule degrading per column as
+    // well as per player: four totals survive and this one does not.
+    //
+    // A fixture-wide hole rule would have taken all five here, and every
+    // assertion above would still have passed.
+    assert.strictEqual(
+      row.expected_goal_involvements,
+      null,
+      'holed on round 29, which he played, while the other four columns were not'
+    );
   });
 
   it('handles the defensive stats, which run old-then-gap-then-new', async () => {
@@ -383,63 +463,133 @@ describe('career: rule 6 — nullability follows the season, not the stat', () =
   });
 });
 
-describe('career: the condition that makes bare sum() safe', () => {
-  it('measures each nullable column for a whole season or for none of it', async () => {
-    // The career query sums the nullable columns with a bare `sum()` so NULL
-    // survives (rule 6). `sum()` also *skips* nulls, which is only harmless
-    // while a column is either measured for every row of a season or for none
-    // of them. A column measured for part of one would produce a total covering
-    // that part and render as though it covered the whole season — a number
-    // that is wrong by an unknown amount and looks exactly like a right one.
-    //
-    // That this holds today is currently luck. This makes it a claim, and it
-    // fails on the first partially ingested season, which is when the
-    // incremental sync needs to hear about it rather than after.
-    //
-    // Asked of the whole table, not through the career query it justifies: a
-    // GROUP BY over one player could satisfy this while the season as a whole
-    // did not.
-    const columns = [
-      'starts',
-      'expected_goals',
-      'expected_assists',
-      'expected_goal_involvements',
-      'expected_goals_conceded',
-      'tackles',
-      'recoveries',
-      'clearances_blocks_interceptions',
-      'defensive_contribution',
-    ] as const;
+describe('career: a partly measured column has no total', () => {
+  /**
+   * This replaces a test rather than amending one, and the distinction is the
+   * point.
+   *
+   * Until item 7 this block asserted that every nullable column was measured
+   * for a whole season or for none of it — the condition under which the career
+   * query's bare `sum()` was safe, since `sum()` skips NULLs and would
+   * otherwise total part of a season and present it as all of one. **That test
+   * was correct, and it was right about something real**: the property held,
+   * and it was the thing standing between the query and a silently wrong
+   * number.
+   *
+   * What it could not see is the shape the defect actually took. 2022-23 stored
+   * `0` rather than NULL for `starts` and the expected family across rounds
+   * 1-15, and a column stored as 0 is fully "measured" by `count()`. So the
+   * test passed on a season that was short by fourteen rounds — the one case it
+   * was written to catch, arriving in the one form it was blind to.
+   *
+   * Item 7 fixed that at the source, which makes the old assertion false by
+   * design: 2022-23 is now genuinely part-measured. And the property it
+   * protected is gone too, because `measuredSum` replaced the bare `sum()`. So
+   * the claim is not adjusted; it is the other one. **The aggregate returns
+   * NULL exactly when the column is partly measured, and a number when it is
+   * measured throughout.**
+   *
+   * Derived from the fixtures rather than from the aggregate's own expression:
+   * a player-season is partly measured precisely when the player appeared in a
+   * holed fixture, and a hole is a fact about a match that was played, not
+   * about the SQL. Asserting `measuredSum` against a re-derivation of
+   * `measuredSum` would pass whatever either of them said.
+   */
+  const NULLABLE = [
+    'starts',
+    'expected_goals',
+    'expected_assists',
+    'expected_goal_involvements',
+    'expected_goals_conceded',
+    'tackles',
+    'recoveries',
+    'clearances_blocks_interceptions',
+    'defensive_contribution',
+  ] as const;
 
-    const { rows } = await pool.query<Record<string, string>>(
-      `SELECT season, count(*) AS total,
-              ${columns.map((c) => `count(${c}) AS ${c}`).join(', ')}
-         FROM player_gameweeks
-        GROUP BY season
-        ORDER BY season DESC`
+  it('returns a total exactly when every row of the season has a value', async () => {
+    // One query, every player-season in the table, both sides side by side: what
+    // the repository's aggregate returns, and whether the player has a row
+    // missing that value. The second is computed from the rows themselves and
+    // owes nothing to the aggregate.
+    const { rows } = await pool.query<Record<string, unknown>>(
+      `SELECT p.fpl_code AS code, pg.season,
+              ${NULLABLE.map(
+                (c) => `(count(pg.${c}) = count(pg.fixture_id)) AS ${c}_complete`
+              ).join(',\n              ')},
+              ${NULLABLE.map((c) => `sum(pg.${c}) AS ${c}_sum`).join(',\n              ')}
+         FROM player_gameweeks pg
+         JOIN players p ON p.id = pg.player_id
+        GROUP BY p.fpl_code, pg.season`
     );
+    assert.ok(rows.length > 0);
 
-    assert.deepEqual(
-      rows.map((r) => r.season),
-      SEASONS_WITH_GAMEWEEKS,
-      'every season with match data should be present — and only those. 2026-27 has a ' +
-        'roster and no matches, so it contributes no group here at all'
-    );
-
-    for (const row of rows) {
-      const total = Number(row.total);
-      assert.ok(total > 0, `${row.season}: no rows at all`);
-
-      for (const column of columns) {
-        const measured = Number(row[column]);
-        assert.ok(
-          measured === 0 || measured === total,
-          `${row.season}: ${column} is measured on ${measured} of ${total} rows — ` +
-            `sum() would silently total only those, and the career row would present ` +
-            `a part-season figure as a whole-season one`
-        );
+    // Spot-check the invariant through the real query on the seasons where it
+    // has teeth, rather than issuing 20,000 HTTP-shaped calls: a partly
+    // measured column exists only in 2022-23, so a player from it and a player
+    // from a clean season are what separate the two branches.
+    for (const code of [MAGUIRE, ENZO, SAKA]) {
+      const career = bySeason(await getPlayerCareer(pool, code));
+      for (const [season, row] of career) {
+        const raw = rows.find((r) => Number(r.code) === code && r.season === season);
+        if (!raw) continue;
+        for (const column of NULLABLE) {
+          const complete: boolean = raw[`${column}_complete`] === true;
+          const anyValue: boolean = raw[`${column}_sum`] !== null;
+          const expected: boolean = complete && anyValue;
+          assert.equal(
+            row[column] !== null,
+            expected,
+            `${code} ${season}: ${column} is ${row[column] === null ? 'null' : 'a number'}, ` +
+              `but the rows say it is ${expected ? 'measured throughout' : 'partly or never measured'}`
+          );
+        }
       }
     }
+  });
+
+  it('nulls the total for exactly the players who played through a hole', async () => {
+    // The independent derivation. A hole is a fixture where a column totals
+    // zero across all 22 players who took the field — impossible for `starts`
+    // by the laws of the game — so "who lost their total" is answerable from
+    // the fixtures without consulting the aggregate at all.
+    const { rows } = await pool.query<{ code: string; holed: boolean }>(
+      `WITH holed AS (
+         SELECT season, fixture_id FROM player_gameweeks
+          GROUP BY season, fixture_id
+         HAVING sum(minutes) > 0 AND count(starts) = 0
+       )
+       SELECT p.fpl_code AS code,
+              bool_or(h.fixture_id IS NOT NULL) AS holed
+         FROM player_gameweeks pg
+         JOIN players p ON p.id = pg.player_id
+         LEFT JOIN holed h ON h.season = pg.season AND h.fixture_id = pg.fixture_id
+        WHERE pg.season = '2022-23'
+        GROUP BY p.fpl_code`
+    );
+
+    const holed = rows.filter((r) => r.holed).length;
+    const clean = rows.length - holed;
+    assert.equal(holed, 661, '2022-23 players with at least one holed row');
+    assert.equal(clean, 117, 'players who arrived after round 15 and keep a real total');
+
+    // And the aggregate agrees, on one from each side.
+    assert.strictEqual(bySeason(await getPlayerCareer(pool, MAGUIRE)).get('2022-23')?.starts, null);
+    assert.equal(bySeason(await getPlayerCareer(pool, ENZO)).get('2022-23')?.starts, 18);
+  });
+
+  it('still covers every season with match data, and only those', async () => {
+    // Carried over from the replaced test, which is the half of it that did not
+    // depend on the property. 2026-27 has a roster and no matches, so it
+    // contributes no group at all — and the day the live sync writes its first
+    // rows, this is what says so.
+    const { rows } = await pool.query<{ season: string }>(
+      `SELECT season FROM player_gameweeks GROUP BY season ORDER BY season DESC`
+    );
+    assert.deepEqual(
+      rows.map((r) => r.season),
+      SEASONS_WITH_GAMEWEEKS
+    );
   });
 });
 

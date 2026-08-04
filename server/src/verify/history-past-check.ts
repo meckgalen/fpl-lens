@@ -69,6 +69,7 @@ import { fileURLToPath } from 'node:url';
 import { pool, closePool } from '../db/pool.js';
 import { getBootstrap } from '../services/fplApi.js';
 import { numOrNull } from '../repositories/parse.js';
+import { findHoles } from '../ingest/holes.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 // server/src/verify -> server/src -> server -> repo root
@@ -301,10 +302,21 @@ async function fetchAllPast(refresh: boolean): Promise<Cache> {
 // --------------------------------------------------------------- our side
 
 /**
- * Our totals, summed the way the career query sums them: a bare `sum()`, which
- * yields NULL when every row is NULL and so preserves rule 6 through the
- * aggregate. Reproducing the app's own arithmetic is the point — a check that
- * summed differently would be checking something we do not serve.
+ * Our totals, summed with a bare `sum()` — which yields NULL when every row is
+ * NULL and so preserves rule 6 through the aggregate.
+ *
+ * **This deliberately no longer reproduces the app's own arithmetic, and the
+ * change is the point rather than drift.** Until item 7 the career query summed
+ * these columns the same way and the comment here said so. It now uses
+ * `measuredSum`, which returns NULL when any contributing row is NULL, so a
+ * 2022-23 regular's `starts` renders as "not measured" rather than as 24.
+ *
+ * This check keeps the bare `sum()` because it is asking a different question:
+ * **what is actually in the rows**, so it can be compared against FPL. Adopting
+ * `measuredSum` here would make every holed player-season NULL on our side and
+ * silently drop it from the comparison — the drift would vanish from the report
+ * without a single stored value having changed, which is the one outcome a data
+ * check must not produce.
  */
 async function fetchOurTotals(): Promise<Map<string, OurTotals>> {
   const sums = ALL_COMPARED.map((c) => `sum(pg.${c}) as ${c}`).join(',\n         ');
@@ -352,17 +364,51 @@ async function fetchBlankFixtures(): Promise<{
   appearances: Map<string, number[]>;
   startsAnomalies: StartsAnomaly[];
 }> {
-  const zeroFlags = HOLE_DETECTABLE.map((c) => `sum(${c}) = 0 as ${c}`).join(',\n           ');
+  // Detection is `findHoles` from the ingest, and it must be called with all
+  // **nine** detectable columns rather than the five the ingest fixes.
+  //
+  // Two things depend on that. The ICT quartet is holed on 26 fixtures that
+  // nothing NULLs, and it is attributed through this map — calling this with
+  // `HOLED_COLUMNS` takes the unexplained count from 38 to 146, measured. It is
+  // not larger because the blank-row detector below independently catches much
+  // of the ICT family, which is exactly why this needs stating: the regression
+  // is real and does not announce itself. And since item 7 the other five are stored as NULL rather
+  // than 0, so a detector that knew only the 0 shape would stop seeing the very
+  // holes it had just fixed; `findHoles` recognises both, which is what keeps
+  // this attribution alive across a re-ingest.
+  //
+  // Sharing the detector does not make this check circular. It was always our
+  // own query — item 6 ran exactly this — and the independent axis here is
+  // FPL's `history_past` totals, which no ingest can touch.
+  const client = await pool.connect();
+  let holes;
+  try {
+    holes = await findHoles(client, 'player_gameweeks', HOLE_DETECTABLE);
+  } finally {
+    client.release();
+  }
+
+  const blanks = new Map<string, BlankFixture>();
+  for (const hole of holes) {
+    blanks.set(`${hole.season}|${hole.fixtureId}`, {
+      season: hole.season,
+      gw: hole.gw,
+      fixtureId: hole.fixtureId,
+      columns: new Set(hole.columns as Column[]),
+    });
+  }
+
+  // The complementary check, and the one that separates "a hole in a column"
+  // from "a row missing from a fixture": where `starts` is populated at all it
+  // must total exactly 22. A holed fixture now sums to NULL rather than 0, and
+  // both are skipped here for the same reason — there is nothing to count.
+  const startsAnomalies: StartsAnomaly[] = [];
   const { rows } = await pool.query<Record<string, unknown>>(
-    `select season, min(gw) as gw, fixture_id, sum(starts) as starts_total,
-            ${zeroFlags}
+    `select season, min(gw) as gw, fixture_id, sum(starts) as starts_total
        from player_gameweeks
       group by season, fixture_id
      having sum(minutes) > 0`
   );
-
-  const blanks = new Map<string, BlankFixture>();
-  const startsAnomalies: StartsAnomaly[] = [];
   for (const row of rows) {
     const startsTotal = row.starts_total === null ? null : Number(row.starts_total);
     if (startsTotal !== null && startsTotal !== 0 && startsTotal !== 22) {
@@ -373,18 +419,6 @@ async function fetchBlankFixtures(): Promise<{
         starts: startsTotal,
       });
     }
-    const columns = new Set<Column>();
-    for (const column of HOLE_DETECTABLE) {
-      if (row[column] === true) columns.add(column);
-    }
-    if (columns.size === 0) continue;
-    const fixtureId = Number(row.fixture_id);
-    blanks.set(`${row.season}|${fixtureId}`, {
-      season: String(row.season),
-      gw: row.gw === null ? null : Number(row.gw),
-      fixtureId,
-      columns,
-    });
   }
 
   const appearances = new Map<string, number[]>();
@@ -738,6 +772,29 @@ function report(
           `${String(inBucket.length).padStart(6)}  ${String(rnd).padStart(4)}  ` +
           `${String(low).padStart(5)}  ${String(high).padStart(5)}`
       );
+    }
+  }
+
+  // Split by attribution, because the two halves answer different questions and
+  // a combined median answers neither. "hole" is the magnitude of the defect a
+  // hole causes — which is what decides whether representing it is worth the
+  // cost of blanking a season total, and is the number the ICT decision in
+  // item 7 rests on. "other" is the residue nothing explains, which is where
+  // the 38 unexplained cells live. Item 6 reported only the combined figure, so
+  // the ICT hole magnitude had never been isolated.
+  console.log('\n=== Non-scoring derived: direction and size, split by attribution ===');
+  console.log('                                          attributed to a hole        unexplained');
+  console.log('season    column                          n    med%   max%      n    med%   max%');
+  for (const season of CSV_SEASONS) {
+    for (const column of NON_SCORING_DERIVED) {
+      const all = drift.filter((d) => d.season === season && d.column === column);
+      if (all.length === 0) continue;
+      const holed = all.filter(isExplained).map((d) => d.pct).sort((a, b) => a - b);
+      const rest = all.filter((d) => !isExplained(d)).map((d) => d.pct).sort((a, b) => a - b);
+      const cell = (xs: number[]): string =>
+        `${String(xs.length).padStart(4)}  ${fmt(percentile(xs, 50), 1).padStart(6)} ` +
+        `${fmt(percentile(xs, 100), 1).padStart(6)}`;
+      console.log(`${season}  ${column.padEnd(28)}  ${cell(holed)}   ${cell(rest)}`);
     }
   }
 

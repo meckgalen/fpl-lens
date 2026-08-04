@@ -313,13 +313,50 @@ describe('player_gameweeks structure', () => {
   /**
    * Rule 6, on the two boundaries that matter most. xG starts in 2022-23 and
    * defensive_contribution in 2025-26; before that the value is NULL, never 0.
+   *
+   * **2022-23 is an exception on its first fifteen rounds, and that is item 7
+   * rather than a defect.** The upstream scraper began collecting xG at round
+   * 16 and wrote `0` for everything before it, so the boundary is a round
+   * rather than a season for that one case. Those rows now store NULL — the
+   * fixtures are excluded here and pinned by `EXPECTED_HOLES` in
+   * `ingest-gameweeks.ts` instead, so every row is still accounted for by one
+   * assertion or the other.
    */
   it('leaves expected_goals NULL before 2022-23 and set from 2022-23 on', async () => {
     const wrong = await scalar(
-      `SELECT count(*) AS n FROM player_gameweeks
-        WHERE (season >= '2022-23') <> (expected_goals IS NOT NULL)`
+      `WITH holed AS (
+         SELECT fixture_id FROM player_gameweeks
+          GROUP BY season, fixture_id
+         HAVING sum(minutes) > 0 AND count(expected_goals) = 0 AND min(season) = '2022-23'
+       )
+       SELECT count(*) AS n FROM player_gameweeks
+        WHERE fixture_id NOT IN (SELECT fixture_id FROM holed)
+          AND (season >= '2022-23') <> (expected_goals IS NOT NULL)`
     );
     assert.equal(wrong, 0);
+  });
+
+  it('holes expected_goals on exactly the 2022-23 rounds the scraper missed', async () => {
+    // The other half of the assertion above: the excluded set is not open-ended.
+    // Rounds 1-6 and 8-15 — round 7 was lost entirely to the postponements
+    // after the Queen's death, which is why it is absent rather than holed.
+    // The season guard is not decoration: xG is NULL for every row of 2016-17
+    // through 2021-22, so without it every fixture in six seasons reads as
+    // holed. That is rule 6, not a hole — see `findHoles`, which draws the same
+    // line with the same clause.
+    const { rows } = await pool.query<{ season: string; gw: number }>(
+      `SELECT season, min(gw)::int AS gw FROM player_gameweeks
+        WHERE season IN (SELECT season FROM player_gameweeks
+                          GROUP BY season HAVING count(expected_goals) > 0)
+        GROUP BY season, fixture_id
+       HAVING sum(minutes) > 0 AND count(expected_goals) = 0
+        ORDER BY 1, 2`
+    );
+    assert.deepEqual(
+      [...new Set(rows.map((r) => `${r.season} gw ${r.gw}`))],
+      [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15].map((gw) => `2022-23 gw ${gw}`)
+    );
+    assert.equal(rows.length, 136, 'fixtures, not rounds — rounds 8 and 12 are short');
   });
 
   it('sets defensive_contribution in 2025-26 only', async () => {

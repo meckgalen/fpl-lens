@@ -62,19 +62,48 @@ turns `SEASONS_WITH_GAMEWEEKS` in `career.test.ts` red, on purpose: that is how
 the eleventh season announces itself.
 
 **Item 6 checked what is in those 253,509 rows against a second source, and
-found holes.** `npm run verify:history-past` sums every player-season we hold
-and diffs it against FPL's `history_past` — 1,915 player-seasons, 27 columns,
-51,705 cells. **1,524 drifts, 1,516 of them with ours lower than FPL's**, and
-1,486 attributable to **178 fixtures where a column is 0 on every row of a match
-that was played**: `starts` and the whole expected family for rounds 1-15 of
-2022-23, the ICT family on isolated rounds of three seasons. Zero there asserts
-a measurement nobody took, and it is stored, not displayed — a 2022-23
-ever-present really does read 24 starts against a true 38. Nothing in the suite
-can see it, `career.test.ts`'s `sum()` property test included, because a column
-stored as 0 is fully "measured" by that test's definition. Recorded in Known
-Issues with the table of affected rounds; the fix is a named Deferred item.
+found holes. Item 7 fixed five columns of them and deliberately left four.**
+`npm run verify:history-past` sums every player-season we hold and diffs it
+against FPL's `history_past` — 1,915 player-seasons, 27 columns, 51,705 cells.
+**1,524 drifts, 1,516 of them with ours lower than FPL's**, and 1,486
+attributable to **178 fixtures where a column is 0 on every row of a match that
+was played**.
 
-`npm test` runs **two suites on two runners**: **62 server tests** and **51
+**The hole rule lives in `server/src/ingest/holes.ts` and both gameweek writers
+apply it.** A hole is a fixture where a column totals exactly zero across the
+22 players who took the field — impossible for `starts` by the laws of the game,
+and for the expected family, which accrues to everyone on the pitch from the
+first shot faced. Those cells are stored NULL: **152 fixtures, 9,704 rows, all
+in 2022-23**, where the upstream scraper began collecting from round 16 and
+wrote `0` for the fourteen rounds before. The ICT quartet's 26 fixtures are
+still stored as 0 — see Known Issues for why that is a decision rather than an
+omission.
+
+**`sum()` alone was not enough, so the season aggregate changed too.** `sum()`
+skips NULLs, so NULLing the source would have left a 2022-23 ever-present still
+reading 24 starts against a true 38. `measuredSum` in
+`server/src/repositories/players.ts` returns NULL unless every contributing row
+has a value, on all nine nullable columns. The distinction it draws is
+**missing rows versus missing values**: a blank gameweek, a January arrival or a
+season still being played all produce *fewer rows*, and summing those is right;
+a column NULL on *some of the rows that exist* has no honest total.
+
+**It degrades per player, not per season.** 661 of 778 2022-23 players lose
+their `starts` total and 117 keep a real one. Per column too: Enzo Fernández
+keeps `starts`, xG, xA and xGC and loses `expected_goal_involvements` alone,
+because round 29 is holed on that column only and he played it as a double
+gameweek.
+
+**The drift against FPL is unchanged, and that is expected rather than a
+disappointment.** `verify:history-past` still reports 1,524 drifts, 1,486
+attributed, **38 unexplained** — identical before and after. Its
+`fetchOurTotals` keeps a bare `sum()` on purpose: it asks what is *in the rows*
+so it can be compared against FPL, and adopting `measuredSum` there would blank
+our side of every holed player-season and make the drift vanish without a
+stored value having changed. What item 7 buys is that the app no longer *shows*
+a part-season figure as a whole-season one.
+
+`npm test` runs **two suites on two runners**: **77 server tests** and **51
 client tests**, all passing. They are counted separately on purpose — two
 runners print two summaries, and a combined figure would be maintained by hand
 against neither of them.
@@ -86,8 +115,18 @@ alone. Not `&&`, which would hide the client result behind a database problem,
 and not `;`, which reports only the last command's exit code and would let a red
 server suite pass silently.
 
-**Server — `node --import tsx --test`, against the populated database.** Six
+**Server — `node --import tsx --test`, against the populated database.** Seven
 files:
+
+- `server/src/ingest/holes.test.ts` — the hole detector, on its own, because it
+  is the load-bearing rule in two ingests and a regression in it would otherwise
+  surface as a confusing failure somewhere else. Runs against a temp table
+  created `LIKE player_gameweeks` inside a rolled-back transaction: `LIKE`
+  copies the real types and NOT NULLs so this exercises the actual SQL, and
+  copies no foreign keys so a fixture can be invented without a player, a club
+  and a match behind it. Covers the 0 shape, the NULL shape (idempotence across
+  a re-ingest), the unplayed fixture, per-column independence, season scoping,
+  and both sides of the rule-6 boundary.
 
 - `server/src/ingest/live-gameweeks.test.ts` — the gameweek sync, offline. Its
   centrepiece is a **replay**: all 29,757 rows of 2025-26's `merged_gw.csv`
@@ -129,9 +168,24 @@ files:
 - `server/src/repositories/career.test.ts` — the career query. Season set and
   order, the nine acceptance values, the summary cross-checked against the
   gameweek rows it claims to sum, the nullability matrix across every season on
-  one player, the three shapes an empty season takes, and the property that
-  makes the query's bare `sum()` safe: every nullable column is measured for a
-  whole season or for none of it, never part of one.
+  one player, and the three shapes an empty season takes.
+
+  **The `sum()` property test was replaced in item 7, not amended, and what it
+  was right about is worth keeping.** It asserted that every nullable column is
+  measured for a whole season or for none of it — the condition under which a
+  bare `sum()` was safe, and a real property that really did hold. What it could
+  not see is the shape the defect actually took: a column stored as `0` is fully
+  "measured" by `count()`, so it passed on a 2022-23 that was short by fourteen
+  rounds. The one case it existed to catch, arriving in the one form it was
+  blind to.
+
+  Item 7 made the old assertion false by design and removed the property it
+  protected in the same stroke. So the claim is now the other one: **the
+  aggregate returns NULL exactly when the column is partly measured.** Derived
+  from the fixtures rather than from `measuredSum`'s own expression — a
+  player-season is partly measured precisely when the player appeared in a holed
+  fixture — with named anchors at Maguire (null), Enzo Fernández (18) and Saka
+  2025-26 (25, unchanged).
 
   **It holds two season lists now, `ALL_SEASONS` (eleven) and
   `SEASONS_WITH_GAMEWEEKS` (ten), and the split was the subtlest thing in
@@ -420,6 +474,24 @@ is silently wrong.
    2022-23 and defensive stats only from 2025-26. Zero means "generated no chances".
    NULL means "not measured". Check `docs/data-profile.md` for exact first-appearance
    seasons.
+
+   **The boundary is not always a season, and one case proves it.** 2022-23
+   carries `starts` and the expected family in its header from round 1 and its
+   *values* from **round 16**; the scraper wrote `0` for the fourteen rounds
+   before. `docs/data-profile.md` is right and unhelpful here, because it reports
+   column presence rather than column content — the same caveat rule 16 records
+   for `ea_index`. So the rule is applied per **fixture** as well as per season:
+   `server/src/ingest/holes.ts` finds fixtures where a column totals zero across
+   all 22 players who took the field, which is impossible for `starts` by the
+   laws of the game, and stores NULL. Both gameweek writers apply it.
+
+   **A partly measured column has no total, which is the same rule one layer
+   up.** `sum()` skips NULLs, so a season aggregate would happily report the
+   fourteen-round-short figure as a whole-season one. `measuredSum` in
+   `repositories/players.ts` returns NULL unless every contributing row has a
+   value — distinguishing **missing rows** (a blank gameweek, a January arrival,
+   a season in progress: sum them) from **missing values** (no honest total
+   exists).
 7. **Drop the `xP` column at ingest.** It is scraped from FPL's `ep_this` field after
    the gameweek ends, so it can carry post-match information. Any model trained on it
    unshifted gets severe lookahead bias and looks excellent while being useless.
@@ -676,6 +748,13 @@ the database. It caches the 564 API responses under `data/raw/` so a re-run
 costs nothing; `--refresh` re-fetches. It exits non-zero when a scoring column
 disagrees, which it does today: see the 2022-23 `starts` entry in Known Issues.
 
+**Item 7 did not change what it reports, and that is the expected result.** It
+sums the stored rows with a bare `sum()`, which skips NULLs — so turning a holed
+`0` into a NULL leaves every total identical, and the run still reports 1,524
+drifts with 38 unexplained. Its detector is shared with the ingest
+(`findHoles`), but called with all **nine** detectable columns rather than the
+five the ingest fixes, so the ICT quartet nothing NULLs keeps its attribution.
+
 `npm test` runs both suites. The server suite needs the database up and the
 three CSV ingest scripts to have been run; the client suite needs neither and
 can be run alone with `npm run test:client`.
@@ -716,6 +795,10 @@ can be run alone with `npm run test:client`.
 - [x] A read-only cross-check of all ten seasons against FPL's own totals,
       which found 178 fixtures where the CSVs hold 0 for a column nobody
       measured
+- [x] NULL rather than 0 where the source holed a column — 152 fixtures of
+      2022-23 across `starts` and the expected family, applied by both gameweek
+      writers; and a season aggregate that returns no total for a column
+      measured on only part of a season
 
 The live FPL API proxy in `services/fplApi.ts` still exists with its 5-minute
 cache, but no route calls it: it is the ingestion source for the live season.
@@ -798,44 +881,88 @@ around it.
   across seasons. It is the only gap of its kind: no column outside the
   defensive quartet has a single cell where we hold NULL and FPL holds a number.
 
-- **Whole rounds are missing from four columns of 2022-23, and from the ICT
-  family in three seasons. The stored value is 0, not NULL, so nothing catches
-  it.** This is the cause item 5 could not establish, measured in item 6 by
-  `npm run verify:history-past` over every reachable player in all ten seasons.
-  A hole is a fixture where the column totals exactly zero across all 22 players
-  who took the field — not a football result, and the detection is derived from
-  the competition rather than from the data (see `HOLE_DETECTABLE`).
+- **RESOLVED for five columns in item 7; the ICT quartet is the entry below.**
+  Whole rounds were missing from four columns of 2022-23 and from the ICT family
+  in three seasons, stored as `0` rather than NULL. Measured in item 6, fixed in
+  item 7 for `starts` and the expected family. Kept here as the record of what
+  was found and where each half went.
 
-  | Season  | Rounds                | Columns holed                                     | Fixtures |
-  | ------- | --------------------- | ------------------------------------------------- | -------- |
-  | 2022-23 | 1-6, 8-15             | `starts`, `expected_goals`, `expected_assists`, `expected_goal_involvements`, `expected_goals_conceded` | 136 |
-  | 2022-23 | 29                    | `expected_goal_involvements` alone                | 16       |
-  | 2022-23 | 16, 33, 38            | influence, creativity, threat, `ict_index`        | 15       |
-  | 2021-22 | 38                    | influence, creativity, threat, `ict_index`        | 10       |
-  | 2019-20 | 21                    | influence, creativity, threat, `ict_index`        | 1        |
+  | Season  | Rounds                | Columns holed                                     | Fixtures | Now |
+  | ------- | --------------------- | ------------------------------------------------- | -------- | --- |
+  | 2022-23 | 1-6, 8-15             | `starts`, `expected_goals`, `expected_assists`, `expected_goal_involvements`, `expected_goals_conceded` | 136 | **NULL** |
+  | 2022-23 | 29                    | `expected_goal_involvements` alone                | 16       | **NULL** |
+  | 2022-23 | 16, 33, 38            | influence, creativity, threat, `ict_index`        | 15       | still 0 |
+  | 2021-22 | 38                    | influence, creativity, threat, `ict_index`        | 10       | still 0 |
+  | 2019-20 | 21                    | influence, creativity, threat, `ict_index`        | 1        | still 0 |
 
   The 2022-23 block is the upstream scraper starting to collect those five
   columns at round 16 and writing `0` for the fourteen rounds before, which is
   rule 6 violated at source. The single-round ICT holes are final-round or
   single-match scrapes that ran before FPL published.
 
-  **The user-visible consequence is on `starts`.** A 2022-23 ever-present shows
-  24 starts against a real 38 — our career table, the header card's "starts" and
-  anything dividing by starts are all short by up to 14 on that season, on 148
-  of the 233 reachable players. The expected family is short by around 38% on
-  the same season, which is the median of the measured distribution.
+  **What the old entry said the consequence was, and what it is now.** A
+  2022-23 ever-present showed 24 starts against a real 38. It now shows the
+  no-value marker, on the career table and the header card alike, for the 661 of
+  778 players who played through the hole — and a real number for the 117 who
+  did not. The per-match rows show `—` rather than `0.00` for xG, xA, xGI and
+  xGC on rounds 1-15, switching to `0.00` at round 16, which is the source's own
+  boundary made visible.
 
-  **Nothing we have could have caught this.** The row is present, the row count
-  is right, `SUM(minutes)` lands in its band, and `count(col)` equals `count(*)`
-  — so the `sum()` property test in `career.test.ts` passes, because a column
-  stored as 0 for half a season is fully "measured" by that test's definition.
-  A partial season is exactly what that test was written to catch, and it only
-  catches the NULL-shaped version of it.
+  **We still disagree with FPL by exactly as much as before, and that is
+  correct.** `sum()` skips NULLs either way, so `verify:history-past` reports the
+  same 1,524 drifts and the same 38 unexplained. What changed is that the app no
+  longer presents a fourteen-round-short figure as a season total.
 
-  Not fixed here. The fix is an ingest change — write NULL rather than 0 where
-  the source is holed — and it needs its own session, because "the column is
-  zero for this whole fixture" has to become a rule the ingest applies rather
-  than a query this check runs.
+- **A sort on 2022-23 `starts` or the expected family would rank backwards. No
+  such sort exists today, which is the only reason this costs nothing.** The
+  players who lose their total are exactly the ones who played through rounds
+  1-15 — the regulars — so they get NULL while the fringe players who arrived in
+  January keep a real number. The column looks populated and orders the season's
+  most-started players last or nowhere. Predicted in the Deferred entry before
+  item 7 and now a real property of the data rather than a hypothetical.
+
+  Traced rather than assumed: the Dashboard ranks on total points
+  (`Dashboard.tsx:82`), points per match with an appearance floor (`:92`) and
+  ICT index (`:99`) — none affected, ICT being the quartet item 7 left alone.
+  The Players list has no `starts` column and `CareerTable` has no sorting at
+  all. It becomes real the day a per-90 toggle or a `starts` column lands, both
+  of which are on the Deferred list, and whichever lands first owns deciding how
+  a NULL sorts.
+
+- **26 fixtures still store 0 for the ICT quartet where nobody measured it, and
+  this is a defect left in place with a reason rather than an open question.**
+  `influence`, `creativity`, `threat` and `ict_index` are holed on 2022-23
+  rounds 16, 33 and 38, 2021-22 round 38, and 2019-20 round 21 — 1,939 cells.
+  Item 7 fixed the other five columns and stopped here deliberately.
+
+  **Magnitude, measured in item 7 rather than borrowed.** The holed ICT cells
+  drift from FPL by a median of **2.9% to 6.8%** depending on season and column
+  — printed by `verify:history-past`'s attribution-split table, which item 7
+  added because item 6 reported only a combined figure. (The 0.6-2.0% in the
+  entry below are the medians of the 38 *unexplained* cells and are a different
+  population; do not reuse them for this.) The expected family in 2022-23 drifts
+  by **36.1% to 38.6%** on the same measure. An order of magnitude apart, and
+  that gap is the argument.
+
+  **Why representing it would cost more than the defect.** These holes are whole
+  rounds, and round 38 is every club — so `measuredSum` would blank the ICT
+  total for **every player in 2021-22 (737 of 737) and 2022-23 (778 of 778)**,
+  plus 55 in 2019-20, to correct an error of one round in thirty-eight.
+  Destroying 1,515 player-season totals to repair a ~3-7% discrepancy is the
+  wrong trade. It would also need a migration: the four columns are `NOT NULL`
+  in `initial-schema.ts`, an invariant that holds on all 253,509 rows but these,
+  and dropping it is permanent and inherited by every future writer. Four
+  domain/API/client type changes and the Dashboard's ICT sort follow from that.
+
+  **What a real fix looks like, so this reads as declined rather than
+  dismissed.** Blanking is the wrong instrument for one missing round in
+  thirty-eight. The right one is a total that renders *with a marker saying a
+  round is missing* — the number, kept, plus an honest annotation. That is a UI
+  affordance nothing in the app has today, and it is named in Deferred.
+
+  Detection is unaffected: `verify:history-past` calls `findHoles` with all nine
+  detectable columns, not the five the ingest fixes, so these 26 fixtures keep
+  their attribution.
 
 - **The residue after that: 38 disagreements out of 51,705 cells compared, and
   they are genuinely unexplained.** 14 in 2019-20 and 14 in 2023-24 on the ICT
@@ -1632,6 +1759,113 @@ section below is the record of what each decided.
       Responses are cached under `data/raw/` so a re-run costs nothing;
       `--refresh` re-fetches all 564 elements at concurrency 5.
 
+- [x] **7. Store NULL where the source holed a column.** Item 6 measured the
+      holes and changed nothing. This writes NULL for five of the nine
+      detectable columns and stops the season aggregate summing a partly
+      measured one. **152 fixtures, 9,704 rows, all in 2022-23.** Row count
+      unchanged at 253,509.
+
+      **The rule lives in `server/src/ingest/holes.ts`, once**, and both
+      gameweek writers call it: the CSV ingest against the staging table between
+      `assertStage` and `insertFromStage`, so the real table never holds the
+      zeros even transiently; the live sync against `player_gameweeks` scoped to
+      its season, after the write and inside the same transaction. One SQL
+      implementation rather than a SQL one and a JS one.
+
+      **Three conditions, each load-bearing, and the third is the subtle one.**
+      The match was played (`sum(minutes) > 0`); the column totals 0 across the
+      fixture **or** is NULL on every row of it; and the column holds a value
+      somewhere else in that season. The second makes the rule idempotent — after
+      a re-ingest the holes are NULL, and a detector that knew only the 0 shape
+      would stop seeing what it had just fixed, silently, because `sum(col) = 0`
+      over an all-NULL column is NULL rather than false. The third is what
+      separates a hole from rule 6: without it, `starts` being NULL throughout
+      2016-17 flags every fixture in three seasons.
+
+      **That third clause is `count(col) > 0`, not `sum(col) > 0`, and the plan
+      had it the other way round.** The plan predicted a blind spot — that a
+      hole in round 1 of a live season would be undetectable, there being no
+      later round to compare against — and asked for it to be documented as
+      correct behaviour. It does not arise. The two formulations are identical
+      across all ten CSV seasons, so the backfill cannot decide between them;
+      they differ only where every stored value of a column is 0, which is
+      exactly a live GW1. `count()` calls that measured, flags the fixtures and
+      reports them, so the zeros never land. That is right because the premise
+      holds in round 1 as in round 20: a played match totalling zero starts is
+      not a football result, and no later round makes it more so. `holes.test.ts`
+      asserts both sides of the boundary.
+
+      **The aggregate: `measuredSum` on nine columns, two constants, two call
+      sites.** NULL unless `count(col) = count(fixture_id)`. `count(fixture_id)`
+      rather than `count(*)` because both callers LEFT JOIN, and a player-season
+      with no rows null-extends to one. The distinction it draws is **missing
+      rows versus missing values** — the first is a blank gameweek or a January
+      arrival and sums correctly, the second has no honest total.
+
+      **The ICT quartet was excluded, on proportion.** Full reasoning in Known
+      Issues; the measured numbers are ICT holes drifting **2.9-6.8%** against
+      FPL versus the expected family's **36.1-38.6%**, and blanking would cost
+      every player in 2021-22 and 2022-23 their ICT total plus a migration to
+      drop `NOT NULL` on four columns. Item 6's 0.6-2.0% figures are the
+      *unexplained* cells and were not reused; the split-by-attribution table
+      `verify:history-past` now prints exists to measure this properly.
+
+      **The verify script had to change in the same session or the run would
+      have looked catastrophic.** Its blank-fixture detector used `sum(col) = 0`,
+      which stops matching once the holes are NULL — `blanks` empties, every
+      drift falls through to `unexplained`, and the report flips from 38 to
+      ~1,524 for no reason connected to the data. It now calls `findHoles` with
+      all **nine** detectable columns rather than the five the ingest fixes,
+      because the ICT quartet is attributed through the same map and nothing
+      NULLs it. `fetchOurTotals` keeps its bare `sum()` deliberately, and its
+      comment now says why it no longer mirrors the app's arithmetic.
+
+      **Two premises in the plan were false and the data corrected them.** The
+      round-1 blind spot above, and the claim that pointing the check at the
+      narrow column set would turn "~1,900 explained cells into unexplained
+      ones" — measured, it is **38 → 146**. The blank-*row* detector
+      independently catches most of the ICT family, which is precisely why the
+      mutation is worth pinning: the regression is real and does not announce
+      itself.
+
+      **The property test was replaced rather than adjusted** — see the
+      `career.test.ts` entry in Current State for what the old form was right
+      about and why its expectation could not simply be edited.
+
+      **Verification.** `npm test`: **77 server, 51 client**, both green.
+      `tsc --noEmit` clean in both packages. `ingest:gameweeks` re-run green:
+      253,509 rows, 152 fixtures holed, 8,491 NULL cells per column and 9,704
+      for `expected_goal_involvements`, all in 2022-23 and none in any other
+      season. `verify:history-past` **unchanged**: 1,915 disagreements, 1,524
+      drift, 1,486 attributed, **38 unexplained**, 1,516 low / 8 high.
+
+      **Bootstrap cost, measured because CLAUDE.md pins one.** `listPlayerTotals`
+      medians over 10 runs, warm: **2026-27 9ms before and after; 2025-26 98ms
+      before, 99ms after.** The nine `count(col)` calls are over columns the
+      `sum()` already scans, so they are effectively free and the no-cache
+      decision is untouched. Worth noting separately that the recorded "~90ms
+      per request" describes a *completed* season — the actual default is
+      2026-27, which has no match rows and runs in 9ms.
+
+      **Browser.** Maguire's 2022-23 career row reads `—` for Starts, xG, xA,
+      xGI and xGC while 2023-24 keeps real numbers and ICT stays 25.2. Expanding
+      it shows the boundary directly: those four columns read `—` for rounds
+      1-15 and `0.00` from round 16, in the same column of the same table.
+      Enzo Fernández's 2022-23 row keeps Starts 18, xG 0.78, xA 2.64 and xGC
+      24.91 and loses `expected_goal_involvements` alone — round 29 is holed on
+      that column only, and he played it as a double gameweek. Per player and
+      per column, on one row.
+
+      **Mutation-checked, measured:**
+
+      | Mutation | Result |
+      | --- | --- |
+      | measured-elsewhere clause dropped | **red**, 2 tests |
+      | detector knows only the 0 shape | **red**, 1 test |
+      | `sum(minutes) > 0` gate dropped | **red**, 1 test |
+      | aggregate back to a bare `sum()` | **red**, 5 tests |
+      | verify called with the five, not the nine | **red**, 38 → 146 unexplained |
+
 ## Deferred
 
 The gate used to be "not until Phase 0 is complete". Phase 0 is complete, and
@@ -1670,97 +1904,40 @@ every hour, and needs somewhere to put them and a policy for how often.
 
   First run also flips `SEASONS_WITH_GAMEWEEKS` to eleven and turns
   `career.test.ts` red, which is the intended announcement.
-- **Store NULL where the source holed a column.** Item 6 measured it: 2022-23
-  carries `0` for `starts` and the whole expected family across rounds 1-15, and
-  three seasons carry `0` for the ICT family on isolated rounds — 178 fixtures
-  in all, listed in Known Issues. Zero asserts a measurement nobody took, which
-  is rule 6 stated from the other side, and the visible cost is a 2022-23
-  ever-present showing 24 starts instead of 38.
 
-  **The detection already exists and is not the work.** `verify:history-past`
-  finds these from our own rows without consulting FPL. The work is deciding
-  where the rule lives: a hole is a property of a fixture rather than of a row,
-  so the ingest has to aggregate before it writes, and `ingest:gameweeks` today
-  goes `COPY` into staging then one `INSERT ... ON CONFLICT`. It also has to
-  hold for the live sync, where a round arrives while later rounds do not exist
-  yet and "the column is zero for this whole fixture" is a claim about a match
-  that has just finished.
+  **Watch the run output for a hole.** Item 7 made the sync apply the same
+  NULL-for-a-hole rule the CSV ingest does, and print a loud block when it
+  fires. On the live path it means FPL served a *settled* round with a column
+  unpublished, which is an outage rather than a scraper gap — so **re-run the
+  sync** once FPL has published and the upsert overwrites the NULL. Nothing in
+  the database distinguishes a transient hole from a permanent one, so that
+  block is the only trace that a re-run is worth doing.
 
-  **What it does not buy: agreement with FPL.** `sum()` skips NULLs, so a
-  2022-23 ever-present whose fourteen holed rows become NULL still totals 24
-  starts against a true 38. The career row shows the same number before and
-  after, and `verify:history-past` reports the same drift. What it buys is two
-  things and costs a third:
+  **When scheduling lands, that block has to become a signal rather than a log
+  line.** Nobody reads the output of a cron job, and a hole that self-heals only
+  if somebody notices does not self-heal. Belongs with the scheduling work, not
+  before it.
+- **A season total that says a round is missing, rather than blanking or
+  lying.** The instrument item 7 wanted and did not have. `measuredSum` has two
+  settings — a number, or the no-value marker — so a column measured for 37 of
+  38 rounds has to pick between overstating completeness and destroying the
+  figure entirely. For the five columns item 7 fixed that trade was easy: they
+  are short by fourteen rounds and ~38%, so the marker is right. For the ICT
+  quartet it is wrong, which is why those 26 fixtures still store 0 (see Known
+  Issues): blanking 1,515 player-season totals to flag a ~3-7% gap costs more
+  than it repairs.
 
-  - **The per-match table stops lying about the expected family.** A round-5
-    2022-23 row shows the no-value marker rather than `0` for xG, xA, xGI and
-    xGC, which is what rule 6 says it should have shown all along. **Not
-    `starts`** — `MatchStats` does not carry it, so `StatsTable` has no such
-    column. It reaches the screen only as a season total, at
-    `PlayerHeader.tsx:78` and `CareerTable.tsx:62`, and nowhere else.
-  - **`count(starts)` stops equalling `count(*)` for 2022-23, so the `sum()`
-    property test in `career.test.ts` fires.** That test was written for a
-    partially ingested season and could only ever see the NULL-shaped version of
-    one; this is what makes it work on the shape that actually occurred.
-  - **The career summary row still shows 24, which is still wrong.** Which is
-    why the second half is not optional.
+  **What it needs is a third state**: the total, kept and rendered, carrying a
+  visible mark that N of its rounds were never measured — with the count
+  reachable on hover or in the cell's title. That is a wire-shape change (the
+  denominator has to travel with the number) and a UI affordance, not an
+  aggregate rule, which is why it is not a variation on item 7 and does not
+  belong in an ingest session.
 
-  **So the two halves buy different things per column, which the list above
-  reads as though they did not.**
-
-  - **The expected family: both halves matter.** The per-match cells show `0`
-    for rounds 1-15 of 2022-23 today and would show the no-value marker; the
-    season total is separately wrong and needs the aggregate change.
-  - **`starts`: only the second half is visible.** Writing NULL changes nothing
-    anyone can see, because nothing renders it per match. The career row reading
-    24 against a true 38 is the entire user-visible cost, and the aggregate rule
-    is the only thing that addresses it.
-
-  Which is also why it went unnoticed for so long: `starts` is stored per match
-  and displayed only as a season total, so fourteen rounds of `0` sat in the
-  table with nothing on screen showing them.
-
-  **Second half: a partly measured column is not summable.** The season
-  aggregate has to distinguish "some rows are missing" — a blank gameweek, a
-  season still being played — from "some rows have missing values". A column
-  NULL on part of a season has no honest total, and the honest answer is the
-  no-value marker rather than a partial sum presented as complete. So the bare
-  `sum()` becomes something that returns NULL when any contributing row is NULL
-  in that column. Nine call sites, all in `server/src/repositories/players.ts`:
-  `starts`, the four expected columns and the defensive quartet, at lines 79-82
-  and 120-124. They are exactly the nine `career.test.ts` already lists.
-
-  **The rule degrades per player, not per season.** A 2022-23 player who first
-  appeared in round 20 has no holed rows, so his `starts` total stays a real
-  number; only the players who actually played through the hole lose theirs.
-  That is the right behaviour, and it means the fix does not blank the column
-  for the whole season.
-
-  **It also means a sort on that column would rank backwards.** The players who
-  lose their `starts` total are exactly the ones who played through rounds 1 to
-  15, which is to say the regulars. So any ranking on 2022-23 `starts` would
-  systematically drop or bottom-out the most-started players — NULL is what they
-  get, and a real number is what the fringe players who arrived in January keep.
-  The column would look populated and rank backwards.
-
-  **Nothing sorts on `starts` today, so this costs nothing now.** The Dashboard
-  ranks on total points (`Dashboard.tsx:82`), points per match with the
-  appearance floor (`:92`) and ICT index (`:99`), all unaffected; the Players
-  list has no such column, and `CareerTable` has no sorting at all. It matters
-  the day a per-90 toggle or a starts column lands, both of which are on this
-  Deferred list already.
-
-  **Why that rule is safe for a live season, confirmed rather than assumed.** It
-  fires on rows that hold a hole, not on rounds that have not happened. A
-  partially ingested season has rows only for played rounds, and every row
-  `ingest-live-gameweeks.ts` writes takes `starts` straight off the payload —
-  only the fifteen Opta-era columns are NULLed, and those are NULL for the whole
-  season rather than part of one. So the aggregate still returns a genuine
-  season-to-date total. The same reasoning is already recorded beside
-  `SEASONS_WITH_GAMEWEEKS` in `career.test.ts`.
-
-  **Blocks nothing; blocked on nothing.** Both halves belong in one session: the
-  first alone leaves a wrong number on screen with nothing marking it.
+  Once it exists, the ICT quartet can be represented honestly without the
+  migration that dropping `NOT NULL` on four columns would require, and the
+  `starts` case gets better too: "24, and 14 rounds unmeasured" beats both "24"
+  and "—". **Blocks nothing; blocked on nothing.**
 - **The pre-season player list: this season's price and ownership beside the
   last completed season's totals, each labelled which it is.** Deliberately not
   FPL's approach of showing carryover totals under a "this season" heading. Left

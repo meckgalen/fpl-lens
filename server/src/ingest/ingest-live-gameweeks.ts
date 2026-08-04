@@ -60,6 +60,7 @@ import { pool, closePool } from '../db/pool.js';
 import { getBootstrap, getFixtures, getPlayerDetail } from '../services/fplApi.js';
 import { deriveSeason } from './ingest-live-season.js';
 import { ALL_COLUMNS, UPDATABLE_COLUMNS } from './gameweek-columns.js';
+import { HOLED_COLUMNS, applyHoles, findHoles, summariseHoles, type Hole } from './holes.js';
 import {
   SETTLED_SQL,
   buildFixtureRows,
@@ -476,6 +477,10 @@ export interface SyncOutcome {
   before: number;
   after: number;
   report: RoundReport[];
+  /** Fixtures FPL served settled with a column unpublished. Normally empty. */
+  holes: Hole[];
+  /** Rows those holes set to NULL. */
+  holedRows: number;
 }
 
 /**
@@ -513,8 +518,33 @@ export async function syncSeasonGameweeks(
     [season]
   );
 
+  // Rule 6 at fixture grain, the same rule and the same code the CSV ingest
+  // applies — but it means something different here, and `main` says so out
+  // loud. On the CSV path a hole is a historical fact and NULL is the final
+  // answer. Here it means FPL served a *settled* round with a column
+  // unpublished right now, which is an outage rather than a scraper gap.
+  //
+  // Storing NULL rather than refusing the round is the lesser cost: the rest of
+  // the fixture — minutes, points, goals — is real and lands, and the next run
+  // overwrites the NULL with the true value, because `writeGameweekRows` upserts
+  // every column but the conflict target. So this self-heals, which is exactly
+  // why the run report has to name it: nothing in the database distinguishes a
+  // permanent historical hole from a transient one, so the report is the only
+  // trace that a re-run is worth doing.
+  //
+  // A false positive is near-impossible, and that matters more here than on the
+  // CSV path because the cost of one is a column blanked on real data. `starts`
+  // totals exactly 22 on a played fixture by the laws of the game, and the
+  // expected family accrues to all 22 from the first shot faced.
+  //
+  // Scoped to this season: another season's fixtures are not this sync's
+  // business, and the measured-elsewhere guard should be asked within the
+  // season being written.
+  const holes = await findHoles(client, 'player_gameweeks', HOLED_COLUMNS, [season]);
+  const holedRows = await applyHoles(client, 'player_gameweeks', holes);
+
   const report = await assertSyncedGameweeks(client, season);
-  return { built, before, after, report };
+  return { built, before, after, report, holes, holedRows };
 }
 
 async function main(): Promise<void> {
@@ -530,7 +560,7 @@ async function main(): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { built, before, after, report } = await syncSeasonGameweeks(
+    const { built, before, after, report, holes, holedRows } = await syncSeasonGameweeks(
       client,
       season,
       wireFixtures,
@@ -542,6 +572,22 @@ async function main(): Promise<void> {
         `${built.duplicates} deduped by rule 12)`
     );
     await client.query('COMMIT');
+
+    // Loud, and above the per-round table rather than below it: on a live
+    // season this is the one line in the run worth acting on.
+    if (holes.length > 0) {
+      console.log(
+        `\n!! ${holes.length} settled fixture(s) served with a column unpublished — ` +
+          `${holedRows} rows stored as NULL:`
+      );
+      for (const line of summariseHoles(holes)) console.log(`     ${line}`);
+      console.log(
+        '     A column totalling 0 across all 22 players of a played match is not a\n' +
+          '     football result, so it is stored as "not measured" rather than as zero.\n' +
+          '     If FPL has since published, RE-RUN THIS SYNC: the upsert overwrites the\n' +
+          '     NULL with the real value. Nothing in the database will tell you later.'
+      );
+    }
 
     console.log(`\n  GW   rows  fixtures   minutes`);
     for (const r of report) {

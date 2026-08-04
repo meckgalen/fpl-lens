@@ -88,6 +88,23 @@ in later seasons only is a stat that started being measured; a column that
 stops is one the upstream feed dropped. Absent columns must be stored NULL,
 never 0.
 
+> **Presence is not content, and for five columns that gap matters.** This
+> profiler reports whether a column appears in a file's header, which is a
+> different question from whether anybody filled it in — the same caveat rule 16
+> records for `ea_index`, which is present in three seasons and empty in all of
+> them.
+>
+> `starts`, `expected_goals`, `expected_assists`,
+> `expected_goal_involvements` and `expected_goals_conceded` are listed below
+> as first appearing in **2022-23**, and that is correct about the header. The
+> *values* begin at **round 16**: the upstream scraper wrote `0` for rounds
+> 1-15, across 136 fixtures (152 for `expected_goal_involvements`, which is
+> also holed on round 29). Those cells are stored NULL since Phase 1 item 7 —
+> see `server/src/ingest/holes.ts` and the Known Issues entry in CLAUDE.md.
+>
+> Nothing below is edited to say so, because the table is a true report of what
+> it measures. This note is the pointer to what it does not.
+
 | Column | first season | last season | seasons present |
 | --- | --- | --- | --- |
 | `attempted_passes` | 2016-17 | 2018-19 | 3/10 |

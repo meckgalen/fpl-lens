@@ -8,9 +8,10 @@
  *
  *   - **Numbers are numbers.** Parsing happens once, in the repository mapper.
  *     A parseFloat in a component is a bug, not a style choice.
- *   - **Null means "not measured".** xG before 2022-23, `starts` before
- *     2022-23, difficulty before 2018-19, and the five live-game fields over
- *     any completed season. Never 0 — 0 asserts a measurement nobody took.
+ *   - **Null means "not measured".** xG before 2022-23 (and before round 16
+ *     *of* 2022-23), `starts` on the same boundary, difficulty before 2018-19,
+ *     and the five live-game fields over any completed season. Never 0 — 0
+ *     asserts a measurement nobody took.
  *     The types force the distinction to be handled; `fmtNum` and `fmtOr`
  *     below are how it is handled.
  *
@@ -44,7 +45,7 @@ export interface Player {
   threat: number;
   ict_index: number;
 
-  /** null before 2022-23: not measured, not zero. */
+  /** null before 2022-23, and before round 16 of it: not measured, not zero. */
   starts: number | null;
   expected_goals: number | null;
   expected_assists: number | null;
@@ -104,7 +105,10 @@ export interface GameweekEvent {
  *
  * Which ones are nullable is a fact about the seasons, not about the stats:
  *
- *   - xG, xA, xGI, xGC: 2022-23 onward.
+ *   - xG, xA, xGI, xGC: 2022-23 onward — and within 2022-23, from round 16
+ *     only, which is where the source starts measuring them. So a 2022-23
+ *     season total is `—` for a player who played through rounds 1-15 and a
+ *     real number for one who arrived after. Not a bug on either side.
  *   - tackles, CBI, recoveries: 2016-17 to 2018-19, then nothing for six
  *     seasons, then 2025-26 again. Older seasons have these where newer ones
  *     do not.
@@ -189,7 +193,10 @@ export interface PlayerCareerSeason extends MatchStats {
   matches: number;
   /** Matches he played (minutes > 0). Not rounds — a double gameweek is two. */
   appearances: number;
-  /** null before 2022-23. */
+  /**
+   * null before 2022-23 — and null for a 2022-23 player who played through
+   * rounds 1-15, which the source never measured. See CLAUDE.md, the hole rule.
+   */
   starts: number | null;
   points_per_game: number;
 }

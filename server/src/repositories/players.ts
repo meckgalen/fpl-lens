@@ -49,6 +49,10 @@ const ELEMENT_TYPE_BY_POSITION = `CASE ps.position
  * player started no matches and generated no chances, when the truth is that
  * nobody measured before 2022-23 (rule 6).
  *
+ * Those columns go through `measuredSum` rather than a bare `sum()`. See the
+ * comment on it: a column measured for only part of a season has no honest
+ * total, and `sum()` would quietly produce one.
+ *
  * points_per_game divides by appearances (minutes > 0), not by rounds in the
  * season. Rule 13 requires saying which, and this is the one that reproduces
  * the FPL API's own value: Saka 2025-26 is 157/31 = 5.1, where dividing by his
@@ -63,6 +67,39 @@ const ELEMENT_TYPE_BY_POSITION = `CASE ps.position
  * tie-break itself sees a float, and to_char pins the one-decimal presentation
  * that rounding is for; the mapper then parses that text to a number.
  */
+/**
+ * The total of a column that is NULL where it was not measured — NULL unless
+ * every contributing row has a value.
+ *
+ * The distinction this draws, and the whole reason it exists: **missing rows
+ * are not missing values.** A blank gameweek, a season still being played and a
+ * player who joined in January all produce fewer rows, and summing what is
+ * there is exactly right — a season-to-date total is a real number. A column
+ * NULL on *some of the rows that exist* is a different thing, and has no honest
+ * total at all.
+ *
+ * A bare `sum()` cannot tell those apart, because it skips NULLs. That was safe
+ * while every nullable column was measured for a whole season or for none of
+ * it, which was true until item 7: 2022-23 measures `starts` and the expected
+ * family from round 16, and the rounds before now store NULL. Summing them
+ * would report a fourteen-round-short figure in a cell that looks exactly like
+ * a complete one.
+ *
+ * `count(pg.fixture_id)` rather than `count(*)` because both callers LEFT JOIN
+ * `player_gameweeks`: a player-season with no match rows null-extends to one
+ * row, where `count(*)` is 1 and `count(fixture_id)` is 0. With no rows both
+ * sides are 0 and the result is `sum()` over nothing, which is NULL — the same
+ * answer a bare `sum()` gave.
+ *
+ * **This degrades per player, not per season.** A 2022-23 player who first
+ * appeared in round 20 has no holed rows, so his total stays a real number;
+ * only the players who actually played through the hole lose theirs. That is
+ * the right behaviour, and it is why the column does not simply blank for the
+ * whole season.
+ */
+const measuredSum = (column: string): string =>
+  `CASE WHEN count(pg.${column}) = count(pg.fixture_id) THEN sum(pg.${column}) END`;
+
 const SEASON_AGGREGATE = `COALESCE(sum(pg.total_points), 0)::int AS total_points,
             COALESCE(sum(pg.minutes), 0)::int      AS minutes,
             COALESCE(sum(pg.goals_scored), 0)::int AS goals_scored,
@@ -71,15 +108,23 @@ const SEASON_AGGREGATE = `COALESCE(sum(pg.total_points), 0)::int AS total_points
             COALESCE(sum(pg.bonus), 0)::int        AS bonus,
             COALESCE(sum(pg.bps), 0)::int          AS bps,
 
+            -- The ICT quartet keeps COALESCE and does NOT go through
+            -- measuredSum, which is a deliberate exception rather than an
+            -- oversight. It is holed too — 26 fixtures across 2019-20, 2021-22
+            -- and 2022-23 — but those holes are whole rounds, so blanking would
+            -- cost every player in two seasons their ICT total to correct one
+            -- round in thirty-eight. The columns are also NOT NULL in the
+            -- schema, so there is nothing here for measuredSum to find. See
+            -- CLAUDE.md, Known Issues.
             COALESCE(sum(pg.influence), 0)  AS influence,
             COALESCE(sum(pg.creativity), 0) AS creativity,
             COALESCE(sum(pg.threat), 0)     AS threat,
             COALESCE(sum(pg.ict_index), 0)  AS ict_index,
 
-            sum(pg.starts)                     AS starts,
-            sum(pg.expected_goals)             AS expected_goals,
-            sum(pg.expected_assists)           AS expected_assists,
-            sum(pg.expected_goal_involvements) AS expected_goal_involvements,
+            ${measuredSum('starts')}                     AS starts,
+            ${measuredSum('expected_goals')}             AS expected_goals,
+            ${measuredSum('expected_assists')}           AS expected_assists,
+            ${measuredSum('expected_goal_involvements')} AS expected_goal_involvements,
 
             count(*) FILTER (WHERE pg.minutes > 0)::int AS appearances,
 
@@ -117,11 +162,11 @@ const CAREER_EXTRA_AGGREGATE = `COALESCE(sum(pg.goals_conceded), 0)::int    AS g
             COALESCE(sum(pg.red_cards), 0)::int         AS red_cards,
             COALESCE(sum(pg.saves), 0)::int             AS saves,
 
-            sum(pg.expected_goals_conceded)          AS expected_goals_conceded,
-            sum(pg.tackles)                          AS tackles,
-            sum(pg.clearances_blocks_interceptions)  AS clearances_blocks_interceptions,
-            sum(pg.recoveries)                       AS recoveries,
-            sum(pg.defensive_contribution)           AS defensive_contribution`;
+            ${measuredSum('expected_goals_conceded')}         AS expected_goals_conceded,
+            ${measuredSum('tackles')}                         AS tackles,
+            ${measuredSum('clearances_blocks_interceptions')} AS clearances_blocks_interceptions,
+            ${measuredSum('recoveries')}                      AS recoveries,
+            ${measuredSum('defensive_contribution')}          AS defensive_contribution`;
 
 interface PlayerTotalsDbRow {
   id: number;
