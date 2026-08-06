@@ -22,6 +22,7 @@ import type { Queryable } from '../db/pool.js';
 import type {
   PlayerCareerSeason,
   PlayerGameweek,
+  PlayerIdentity,
   PlayerSeasonTotals,
   UpcomingFixture,
 } from '../types/domain.js';
@@ -650,6 +651,35 @@ export async function getPlayerUpcomingFixtures(
   // Every column here is smallint or integer, which the driver already returns
   // as a number. No mapper, because there is nothing to parse.
   return rows;
+}
+
+/**
+ * Who the player is, with no season involved — or null if the code names
+ * nobody, which is the same 404 `playerExists` gives.
+ *
+ * Every column is from `players` alone. `photo` is derived here the way
+ * `listPlayerTotals` derives it and the way FPL builds it (API identity rule
+ * 5), so the two cannot drift into different filenames.
+ *
+ * This is what `/career` returns beside its rows, and it is a replacement for
+ * that route's `playerExists` call rather than an addition to it: one query
+ * answers "does this player exist" and "who is he" together.
+ */
+export async function getPlayerIdentity(
+  db: Queryable,
+  fplCode: number
+): Promise<PlayerIdentity | null> {
+  const { rows } = await db.query<PlayerIdentity>(
+    `SELECT p.fpl_code AS id,
+            p.first_name,
+            p.second_name,
+            p.web_name,
+            p.fpl_code || '.jpg' AS photo
+       FROM players p
+      WHERE p.fpl_code = $1`,
+    [fplCode]
+  );
+  return rows[0] ?? null;
 }
 
 /** Whether the code names a real player at all, so /player/:code can 404. */

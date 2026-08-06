@@ -19,6 +19,7 @@ import type {
   Gameweek,
   PlayerCareerSeason,
   PlayerGameweek,
+  PlayerIdentity,
   PlayerSeasonTotals,
   Team,
   UpcomingFixture,
@@ -64,6 +65,25 @@ export type ApiFixture = Fixture & {
 export interface BootstrapResponse {
   /** The season these rows describe (API identity rule 7). */
   season: string;
+  /**
+   * Every season that exists, newest first — what the season selector offers.
+   *
+   * **A manifest here, when `/career` was refused one.** Item 1 rejected a
+   * `seasons: string[]` on the career response because each of its rows already
+   * carries a season: the manifest would have duplicated what the rows state,
+   * and so been able to disagree with them. A bootstrap response is one season
+   * throughout. Nothing in it answers "which others exist", so there is nothing
+   * for this field to duplicate and nothing for it to contradict.
+   *
+   * **Not on `PlayerDetailResponse` or `FixturesResponse`, deliberately.** Only
+   * the selector needs the list, and the selector lives in the shell, which is
+   * driven by bootstrap. The same constant on three payloads is three things
+   * that can drift.
+   *
+   * Ordered by `listSeasons` and re-sorted by nobody. Two orderings would
+   * eventually disagree about something neither of them states.
+   */
+  seasons: string[];
   players: ApiPlayer[];
   teams: Team[];
   events: ApiEvent[];
@@ -100,6 +120,17 @@ export interface PlayerDetailResponse {
  * consumer must render against.
  */
 export interface PlayerCareerResponse {
+  /**
+   * Who the player is, carried once rather than on every row — see
+   * `PlayerIdentity`, and the note on `PlayerCareerSeason` explaining why the
+   * rows deliberately do not repeat it.
+   *
+   * It is on this response and no other because this is the only one that is
+   * about the *player* rather than about a player-season. That makes it the
+   * one thing the detail page can still render for a season the player was not
+   * in the game for.
+   */
+  player: PlayerIdentity;
   seasons: PlayerCareerSeason[];
 }
 
@@ -110,6 +141,15 @@ export interface FixturesResponse {
 
 export interface ErrorResponse {
   error: string;
-  /** Listed on an unknown-season 400, so the caller can see the ten that exist. */
+  /**
+   * Listed on an unknown-season 400, so the caller can see the eleven that
+   * exist. Same list and same order as `BootstrapResponse.seasons`.
+   *
+   * It is load-bearing rather than courtesy: the client persists the selected
+   * season, and a stored value the database does not have — a fresh clone, a
+   * rebuilt container — gets a 400 *before* any bootstrap has arrived to say
+   * what the valid seasons are. Without a parseable body the client cannot tell
+   * that case from the network being down.
+   */
   available?: string[];
 }

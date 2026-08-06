@@ -23,6 +23,7 @@ import {
   aPlayerDetail,
   aPlayerFixture,
   aTeam,
+  anIdentity,
 } from '../test/factories';
 import { fetchPlayerCareer, fetchPlayerDetail } from '../services/api';
 
@@ -60,10 +61,11 @@ function renderDetail(fixtures: typeof SIX_FIXTURES) {
     aPlayerDetail({ season: SEASON, history: [], fixtures, teams: TEAMS })
   );
   careerMock.mockResolvedValue({
+    player: anIdentity(),
     seasons: [aCareerSeason({ season: SEASON, matches: 0, appearances: 0 })],
   });
   return renderInApp(
-    <PlayerDetail player={SAKA} onBack={() => {}} />,
+    <PlayerDetail code={SAKA.id} player={SAKA} onBack={() => {}} />,
     aBootstrap({ season: SEASON, players: [SAKA], teams: TEAMS })
   );
 }

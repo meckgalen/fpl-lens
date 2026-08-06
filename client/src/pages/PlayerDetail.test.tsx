@@ -45,6 +45,7 @@ import {
   aPlayer,
   aPlayerDetail,
   aTeam,
+  anIdentity,
 } from '../test/factories';
 import { fetchPlayerCareer, fetchPlayerDetail } from '../services/api';
 
@@ -114,7 +115,8 @@ function detailFor(code: number, season: string) {
 
 beforeEach(() => {
   detailMock.mockImplementation(async (code, season) => detailFor(code, season));
-  careerMock.mockImplementation(async () => ({
+  careerMock.mockImplementation(async (code) => ({
+    player: anIdentity({ id: code }),
     seasons: [
       aCareerSeason({ season: CURRENT, team_short_name: 'ARS' }),
       aCareerSeason({ season: PREVIOUS, team_short_name: 'ARS' }),
@@ -142,7 +144,7 @@ async function seasonRow(season: string) {
 
 describe('PlayerDetail: expanding a previous season', () => {
   it('issues exactly one request for the season it opens', async () => {
-    renderInApp(<PlayerDetail player={SAKA} onBack={() => {}} />, bootstrap);
+    renderInApp(<PlayerDetail code={SAKA.id} player={SAKA} onBack={() => {}} />, bootstrap);
 
     fireEvent.click(await seasonRow(PREVIOUS));
     await screen.findByText(bps(SAKA.id, PREVIOUS));
@@ -157,7 +159,7 @@ describe('PlayerDetail: expanding a previous season', () => {
   });
 
   it('issues no request when the season is reopened after collapsing', async () => {
-    renderInApp(<PlayerDetail player={SAKA} onBack={() => {}} />, bootstrap);
+    renderInApp(<PlayerDetail code={SAKA.id} player={SAKA} onBack={() => {}} />, bootstrap);
 
     fireEvent.click(await seasonRow(PREVIOUS));
     await screen.findByText(bps(SAKA.id, PREVIOUS));
@@ -176,12 +178,12 @@ describe('PlayerDetail: expanding a previous season', () => {
 
 describe('PlayerDetail: the cache does not outlive its player', () => {
   it('drops the previous player’s seasons and refetches for the new one', async () => {
-    const { rerender } = renderInApp(<PlayerDetail player={SAKA} onBack={() => {}} />, bootstrap);
+    const { rerender } = renderInApp(<PlayerDetail code={SAKA.id} player={SAKA} onBack={() => {}} />, bootstrap);
 
     fireEvent.click(await seasonRow(PREVIOUS));
     await screen.findByText(bps(SAKA.id, PREVIOUS));
 
-    rerender(<PlayerDetail player={MAGUIRE} onBack={() => {}} />);
+    rerender(<PlayerDetail code={MAGUIRE.id} player={MAGUIRE} onBack={() => {}} />);
 
     // findBy*, not getBy*: the new player's own requests have to settle before
     // anything can be asserted about what is on screen. Checking for an absence
@@ -203,7 +205,7 @@ describe('PlayerDetail: the cache does not outlive its player', () => {
 
 describe('PlayerDetail: the sections', () => {
   it('shows the current season above, and the rest as expandable rows', async () => {
-    renderInApp(<PlayerDetail player={SAKA} onBack={() => {}} />, bootstrap);
+    renderInApp(<PlayerDetail code={SAKA.id} player={SAKA} onBack={() => {}} />, bootstrap);
 
     // "This Season" is labelled with the season the detail response resolved,
     // and the career table excludes it — it is already above, in full.

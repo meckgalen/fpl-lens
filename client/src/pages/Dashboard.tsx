@@ -5,7 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { PlayerAvatar, PosBadge } from '../components/PosBadge';
 import { Countdown } from '../components/Countdown';
 import { OpenPlayerButton } from '../components/OpenPlayerButton';
-import { NO_DEADLINE, POSITION_MAP, fmtNum, fmtPrice } from '../types/fpl';
+import { NO_DEADLINE, NO_VALUE, POSITION_MAP, fmtNum, fmtPrice } from '../types/fpl';
 import type { Player } from '../types/fpl';
 import { currentGameweek, nextGameweek, useBootstrap } from '../lib/bootstrap';
 
@@ -137,10 +137,22 @@ export default function Dashboard({
             the database holds ten of them and a payload from the wrong one
             looks exactly like the right one. */}
         <h1 className="font-display text-xl font-semibold text-foreground">Dashboard · {b.season}</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Gameweek {cur?.id ?? '–'} · Next deadline{' '}
-          <span className="font-medium text-foreground">{deadlineLabel}</span>
-        </p>
+        {/* Both halves are dropped rather than printed empty when the season
+            has no current or next round, which is every completed season:
+            "Gameweek – · Next deadline TBD" is two placeholders pretending to
+            be a status line. The gate is the derived flag, not any notion of
+            the season being over — see lib/bootstrap.ts. */}
+        {(cur || next) && (
+          <p className="text-sm text-muted-foreground mt-1">
+            {cur && <>Gameweek {cur.id}</>}
+            {cur && next && ' · '}
+            {next && (
+              <>
+                Next deadline <span className="font-medium text-foreground">{deadlineLabel}</span>
+              </>
+            )}
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-3.5 mb-3.5">
@@ -148,7 +160,7 @@ export default function Dashboard({
           <CardContent className="py-4">
             <div className="font-display text-3xl font-bold tabular-nums text-foreground">{gwAverage}</div>
             <div className="text-[10px] uppercase tracking-[.07em] text-muted-foreground mt-1">
-              GW{cur?.id ?? '?'} Average
+              {cur ? `GW${cur.id} Average` : 'Gameweek Average'}
             </div>
           </CardContent>
         </Card>
@@ -160,9 +172,19 @@ export default function Dashboard({
         </Card>
         <Card>
           <CardContent className="py-4">
-            <Countdown target={deadline} />
+            {/* No next gameweek means no countdown at all, rather than a
+                Countdown handed null — that renders 'TBD', which promises a
+                deadline still to be determined. Over a season with no next
+                round there is nothing left to determine. */}
+            {next ? (
+              <Countdown target={deadline} />
+            ) : (
+              <div className="font-display text-3xl font-bold tabular-nums text-foreground">
+                {NO_VALUE}
+              </div>
+            )}
             <div className="text-[10px] uppercase tracking-[.07em] text-muted-foreground mt-1">
-              Until GW{next?.id ?? '?'} Deadline
+              {next ? `Until GW${next.id} Deadline` : 'Next Deadline'}
             </div>
           </CardContent>
         </Card>

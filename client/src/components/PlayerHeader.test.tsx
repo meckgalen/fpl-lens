@@ -18,12 +18,19 @@
 import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import PlayerHeader from './PlayerHeader';
-import { aPlayer, aTeam } from '../test/factories';
+import { aPlayer, aTeam, anIdentity } from '../test/factories';
 
 const PHOTO_URL = 'https://resources.premierleague.com/premierleague/photos/players/250x250/p223340.png';
 
 const renderHeader = (photo: string | null) =>
-  render(<PlayerHeader player={aPlayer({ photo: photo as string })} team={aTeam()} season="2026-27" />);
+  render(
+    <PlayerHeader
+      player={aPlayer({ photo: photo as string })}
+      identity={anIdentity({ photo: photo as string })}
+      team={aTeam()}
+      season="2026-27"
+    />
+  );
 
 describe('PlayerHeader photo', () => {
   it('builds the asset URL from the code on the wire', () => {

@@ -166,7 +166,11 @@ export interface GameweekHistory extends MatchStats {
 
 /**
  * One season of a career. Carries its own `season` label, because the response
- * it arrives in spans ten of them and so has no top-level one to borrow.
+ * it arrives in spans eleven of them and so has no top-level one to borrow.
+ *
+ * It carries no name, code or photo: those are properties of the player rather
+ * than of the season, so they sit once on the response as
+ * `PlayerCareerData.player` instead of eleven times here.
  *
  * The club is on the row rather than looked up: a career crosses clubs that are
  * in no current season, so no single season's team list can name them all. It
@@ -226,12 +230,20 @@ export interface Fixture {
 }
 
 /**
- * Every response names the season it describes. The database holds ten, and a
- * payload from the wrong one is indistinguishable from the right one at a
+ * Every response names the season it describes. The database holds eleven, and
+ * a payload from the wrong one is indistinguishable from the right one at a
  * glance — same players, same round numbers, same columns.
  */
 export interface BootstrapData {
   season: string;
+  /**
+   * Every season that exists, newest first — the season selector's options.
+   *
+   * Rendered in the order it arrives. The server decides the ordering (see
+   * `listSeasons`), and a client that sorted independently would be a second
+   * opinion about something neither end states.
+   */
+  seasons: string[];
   players: Player[];
   teams: Team[];
   events: GameweekEvent[];
@@ -259,7 +271,27 @@ export interface PlayerDetailData {
  * entirely — null is "not measured" everywhere else in this file.
  */
 export interface PlayerCareerData {
+  /**
+   * Who the player is, carried once rather than on every row — see
+   * `PlayerCareerSeason`, which deliberately holds none of this.
+   *
+   * Every field is season-independent: the code is permanent, the names are the
+   * person's, and `photo` is built from the code. That is what makes it the one
+   * thing the detail page can still render when the selected season has no
+   * player-season for him.
+   */
+  player: PlayerIdentity;
   seasons: PlayerCareerSeason[];
+}
+
+/** A player with no season attached. See `PlayerCareerData.player`. */
+export interface PlayerIdentity {
+  /** The permanent player code, same as `Player.id`. */
+  id: number;
+  first_name: string | null;
+  second_name: string | null;
+  web_name: string;
+  photo: string;
 }
 
 export interface FixturesData {

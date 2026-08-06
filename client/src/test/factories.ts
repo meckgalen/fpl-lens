@@ -22,9 +22,11 @@ import type {
   GameweekEvent,
   GameweekHistory,
   Player,
+  PlayerCareerData,
   PlayerCareerSeason,
   PlayerDetailData,
   PlayerFixture,
+  PlayerIdentity,
   Team,
 } from '../types/fpl';
 
@@ -218,6 +220,10 @@ export function anEvent(overrides: Partial<GameweekEvent> = {}): GameweekEvent {
 export function aBootstrap(overrides: Partial<BootstrapData> = {}): BootstrapData {
   return {
     season: '2025-26',
+    // Two, so the selector has somewhere to go. Newest first, as the server
+    // sends them — a test that sorted them would be asserting against its own
+    // ordering rather than the one the app renders.
+    seasons: ['2026-27', '2025-26'],
     players: [aPlayer()],
     teams: [aTeam(), aTeam({ id: 43, name: 'Man City', short_name: 'MCI' })],
     // Rounds are listed, not counted: 2019-20 runs 1-29 then 39-47. Three is
@@ -229,6 +235,31 @@ export function aBootstrap(overrides: Partial<BootstrapData> = {}): BootstrapDat
       { id: 3, name: 'Midfielder' },
       { id: 4, name: 'Forward' },
     ],
+    ...overrides,
+  };
+}
+
+/**
+ * The season-independent half of a career response.
+ *
+ * Defaults agree with `aPlayer()` — same code, same name — so a test that swaps
+ * a player out of the bootstrap still has a consistent identity for him.
+ */
+export function anIdentity(overrides: Partial<PlayerIdentity> = {}): PlayerIdentity {
+  return {
+    id: 223340,
+    first_name: 'Bukayo',
+    second_name: 'Saka',
+    web_name: 'Saka',
+    photo: '223340.jpg',
+    ...overrides,
+  };
+}
+
+export function aCareer(overrides: Partial<PlayerCareerData> = {}): PlayerCareerData {
+  return {
+    player: anIdentity(),
+    seasons: [aCareerSeason()],
     ...overrides,
   };
 }

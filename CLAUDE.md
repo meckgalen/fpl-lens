@@ -103,7 +103,17 @@ our side of every holed player-season and make the drift vanish without a
 stored value having changed. What item 7 buys is that the app no longer *shows*
 a part-season figure as a whole-season one.
 
-`npm test` runs **two suites on two runners**: **77 server tests** and **51
+**Item 8 gave the app a season selector, and with it the ten completed seasons.**
+Every page is now reachable on any of the eleven: the selector is a `<select>`
+in the sidebar, its state lives in `App.tsx`, and **the selected season is
+`bootstrap.season`** — the one the server actually served — rather than a second
+piece of state that could disagree with the payload on screen. The list of
+seasons rides on the bootstrap response as `seasons: string[]`. Item 8 also
+fixed the `detailPlayer` snapshot that had been in Known Issues since item 1,
+made `currentGameweek`/`nextGameweek` return null instead of a plausible wrong
+answer, and made the last of the four empty states reachable.
+
+`npm test` runs **two suites on two runners**: **77 server tests** and **69
 client tests**, all passing. They are counted separately on purpose — two
 runners print two summaries, and a combined figure would be maintained by hand
 against neither of them.
@@ -203,7 +213,30 @@ additionally pin URL shapes and `res.ok` handling, which the server suite
 already covers. `@testing-library/user-event` drives anything involving a
 keyboard — `fireEvent` dispatches a synthetic click and so cannot tell a
 `<button>` from a `<div onClick>`, which is the entire distinction item 3 turns
-on. Eleven files:
+on. Thirteen files:
+
+- `client/src/App.test.tsx` — the shell, and **the first test `App.tsx` has ever
+  had**. That absence is why item 3 could only pin the Dashboard's half of the
+  click-through contract, and the `detailPlayer` fix cannot be tested anywhere
+  else: it is a bug about which object the shell hands down. Twelve tests: the
+  selector's options and their order, refetching with the new season, the app
+  *not* blanking mid-switch, persistence of the **served** season, recovery from
+  a stored season the database does not have, a network failure *not* being
+  treated as one, the sidebar deadline block in both directions, the header and
+  gameweeks agreeing across a season change, the no-false-empty-state window,
+  and the not-in-the-game state.
+
+  It does **not** use `renderInApp`: that helper supplies a `BootstrapContext`,
+  which is precisely what is under test here. StrictMode is applied by hand for
+  the reason `render.tsx` gives.
+
+- `client/src/pages/Fixtures.test.tsx` — six tests, and the page's first. The
+  centrepiece is the **round collision**: two seasons that both end at round 38
+  produce the same derived round, so an effect keyed on it alone cannot see a
+  season change. Plus that the season is sent at all, that fixtures clear while
+  the new ones load, that the tab choice survives, and that a season with
+  nothing played still names a results round — which is a bug item 8 introduced
+  and caught in the browser, not a hypothetical.
 
 - `client/src/test/render.test.tsx` — a test for the harness, not the app. The
   suite's helper wraps in StrictMode, and everything `PlayerDetail.test.tsx`
@@ -273,24 +306,68 @@ The three season-scoped routes serve one season, defaulting to the latest in the
 database (computed, not hardcoded) and accepting `?season=2019-20`. An unknown
 season is a 400 listing the eleven that exist.
 
+**`GET /api/bootstrap` also returns `seasons: string[]`** — every season that
+exists, newest first, which is what the selector offers. It rides on the
+bootstrap rather than on a route of its own because that is already the one
+request the app blocks on at mount, and because arriving on the same payload as
+`season` means "which season this is" and "which seasons exist" cannot disagree.
+It is deliberately **not** on `/api/player/:code` or `/api/fixtures`: only the
+selector needs it, and the same constant on three payloads is three things that
+can drift. See API identity rule 7 for why a manifest is right here when item 1
+refused one on `/career`.
+
+**`GET /api/player/:code/career` also returns a `player` identity block** —
+`{ id, web_name, first_name, second_name, photo }`, the season-independent half.
+It replaced that route's `playerExists` call rather than adding a query, and it
+is what lets the detail page name a player for a season he was not in the game
+for, where no player-season exists to name him from.
+
 **The default follows the data, and since item 4 that means a season nobody has
 played yet.** The reasoning is written out beside `latestSeason()` in
 `server/src/repositories/seasons.ts`, which is where the next person will hit
 it. In short: the app is about the season being played, the pages that aggregate
 over `player_gameweeks` render explicit empty states rather than tables of
 zeroes, and the alternative — defaulting to the newest season with match data —
-would make the season everyone is actually playing invisible, because there is
-no season selector in the UI yet. Every one of them names the season it
-resolved, and every page header displays it. `/api/player/:code/career` is the
-exception and spans all of them: it takes no `?season=` and rejects one rather
-than ignoring it, and its rows carry the label instead (API identity rule 7).
+would make the season everyone is actually playing invisible. Every one of them
+names the season it resolved, and every page header displays it.
+`/api/player/:code/career` is the exception and spans all of them: it takes no
+`?season=` and rejects one rather than ignoring it, and its rows carry the label
+instead (API identity rule 7).
 
-The client sends `?season=` on `/api/player/:code` only — forwarding the season
-bootstrap resolved for "This Season", and the row's own season when a previous
-one is expanded. Nothing yet *chooses* a season in the sense a selector would.
+**Item 8 removed the "no selector yet" half of that argument without changing
+the conclusion.** The completed seasons are one click away now, so defaulting to
+2026-27 no longer hides anything — it just decides what the app opens on, which
+is still the season being played.
 
-`GET /api/bootstrap` runs a ~90ms aggregate per request. No cache and no
+The client sends `?season=` on all three season-scoped routes. `App.tsx` sends
+it on the bootstrap; `Fixtures.tsx` sends it with the round, which it must,
+because that page derives its round from the *selected* season's events and a
+request without a season would ask the *default* season for it; and the detail
+page sends the season bootstrap resolved for "This Season", or the row's own
+season when a previous one is expanded.
+
+`GET /api/bootstrap` runs its aggregate per request. No cache and no
 materialized view: it is fast enough, and a cache is a second source of truth.
+
+**The cost depends on the season, and the recorded figure used to name neither.**
+"~90ms" described a *completed* season while the actual default, 2026-27, has no
+match rows at all. Item 8 is where the distinction started to matter, because a
+selector lets a user put the app on the expensive season deliberately. Measured
+end to end — request to last byte, medians of 11 warm runs — which is what a
+user actually waits for, rather than the query time alone:
+
+| Season  | `/api/bootstrap` | Payload | Players |
+| ------- | ---------------- | ------- | ------- |
+| 2026-27 | **27 ms**        | 296 KB  | 564     |
+| 2019-20 | 75 ms            | 356 KB  | 666     |
+| 2022-23 | 91 ms            | 414 KB  | 778     |
+| 2025-26 | **117 ms**       | 441 KB  | 841     |
+
+For comparison, item 7 measured `listPlayerTotals` alone at 9ms for 2026-27 and
+99ms for 2025-26; the difference is serialisation and transfer, which the query
+figure does not include. The worst case is a season change to 2025-26 at ~117ms,
+which is why the shell keeps the previous bootstrap mounted rather than blanking
+— see item 8.
 
 The app defaults to **2026-27**: 564 players, 20 clubs, 380 unplayed fixtures
 and 38 real deadlines, with GW1 locking 21 Aug 2026 at 17:30Z. 2025-26 remains
@@ -403,9 +480,10 @@ fpl-lens/
 ├── client/
 │   ├── src/
 │   │   ├── main.tsx
-│   │   ├── App.tsx            # shell: nav, theme, bootstrap fetch, detail state
+│   │   ├── App.tsx            # shell: nav, theme, SEASON SELECTOR, detail code
+│   │   ├── App.test.tsx       # the selector, persistence, the detailPlayer fix
 │   │   ├── types/fpl.ts       # domain types + UI constants + formatters
-│   │   ├── services/api.ts    # frontend fetch wrappers
+│   │   ├── services/api.ts    # fetch wrappers + ApiError (status, available)
 │   │   ├── lib/
 │   │   │   ├── bootstrap.ts   # BootstrapContext, current/next gameweek
 │   │   │   └── cn.ts          # class name join
@@ -421,6 +499,7 @@ fpl-lens/
 │   │   │   ├── Players.tsx    # the list: own inline search, sort, expand
 │   │   │   ├── Players.test.tsx       # disclosure + sort, by keyboard
 │   │   │   ├── Fixtures.tsx   # by gameweek, with difficulty
+│   │   │   ├── Fixtures.test.tsx      # the round collision across a season change
 │   │   │   ├── PlayerDetail.tsx  # header / Upcoming / This Season / Previous
 │   │   │   ├── PlayerDetail.test.tsx  # expand, collapse, cache reset
 │   │   │   └── PlayerDetail.upcoming.test.tsx  # the remaining fixtures strip
@@ -692,7 +771,27 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
    than data. A `seasons: string[]` manifest was rejected for duplicating what
    the rows already carry, and so being able to disagree with them.
 
-   The requirement is unchanged in substance. The database holds ten seasons and
+   **Item 8 then put a `seasons: string[]` on the bootstrap response, and that
+   is not a reversal of the sentence above.** What was refused on `/career` was
+   a manifest *beside rows that each already name a season* — eleven copies of
+   the same facts, free to drift apart. A bootstrap response is one season
+   throughout: nothing in it answers "which others exist", so there is nothing
+   for the field to duplicate and nothing for it to contradict. The two
+   decisions turn on the same property, which is why they land differently.
+
+   It is on the bootstrap **only**. `PlayerDetailResponse` and `FixturesResponse`
+   do not carry it, deliberately: only the selector needs the list, the selector
+   lives in the shell, and the shell is driven by bootstrap. Three copies of one
+   constant is three things that can drift, which is the objection that killed
+   the career manifest in the first place.
+
+   The ordering is `listSeasons`'s, newest first, and **no consumer re-sorts**.
+   Rule 8's TEXT format sorts correctly as text, so one ordering suffices and a
+   second opinion would eventually disagree about something neither end states.
+
+   The requirement is unchanged in substance. The database holds eleven seasons
+   — all of them one click away since item 8, which raises the stakes rather
+   than lowering them — and
    a payload carrying the wrong one is indistinguishable from the right one at a
    glance: same players, same round numbers, same column names. Without the
    label the only way to place it is to recognise the opponent abbreviations.
@@ -799,6 +898,13 @@ can be run alone with `npm run test:client`.
       2022-23 across `starts` and the expected family, applied by both gameweek
       writers; and a season aggregate that returns no total for a column
       measured on only part of a season
+- [x] A season selector: all eleven seasons on every page, persisted, and
+      validated by the server rather than by a second copy of its rule
+- [x] The detail page survives a season change — header, gameweeks and career
+      row all naming the same season, and a name-and-photo header for a season
+      the player was not in the game for
+- [x] `currentGameweek`/`nextGameweek` return null instead of a plausible wrong
+      answer, so no completed season announces a played round as upcoming
 
 The live FPL API proxy in `services/fplApi.ts` still exists with its 5-minute
 cache, but no route calls it: it is the ingestion source for the live season.
@@ -823,17 +929,44 @@ around it.
   gone rather than shown empty. See API identity rule 4.
 - `client/src/components/PlayerSearch.tsx` is dead: nothing imports it. The
   Players page has its own inline search.
-- **The player object on the detail page is a snapshot.** `App.tsx` stores the
-  whole `Player` in `detailPlayer` when a row is clicked, so the header card
-  keeps rendering the object captured then, while its season label comes from
-  the live `bootstrap`. Today that cannot diverge — bootstrap is fetched once at
-  mount and never refetched — but a season selector would refetch it and leave a
-  card showing one season's totals under another season's label. Observed
-  directly by forcing a season change through HMR. The fix is to store the code
-  and re-resolve from `bootstrap.players`, and it belongs with the selector.
-  Item 3 added a second route in — the Dashboard passes a `Player` the same way
-  — so the fix now has two call sites rather than one, and is no more urgent for
-  it: both hand over an object from the same `bootstrap.players`.
+- **RESOLVED in item 8: the player object on the detail page was a snapshot.**
+  `App.tsx` stored the whole `Player` in `detailPlayer` when a row was clicked,
+  so the header card kept rendering the object captured then while its season
+  label came from the live `bootstrap`. Inert while nothing could change the
+  season; a real defect the moment a selector existed. It now stores
+  `detailCode` and re-resolves from `bootstrap.players` on every render, exactly
+  as the entry predicted. Pinned by `App.test.tsx`, which is the first test
+  `App.tsx` has had — and the mutation confirms it: reverting to a captured
+  `Player` turns two tests red.
+- **The Fixtures page labels a completed season's last round "Upcoming".**
+  **Deferred, not blocked — the fix is one conditional and the information is
+  already in hand.**
+
+  On any of the ten completed seasons the two tabs read "GW38 Upcoming" and
+  "GW38 Results" and show **the same ten matches**, one with difficulty ratings
+  and one with scores. Pre-dates item 8 — true of every completed season since
+  Phase 0 — but the selector changed the cost: it is now one click away on every
+  page, on ten of the eleven seasons, rather than behind a hand-edited URL.
+
+  The derivation is right and is named for what it is (`upcomingRound`, with
+  `nextGameweek` now correctly returning null): a season with nothing upcoming
+  still has a last round worth showing. It is the tab *wording* that asserts
+  something the data does not.
+
+  **The fix, stated because it is small.** `nextGameweek` returns null exactly
+  when nothing is upcoming, and `Fixtures.tsx:19` already binds `next` — in
+  scope at both label sites (`:86`, `:93`), which use `upcomingRound` and ignore
+  it. So when `next` is null the tab is naming a round that does not exist as an
+  upcoming one, and the label should say so rather than claim otherwise. One
+  conditional on a value the page already holds; not a new capability, and in
+  particular **not** the "does the page know whether a season is in progress"
+  problem an earlier draft of this entry claimed it was — item 8 made that
+  question answerable and this page already asks it.
+
+  Left alone because item 8 was already carrying two surfaces more than it
+  started with, and picking the replacement wording is a copy decision that
+  wants doing deliberately rather than at the end of an unrelated item.
+
 - **The back link on the detail page says "← Back to players" from every route,
   including the Dashboard.** The behaviour is right: `onBack` clears
   `detailPlayer` and leaves `page` alone, so a player opened from the Dashboard
@@ -846,8 +979,14 @@ around it.
   and is what `StatsTable` uses). Nothing needs the wider key yet — the career
   table renders one `StatsTable` per expanded season, so keys never have to be
   unique across seasons.
-- **One of the four empty states is still unreachable from the UI**, down from
-  two. "Registered, no rows yet" became real the day 2026-27 was ingested and is
+- **All four empty states are now reachable from the UI**, down from two
+  unreachable at item 1 and one at item 4. "Not in the game that season" was the
+  last, and item 8's selector is what reached it: choose a season the open
+  player has no `player_seasons` row for and that is the state, with the header
+  degraded to name and photo. Confirmed in the browser on Haaland in 2016-17 and
+  De Bruyne in 2026-27, not inferred.
+
+  "Registered, no rows yet" became real the day 2026-27 was ingested and is
   what every 2026-27 player's "This Season" section shows — confirmed in the
   browser, not inferred.
 
@@ -921,13 +1060,17 @@ around it.
   most-started players last or nowhere. Predicted in the Deferred entry before
   item 7 and now a real property of the data rather than a hypothetical.
 
-  Traced rather than assumed: the Dashboard ranks on total points
-  (`Dashboard.tsx:82`), points per match with an appearance floor (`:92`) and
-  ICT index (`:99`) — none affected, ICT being the quartet item 7 left alone.
-  The Players list has no `starts` column and `CareerTable` has no sorting at
-  all. It becomes real the day a per-90 toggle or a `starts` column lands, both
-  of which are on the Deferred list, and whichever lands first owns deciding how
-  a NULL sorts.
+  Traced rather than assumed, and re-traced in item 8 because the line numbers
+  moved: the Dashboard ranks on total points (`Dashboard.tsx:82`), points per
+  match with an appearance floor (`:93`) and ICT index (`:99`) — none affected,
+  ICT being the quartet item 7 left alone. The Players list has no `starts`
+  column and `CareerTable` has no sorting at all. It becomes real the day a
+  per-90 toggle or a `starts` column lands, both of which are on the Deferred
+  list, and whichever lands first owns deciding how a NULL sorts.
+
+  **Item 8 raised the odds of someone meeting it**, without changing any of the
+  above: 2022-23 used to be reachable only by hand-editing a URL, and is now one
+  click away on every page.
 
 - **26 fixtures still store 0 for the ICT quartet where nobody measured it, and
   this is a defect left in place with a reason rather than an open question.**
@@ -1003,6 +1146,11 @@ around it.
   of item 4 on purpose and is a named item in Deferred: ownership has no storage
   yet, and the totals need a cross-season aggregate on the list query. Both are
   features, and item 4 was an ingest.
+
+  **Item 8 made it survivable rather than fixing it.** Last season's real totals
+  are now two clicks away instead of unreachable, so the zeros are no longer the
+  only thing the app can show. The labelled split is still the right answer and
+  still open.
 - **After 2026-27 finishes, its GW38 will stay `is_current` until 2027-28 is
   ingested**, because `is_current` is the latest gameweek whose deadline has
   passed (API identity rule 6). Right at every other moment of a season; wrong
@@ -1035,15 +1183,19 @@ around it.
   2026-27's fixtures carry a round.
 - **`end_cost` for 2026-27 is NULL and nothing will fill it until the season is
   over and the CSV backfill runs for it.** That is correct — a season in
-  progress has not ended at a price — and it has one visible consequence
-  waiting: the career row renders `Price` as `start → end`, so 2026-27 will read
-  `£9.5 → —`. It cannot be seen today, because the detail page files the default
-  season under "This Season" and only *previous* seasons reach that table. It
-  becomes visible when a newer season is ingested and 2026-27 stops being the
-  default — not on any date, and in particular not when the season ends.
-  Showing `start → now` instead was considered and rejected: the
-  column says "end", and a season that has not ended did not end at today's
-  price.
+  progress has not ended at a price — and the career row renders `Price` as
+  `start → end`, so 2026-27 reads `£15.5 → —`.
+
+  **That consequence is visible now, and the old wording said it was not.** The
+  entry claimed it "cannot be seen today", on the grounds that the detail page
+  files the default season under "This Season" and only *previous* seasons reach
+  the career table, so it would take a newer season being ingested. Item 8's
+  selector reaches it without one: select any earlier season and 2026-27 becomes
+  a previous season on every career table. Observed on Haaland's, reading
+  `£15.5 → —`.
+
+  Showing `start → now` instead was considered and rejected: the column says
+  "end", and a season that has not ended did not end at today's price.
 
 ## Phase 0, Persistence and Backfill — complete
 
@@ -1866,6 +2018,139 @@ section below is the record of what each decided.
       | aggregate back to a bare `sum()` | **red**, 5 tests |
       | verify called with the five, not the nine | **red**, 38 → 146 unexplained |
 
+- [x] **8. A season selector.** All eleven seasons on every page. The API has
+      accepted `?season=` since Phase 0 and nothing sent it except the detail
+      page; now `App.tsx` owns the choice, and the ten completed seasons stopped
+      being unreachable.
+
+      **The selected season is `bootstrap.season`, not a fourth piece of state.**
+      `App.tsx` holds `requested`, which is only ever *the season of a request in
+      flight*; what the app is showing is whatever the server actually served.
+      A second "current season" variable could disagree with the payload beside
+      it, which is the class of bug API identity rule 7 exists to prevent. The
+      selector's `value` is `requested ?? bootstrap.season`, so a pick shows
+      immediately and then reconciles.
+
+      **The app is never blanked mid-switch.** `if (!bootstrap) return
+      <Loading/>` now fires on the first load only; a season change keeps the
+      previous bootstrap mounted and swaps atomically, so during the transition
+      every page shows the old season's data under the old season's label —
+      internally consistent, which is the property that matters. `<main>` takes
+      `aria-busy` and dims. The selector is **not** disabled while switching:
+      disabling a focused control moves focus to `<body>`, the class of
+      regression item 3 existed to remove.
+
+      **The seasons list rides on the bootstrap, and the chicken-and-egg in that
+      is the item's sharpest corner.** The list of valid seasons arrives *on* the
+      bootstrap response, so a persisted season can only be validated by asking
+      for it — and an invalid one 400s before any list comes back. Both halves
+      of the fix are needed: `api.ts` now parses the failure into an `ApiError`
+      carrying `status` and `available`, which is what distinguishes "unknown
+      season" from "the network is down"; and on a 400 the client drops the
+      stored value and **retries with no parameter**, letting `resolveSeason`
+      pick the default. It does not read `available[0]` and call that the
+      default — that would put a second copy of `latestSeason()`'s rule in the
+      client, free to drift. Not hypothetical: it is what a fresh clone or a
+      rebuilt container does. Verified in the browser with a stored `'2099-00'`.
+
+      **What resets on a season change, and what deliberately does not.** The
+      open player (a *code* now, so it re-resolves), the page and the theme
+      survive. The Fixtures page clears its rows; the Players list closes its
+      open row (a permanent code, but the player may have no row in the new
+      season); `PlayerDetail` resets the round range. The Players list's search,
+      position filter and sort are **kept** — every one is a choice over columns
+      that exist in all eleven seasons, and resetting them would discard the
+      user's intent for nothing.
+
+      **`PlayerDetail`'s one effect became two, and that is what makes the rest
+      work.** The career keys on the player alone, because it is
+      season-independent; the season's gameweeks key on both. `loading` belongs
+      to the career effect only, so a season change no longer blanks a header and
+      a career table that are still valid. Two consequences beyond the saved
+      request: `registeredIn` answers correctly the instant the season swaps, and
+      the identity survives the change — which is what names a player who has no
+      player-season in the newly selected one.
+
+      **Keeping the per-season cache across a season change opened a window that
+      had to be closed in the same stroke.** The cache is keyed by season and the
+      player has not changed, so everything in it is still true — but the newly
+      selected season is simply *absent* from it, `history` is `[]`, and
+      `registeredIn` is true because the career does contain that season. So
+      `GameweekSection` was handed "no rows, registered" and printed **"Data will
+      appear here once the 2025-26 season is underway"** about a season that
+      finished in May. The loading-versus-empty version of the
+      calendar-versus-data mistake this project keeps refusing to ship.
+
+      `GameweekSection` cannot fix it: it receives a `history` array, and an
+      empty one is indistinguishable from an absent one from there. So "This
+      Season" gates on the cache entry existing and renders a loading line
+      instead — the **same** line the career table's expanded rows have always
+      drawn, hoisted into one `SeasonLoading` rather than invented twice.
+
+      **`currentGameweek` and `nextGameweek` return null now, fixed rather than
+      worked around.** Both ended in a fallback chain that answered "which round
+      is coming" with the last played round, so every completed season rendered
+      "GW38 / Deadline / TBD" in the sidebar — a round played in May announced as
+      upcoming. True since Phase 0 and invisible because the app showed one
+      season. Hiding the sidebar block would have left the function lying for the
+      next caller. **`currentGameweek` was a named addition**: identical defect,
+      and fixing one twin and leaving the other is what the next reader trips on.
+
+      The gate everywhere is **"there is no next gameweek"**, never "the season is
+      complete". They coincide today and stop coinciding on 21 August 2026, when
+      2026-27 has a next gameweek and is not complete. The fallbacks the helpers
+      lost reappear in `Fixtures.tsx` under names that say what they are, because
+      *which round to show* is a display decision and *which round is next* is
+      not.
+
+      **A bug this item introduced, found in the browser and not by a test.**
+      Making `resultsRound` strictly "the last finished round" left it undefined
+      on a season where nothing has been played: the effect returned early, the
+      *previous tab's* fixtures stayed mounted, and the heading read "Gameweek ?
+      results" over them. Stale rows under a wrong label — worse than the empty
+      round the strictness was avoiding, and a direct contradiction of the
+      "behaviour is unchanged" claim in the plan. Fixed by restoring the last
+      link of the old chain, and now pinned by a test.
+
+      **Verification.** `npm test`: **77 server, 69 client**, both green. `tsc
+      --noEmit` clean in both packages. Browser: 2025-26 ranks real players
+      (Haaland 239) where 2026-27 shows three empty states; 2019-20's round
+      filter offers 1-29 then 39-47 with the Covid gap absent; a range narrowed
+      to 20-38 on 2024-25 resets to 1-38 on 2023-24, which is the case the old
+      `[firstRound, lastRound]` deps could not see; Haaland in 2016-17 and De
+      Bruyne in 2026-27 both render the not-in-the-game state with a
+      name-and-photo header and a full career table below; the season survives a
+      reload; a stored `'2099-00'` comes up working on the default.
+
+      **Mutation-checked, measured. One came back green and was fixed rather
+      than written up as covered:**
+
+      | Mutation | Result |
+      | --- | --- |
+      | selector sets state but `fetchBootstrap` sends no season | **red**, 7 tests |
+      | `detailPlayer` reverted to a captured `Player` | **red**, 2 tests |
+      | Fixtures effect deps back to `[targetGw]` | **red**, 3 tests |
+      | the 400 recovery removed | **red**, 1 test |
+      | `nextGameweek`'s fallback chain restored | **red**, 1 test |
+      | header renders its stat grid for an absent player | **red**, 1 test |
+      | "This Season" rendered without the loading gate | **red**, 1 test |
+      | the `events[0]` results fallback dropped again | **red**, 1 test |
+      | localStorage written from `requested` | **green** → test rewritten → **red** |
+      | `detailBySeason` reset on season change | **green, expected** |
+
+      The last two are the interesting ones. **Persisting `requested` instead of
+      the served season is unobservable against today's server**, which either
+      honours the parameter or 400s — so the two expressions are equal on every
+      real path. The test now uses a mock that resolves a *different* season, a
+      stand-in for a server that normalises rather than rejects; the contract
+      being pinned is the client's, and it is worth pinning precisely because
+      nothing in today's data would reveal it broken.
+
+      **Resetting the cache also closes the false-empty-state window**, so that
+      mutation is expected green. It is the reason the test asserts the loading
+      line is *present* rather than only that the wrong sentence is absent —
+      otherwise it would pass against the wrong fix.
+
 ## Deferred
 
 The gate used to be "not until Phase 0 is complete". Phase 0 is complete, and
@@ -1961,14 +2246,8 @@ every hour, and needs somewhere to put them and a policy for how often.
 - **LLM scouting reports.**
 - **Deploy on karpuz-prod** alongside TechRelative (Docker Compose, Nginx), responsive
   design, README with screenshots.
-- **A season selector in the UI.** The API accepts `?season=` on all three
-  season-scoped routes and returns any of the eleven. The detail page now sends
-  it per expanded career row, but nothing lets a user *choose* the season the
-  app is showing, so the Players, Dashboard and Fixtures pages are fixed to the
-  default. **Item 4 raised the value of this**: the ten completed seasons are
-  now one navigation step further away than the unplayed one, and the Dashboard
-  in particular has real rankings for 2025-26 that a user currently cannot get
-  to. Carries the `detailPlayer` snapshot fix in Known Issues with it.
+- ~~A season selector in the UI.~~ **Done — Phase 1 item 8.** It carried the
+  `detailPlayer` snapshot fix with it, as this entry said it would.
 
 ## Design Decisions
 

@@ -31,6 +31,28 @@
  * defect it prevents.
  */
 
+/**
+ * Who a player is, independently of any season.
+ *
+ * Every field here comes from `players`, which has no season column: the code
+ * is permanent (rule 3), the names are the person's, and `photo` is built from
+ * the code (API identity rule 5). Nothing on it can be stale with respect to a
+ * season, because none of it is a property of one.
+ *
+ * That is what makes it the right thing to carry on a career response, and the
+ * reason the player detail page can name a player for a season he was not in
+ * the game for — there is no `PlayerSeasonTotals` for him then, and there does
+ * not need to be.
+ */
+export interface PlayerIdentity {
+  /** players.fpl_code — permanent across seasons. */
+  id: number;
+  first_name: string | null;
+  second_name: string | null;
+  web_name: string;
+  photo: string;
+}
+
 /** One player's totals across a single season. The bootstrap list. */
 export interface PlayerSeasonTotals {
   /** players.fpl_code — permanent across seasons. */
@@ -166,10 +188,18 @@ export interface PlayerGameweek extends MatchStats {
  * season-level attributes that come from `player_seasons`.
  *
  * There is no `id`, name or `photo` here. Those are properties of the player,
- * not of the season, and the career is addressed by the player's code — so
- * repeating them on every row would be eight copies of one fact with eight
- * chances to disagree. What is repeated is what genuinely changes between rows:
- * the club, the position and the price.
+ * not of the season, so they are **carried once on the response, not on every
+ * row** — `PlayerCareerResponse.player`, a `PlayerIdentity`. Repeating them per
+ * row would be eleven copies of one fact with eleven chances to disagree. What
+ * is repeated is what genuinely changes between rows: the club, the position
+ * and the price.
+ *
+ * The identity block is the same reasoning reaching its conclusion rather than
+ * a reversal of it, and item 8 is where the difference started to matter: it is
+ * what lets the detail page name a player for a season he was **not in the game
+ * for**. Select 2016-17 while looking at a 2026-27 player and there is no
+ * player-season for him at all — no club, no position, no price — but the
+ * career, and so the identity, is unaffected by which season is selected.
  *
  * **The club is the END-of-season snapshot (rule 17).** `players_raw.csv` is a
  * bootstrap dump taken when the season finished, so a player who moved in

@@ -1,10 +1,13 @@
 /**
  * Season lookups.
  *
- * The database holds ten seasons; the FPL API shape assumes one. Every route
+ * The database holds eleven seasons; the FPL API shape assumes one. Every route
  * therefore has to pick a season, and it picks the latest one present rather
- * than a hardcoded string — the day 2026-27 is ingested, the app should follow
- * without an edit.
+ * than a hardcoded string — which is how 2026-27 became the default the day it
+ * was ingested, without an edit.
+ *
+ * Since item 8 the client can choose instead of accepting the default, so
+ * `listSeasons` is served on every bootstrap rather than only on a 400.
  */
 
 import type { Queryable } from '../db/pool.js';
@@ -30,10 +33,15 @@ import type { Queryable } from '../db/pool.js';
  * state item 1 wrote for exactly this and could not reach until now.
  *
  * The alternative — default to the latest season that has gameweek rows and
- * leave the new one reachable only by `?season=` — was rejected because there
- * is no season selector in the UI yet. It would have made the season everybody
- * is actually playing invisible except as a career row filed under "Previous
- * Seasons", which is a worse lie than an honest empty table.
+ * leave the new one reachable only by `?season=` — was rejected because at the
+ * time there was no season selector in the UI. It would have made the season
+ * everybody is actually playing invisible except as a career row filed under
+ * "Previous Seasons", which is a worse lie than an honest empty table.
+ *
+ * Item 8 built that selector, which removes the "otherwise invisible" half of
+ * the argument and leaves the conclusion standing: every season is one click
+ * away now, so this only decides what the app *opens* on — and that is still
+ * the season being played.
  *
  * Whoever hits this again in August 2027: the question is not "which season has
  * data" but "which season is the app about". It is about the one being played.
@@ -55,10 +63,21 @@ export async function latestSeason(db: Queryable): Promise<string> {
   return season;
 }
 
-/** Every season present, oldest first. */
+/**
+ * Every season present, **newest first**.
+ *
+ * One ordering, decided here, and no caller re-sorts. This is what the season
+ * selector renders and what the `available` array on an unknown-season 400
+ * carries; if the client sorted independently the two would eventually disagree
+ * about something neither of them states. Newest first because that is the
+ * order a selector wants — the season being played sits at the top.
+ *
+ * Rule 8's '2016-17' TEXT format sorts correctly as text, so DESC is the whole
+ * of it.
+ */
 export async function listSeasons(db: Queryable): Promise<string[]> {
   const { rows } = await db.query<{ season: string }>(
-    'SELECT DISTINCT season FROM player_seasons ORDER BY season'
+    'SELECT DISTINCT season FROM player_seasons ORDER BY season DESC'
   );
   return rows.map((r) => r.season);
 }

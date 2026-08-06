@@ -31,6 +31,7 @@ import { listTeams } from '../repositories/teams.js';
 import {
   getPlayerCareer,
   getPlayerHistory,
+  getPlayerIdentity,
   getPlayerUpcomingFixtures,
   listPlayerTotals,
   playerExists,
@@ -81,10 +82,16 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
     const season = await resolveSeason(req, res);
     if (season === null) return;
 
-    const [players, teams, events] = await Promise.all([
+    // `seasons` rides along here rather than on a route of its own: the
+    // selector needs the list before it can render, and this is already the one
+    // request the whole app blocks on at mount. Arriving on the same payload as
+    // `season` also means "which season this is" and "which seasons exist"
+    // cannot disagree. See BootstrapResponse for why it is not on the other two.
+    const [players, teams, events, seasons] = await Promise.all([
       listPlayerTotals(pool, season),
       listTeams(pool, season),
       listEvents(pool, season),
+      listSeasons(pool),
     ]);
 
     const positions = [
@@ -96,6 +103,7 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
 
     const body: BootstrapResponse = {
       season,
+      seasons,
       players: players.map((p) => ({
         ...p,
         // Live-only fields. They describe the state of the game right now —
@@ -199,12 +207,17 @@ router.get('/player/:code/career', async (req: Request, res: Response) => {
       return;
     }
 
-    if (!(await playerExists(pool, fplCode))) {
+    // One query where there were two: null is the same 404 `playerExists` gave,
+    // and a hit is the identity block the response carries. That block is who
+    // the player is with no season attached, which is what the detail page
+    // renders him by when the selected season has no player-season for him.
+    const player = await getPlayerIdentity(pool, fplCode);
+    if (player === null) {
       res.status(404).json({ error: `No player with code ${fplCode}` } satisfies ErrorResponse);
       return;
     }
 
-    const body: PlayerCareerResponse = { seasons: await getPlayerCareer(pool, fplCode) };
+    const body: PlayerCareerResponse = { player, seasons: await getPlayerCareer(pool, fplCode) };
     res.json(body);
   } catch (err) {
     console.error('Career query failed:', err);

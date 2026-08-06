@@ -23,13 +23,40 @@ export default function Fixtures() {
   const [season, setSeason] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const targetGw = tab === 'upcoming' ? next?.id : cur?.id;
+  /**
+   * The rounds this page shows, which is not the same question as "which round
+   * is next".
+   *
+   * `nextGameweek` answers the second and returns null on every completed
+   * season, which is correct and useless here: a season with nothing upcoming
+   * still has a last round worth looking at, and this page's whole job is to
+   * show one. So the fallbacks that used to live inside the helpers live here
+   * instead, under names that say what they are. Behaviour is unchanged on
+   * every season; what changed is that a display decision is no longer being
+   * made by a function answering something else.
+   */
+  const upcomingRound =
+    next?.id ?? b.events.find((e) => !e.finished)?.id ?? b.events[b.events.length - 1]?.id;
+  // The final `?? b.events[0]` is not padding. A season where nothing has been
+  // played has no finished round, and without it this is undefined: the effect
+  // returns early, the previous tab's fixtures stay mounted, and the heading
+  // reads "Gameweek ? results" over them. Caught in the browser on 2026-27,
+  // where every fixture is unplayed — stale rows under a wrong label, which is
+  // worse than the empty round it was trying to avoid.
+  const resultsRound =
+    cur?.id ?? b.events.filter((e) => e.finished).pop()?.id ?? b.events[0]?.id;
+  const targetGw = tab === 'upcoming' ? upcomingRound : resultsRound;
 
   useEffect(() => {
     if (!targetGw) return;
     setFixtures(null);
     setError(null);
-    fetchFixtures(targetGw)
+    // The season is sent, and is in the deps. Both matter and the second is the
+    // subtle one: `targetGw` is a NUMBER, and two seasons that both end at
+    // round 38 produce the same one — so keying the effect on it alone meant a
+    // season change did not refetch, and the page kept rendering the previous
+    // season's fixtures under the new season's heading.
+    fetchFixtures(targetGw, b.season)
       .then((d) => {
         setFixtures(d.fixtures);
         // Labelled from this response rather than from bootstrap, so the
@@ -37,7 +64,7 @@ export default function Fixtures() {
         setSeason(d.season);
       })
       .catch((err) => setError(err.message));
-  }, [targetGw]);
+  }, [targetGw, b.season]);
 
   const byDay = useMemo(() => {
     const grouped: Record<string, Fixture[]> = {};
@@ -56,15 +83,15 @@ export default function Fixtures() {
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
           {tab === 'upcoming'
-            ? `Gameweek ${next?.id ?? '?'} — difficulty ratings shown per team`
-            : `Gameweek ${cur?.id ?? '?'} results`}
+            ? `Gameweek ${upcomingRound ?? '?'} — difficulty ratings shown per team`
+            : `Gameweek ${resultsRound ?? '?'} results`}
         </p>
       </div>
 
       <div className="flex gap-0.5 p-1 bg-card border border-border rounded-lg mb-4 w-fit">
         {([
-          ['upcoming', `GW${next?.id ?? '?'} Upcoming`],
-          ['results', `GW${cur?.id ?? '?'} Results`],
+          ['upcoming', `GW${upcomingRound ?? '?'} Upcoming`],
+          ['results', `GW${resultsRound ?? '?'} Results`],
         ] as const).map(([v, l]) => (
           <button
             key={v}

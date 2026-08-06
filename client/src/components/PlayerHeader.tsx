@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Player, Team } from '../types/fpl';
+import type { Player, PlayerIdentity, Team } from '../types/fpl';
 import { POSITION_MAP, fmtNum, fmtOr, fmtPrice, statusOf } from '../types/fpl';
 import { Card, CardContent } from './ui/Card';
 import { PlayerAvatar, PosBadge } from './PosBadge';
@@ -51,13 +51,59 @@ function PlayerPhoto({ photo, name }: { photo: string | null | undefined; name: 
 }
 
 interface Props {
-  player: Player;
+  /**
+   * The player's totals for this season, or null when he has none — see the
+   * partial header below.
+   */
+  player: Player | null;
+  /** Who he is, with no season attached. Always known. */
+  identity: PlayerIdentity;
   team: Team | undefined;
   /** The season these totals cover — see PlayerDetail for why it is passed. */
   season: string;
 }
 
-export default function PlayerHeader({ player, team, season }: Props) {
+/**
+ * **The partial header, which is a decision rather than an oversight.**
+ *
+ * Selecting a season the player was not in the game for leaves no `Player` for
+ * him: no club, no position, no price, no totals, because there is no
+ * player-season row for any of them to come from. The only place those values
+ * could come from is the season that was selected a moment ago — and rendering
+ * last season's club under this season's heading is exactly the stale-snapshot
+ * bug item 8 exists to fix, reintroduced in the one case where re-lookup cannot
+ * fix it.
+ *
+ * So they are not rendered at all. Not as `0`, and not as the no-value marker
+ * either: `—` means "we looked and there was nothing to measure" (rule 6), and
+ * here nobody looked, because there was nothing to look at.
+ *
+ * Name and photo survive because both derive from `fpl_code`, which is
+ * permanent across seasons.
+ */
+function PartialHeader({ identity, season }: { identity: PlayerIdentity; season: string }) {
+  return (
+    <Card className="mb-4">
+      <CardContent>
+        <div className="flex items-center gap-3">
+          <PlayerPhoto photo={identity.photo} name={identity.web_name} />
+          <div>
+            <h2 className="font-display text-xl font-semibold text-foreground">
+              {identity.first_name} {identity.second_name}
+            </h2>
+            <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground flex-wrap">
+              <span className="font-medium text-foreground">{season}</span>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function PlayerHeader({ player, identity, team, season }: Props) {
+  if (!player) return <PartialHeader identity={identity} season={season} />;
+
   const status = statusOf(player.status);
 
   // Form and Ownership have no source in the database and arrive null; xG, xA

@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { DisclosureButton } from '../components/ui/DisclosureButton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table';
@@ -49,6 +49,22 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
   const [sort, setSort] = useState<SortKey>('pts');
   const [sortDir, setSortDir] = useState<-1 | 1>(-1);
   const [expanded, setExpanded] = useState<number | null>(null);
+
+  /**
+   * The open row closes when the season changes; the search, filter and sort do
+   * not.
+   *
+   * The asymmetry is the point. `search`, `pos`, `sort` and `sortDir` are
+   * choices over columns that exist in all eleven seasons, so carrying them
+   * across is carrying the user's intent — resetting them would discard it for
+   * nothing. `expanded` holds a permanent player code, which survives the
+   * season change semantically, but the player behind it may have no row in the
+   * new season: the row vanishes and the code is left pointing at nothing,
+   * including a dangling `aria-controls` target.
+   */
+  useEffect(() => {
+    setExpanded(null);
+  }, [b.season]);
 
   const cols: { v: SortKey; l: string }[] = [
     { v: 'pts', l: 'Pts' },
