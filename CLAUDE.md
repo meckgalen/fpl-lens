@@ -26,15 +26,15 @@ in `career.test.ts`, which were one and are now two.
 exists but has never been run — see "the gameweek sync" below. All are
 idempotent, run in one transaction, and assert their own results:
 
-| Table              | Rows                  | Populated by                |
-| ------------------ | --------------------- | --------------------------- |
+| Table              | Rows                  | Populated by                        |
+| ------------------ | --------------------- | ----------------------------------- |
 | `teams`            | 35                    | `ingest:dimensions` + `ingest:live` |
 | `team_seasons`     | 220 (20 per season)   | `ingest:dimensions` + `ingest:live` |
 | `players`          | 2690                  | `ingest:dimensions` + `ingest:live` |
 | `player_seasons`   | 7902                  | `ingest:dimensions` + `ingest:live` |
 | `fixtures`         | 4180 (380 per season) | `ingest:fixtures` + `ingest:live`   |
-| `events`           | 38 (2026-27 only)     | `npm run ingest:live`       |
-| `player_gameweeks` | 253509                | `npm run ingest:gameweeks`  |
+| `events`           | 38 (2026-27 only)     | `npm run ingest:live`               |
+| `player_gameweeks` | 253509                | `npm run ingest:gameweeks`          |
 
 The three CSV scripts must be run in that order. Each asserts its predecessors'
 row counts before it starts and fails with a message naming the one to run
@@ -85,8 +85,8 @@ reading 24 starts against a true 38. `measuredSum` in
 `server/src/repositories/players.ts` returns NULL unless every contributing row
 has a value, on all nine nullable columns. The distinction it draws is
 **missing rows versus missing values**: a blank gameweek, a January arrival or a
-season still being played all produce *fewer rows*, and summing those is right;
-a column NULL on *some of the rows that exist* has no honest total.
+season still being played all produce _fewer rows_, and summing those is right;
+a column NULL on _some of the rows that exist_ has no honest total.
 
 **It degrades per player, not per season.** 661 of 778 2022-23 players lose
 their `starts` total and 117 keep a real one. Per column too: Enzo Fernández
@@ -97,10 +97,10 @@ gameweek.
 **The drift against FPL is unchanged, and that is expected rather than a
 disappointment.** `verify:history-past` still reports 1,524 drifts, 1,486
 attributed, **38 unexplained** — identical before and after. Its
-`fetchOurTotals` keeps a bare `sum()` on purpose: it asks what is *in the rows*
+`fetchOurTotals` keeps a bare `sum()` on purpose: it asks what is _in the rows_
 so it can be compared against FPL, and adopting `measuredSum` there would blank
 our side of every holed player-season and make the drift vanish without a
-stored value having changed. What item 7 buys is that the app no longer *shows*
+stored value having changed. What item 7 buys is that the app no longer _shows_
 a part-season figure as a whole-season one.
 
 **Item 8 gave the app a season selector, and with it the ten completed seasons.**
@@ -220,8 +220,8 @@ on. Thirteen files:
   click-through contract, and the `detailPlayer` fix cannot be tested anywhere
   else: it is a bug about which object the shell hands down. Twelve tests: the
   selector's options and their order, refetching with the new season, the app
-  *not* blanking mid-switch, persistence of the **served** season, recovery from
-  a stored season the database does not have, a network failure *not* being
+  _not_ blanking mid-switch, persistence of the **served** season, recovery from
+  a stored season the database does not have, a network failure _not_ being
   treated as one, the sidebar deadline block in both directions, the header and
   gameweeks agreeing across a season change, the no-false-empty-state window,
   and the not-in-the-game state.
@@ -341,8 +341,8 @@ is still the season being played.
 
 The client sends `?season=` on all three season-scoped routes. `App.tsx` sends
 it on the bootstrap; `Fixtures.tsx` sends it with the round, which it must,
-because that page derives its round from the *selected* season's events and a
-request without a season would ask the *default* season for it; and the detail
+because that page derives its round from the _selected_ season's events and a
+request without a season would ask the _default_ season for it; and the detail
 page sends the season bootstrap resolved for "This Season", or the row's own
 season when a previous one is expanded.
 
@@ -350,7 +350,7 @@ season when a previous one is expanded.
 materialized view: it is fast enough, and a cache is a second source of truth.
 
 **The cost depends on the season, and the recorded figure used to name neither.**
-"~90ms" described a *completed* season while the actual default, 2026-27, has no
+"~90ms" described a _completed_ season while the actual default, 2026-27, has no
 match rows at all. Item 8 is where the distinction started to matter, because a
 selector lets a user put the app on the expensive season deliberately. Measured
 end to end — request to last byte, medians of 11 warm runs — which is what a
@@ -437,7 +437,7 @@ not started. Every verification in item 5 is shaped by that fact.
   `history[]` is one entry per fixture with the full stat set. That is the shape
   of `player_gameweeks`, a double gameweek included, which is what rule 13
   exists for. This is the one used.
-- **`event/{gw}/live/`** — one request per *round* rather than per player, so
+- **`event/{gw}/live/`** — one request per _round_ rather than per player, so
   far cheaper. Not used, because **its shape cannot be verified until a round is
   played**: before Gameweek 1 it returns `{"elements": []}`, so whether its
   `stats` are per fixture or aggregated per round is unknowable, and adopting an
@@ -556,7 +556,7 @@ is silently wrong.
 
    **The boundary is not always a season, and one case proves it.** 2022-23
    carries `starts` and the expected family in its header from round 1 and its
-   *values* from **round 16**; the scraper wrote `0` for the fourteen rounds
+   _values_ from **round 16**; the scraper wrote `0` for the fourteen rounds
    before. `docs/data-profile.md` is right and unhelpful here, because it reports
    column presence rather than column content — the same caveat rule 16 records
    for `ea_index`. So the rule is applied per **fixture** as well as per season:
@@ -571,6 +571,7 @@ is silently wrong.
    value — distinguishing **missing rows** (a blank gameweek, a January arrival,
    a season in progress: sum them) from **missing values** (no honest total
    exists).
+
 7. **Drop the `xP` column at ingest.** It is scraped from FPL's `ep_this` field after
    the gameweek ends, so it can carry post-match information. Any model trained on it
    unshifted gets severe lookahead bias and looks excellent while being useless.
@@ -700,7 +701,7 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
 4. **Fields with no source in the database are null, not invented.** `form`,
    `selected_by_percent`, `status`, `news` and `chance_of_playing_next_round`
    describe the live game and are still null on every season — item 4 ingested
-   the season's *structure*, not its per-sync snapshot; see Deferred, "live
+   the season's _structure_, not its per-sync snapshot; see Deferred, "live
    field sync". `fixtures[].code` is FPL's permanent fixture code, which was
    never ingested. The keys stay present so the shape does not move.
 
@@ -708,6 +709,7 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
    source now — the `events` table, filled by `ingest:live` — and is a real
    timestamp for 2026-27. It is still null for the ten CSV seasons, which have
    no `events` rows, because the historical files do not carry deadlines.
+
 5. **`photo` and `points_per_game` are derived, because they genuinely are.**
    `photo` is `${fpl_code}.jpg`, which is how FPL builds it.
    `points_per_game` is total points over **matches appeared in**
@@ -723,7 +725,6 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
 
    The definitions, which the rule has to state because they are not
    self-evident:
-
    - **`is_next`** is the earliest gameweek whose deadline is still in the
      future.
    - **`is_current`** is the latest gameweek whose deadline has passed.
@@ -751,9 +752,9 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
    remains the latest one that has passed. That is the right answer at every
    other moment of a season's life, and the wrong-looking one only in the weeks
    between a season ending and the next being loaded.
+
 7. **Every response labels its data with the season that data came from. Which
    level the label sits at depends on whether the response spans seasons.**
-
    - **One season → a top-level `season`.** `GET /api/bootstrap`,
      `GET /api/player/:code` and `GET /api/fixtures` each return one. It is the
      season `resolveSeason()` actually used, never the one requested — so it
@@ -773,7 +774,7 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
 
    **Item 8 then put a `seasons: string[]` on the bootstrap response, and that
    is not a reversal of the sentence above.** What was refused on `/career` was
-   a manifest *beside rows that each already name a season* — eleven copies of
+   a manifest _beside rows that each already name a season_ — eleven copies of
    the same facts, free to drift apart. A bootstrap response is one season
    throughout: nothing in it answers "which others exist", so there is nothing
    for the field to duplicate and nothing for it to contradict. The two
@@ -799,12 +800,13 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
    own season — which is why the Fixtures page labels itself from the fixtures
    response, the player detail page from the detail response, and each career
    row from itself.
+
 8. **Decimals are numbers on the wire, not strings.** `expected_goals` is
    `7.57`, not `"7.57"`. Postgres returns `numeric` and int8 as text and the FPL
    API sends its decimals quoted; both are parsed once, at the repository
    boundary, by `server/src/repositories/parse.ts`. The parse throws rather than
    coercing, because the two failure modes it replaces were silent: a `as
-   number` cast that shipped the string, and a `Number(x) || 0` that would turn
+number` cast that shipped the string, and a `Number(x) || 0` that would turn
    rule 6's null into a zero.
 
 ## Getting Started
@@ -921,8 +923,8 @@ around it.
   `chance_of_playing_next_round`) are `null` on every season, 2026-27 included,
   and the UI renders `—` for them. Every player on the Players list shows status
   "Unknown". **Item 4 did not fix this and was not meant to**: it ingests a
-  season's *structure* — who is registered, for which club, at what price, on
-  what schedule — and those five are a *snapshot* of the live game that is
+  season's _structure_ — who is registered, for which club, at what price, on
+  what schedule — and those five are a _snapshot_ of the live game that is
   different every hour. Storing them needs somewhere to put a value that is
   never true for long, which is the "live field sync" item in Deferred. `form`
   and `selected_by_percent` were sortable columns on the Players page and are
@@ -950,7 +952,7 @@ around it.
 
   The derivation is right and is named for what it is (`upcomingRound`, with
   `nextGameweek` now correctly returning null): a season with nothing upcoming
-  still has a last round worth showing. It is the tab *wording* that asserts
+  still has a last round worth showing. It is the tab _wording_ that asserts
   something the data does not.
 
   **The fix, stated because it is small.** `nextGameweek` returns null exactly
@@ -1006,6 +1008,7 @@ around it.
   current squad does not contain, and the player list only holds players with a
   `player_seasons` row for the default season. Search across all players would
   reach it. Both remain rendered and asserted by `GameweekSection.test.tsx`.
+
 - **We hold NULL for `defensive_contribution` in 2024-25 where FPL reports a
   real number, on 290 player-seasons — every reachable player in the season.**
   Item 5 measured it on 44 of a 60-player sample; item 6 ran the check over all
@@ -1026,13 +1029,13 @@ around it.
   item 7 for `starts` and the expected family. Kept here as the record of what
   was found and where each half went.
 
-  | Season  | Rounds                | Columns holed                                     | Fixtures | Now |
-  | ------- | --------------------- | ------------------------------------------------- | -------- | --- |
-  | 2022-23 | 1-6, 8-15             | `starts`, `expected_goals`, `expected_assists`, `expected_goal_involvements`, `expected_goals_conceded` | 136 | **NULL** |
-  | 2022-23 | 29                    | `expected_goal_involvements` alone                | 16       | **NULL** |
-  | 2022-23 | 16, 33, 38            | influence, creativity, threat, `ict_index`        | 15       | still 0 |
-  | 2021-22 | 38                    | influence, creativity, threat, `ict_index`        | 10       | still 0 |
-  | 2019-20 | 21                    | influence, creativity, threat, `ict_index`        | 1        | still 0 |
+  | Season  | Rounds     | Columns holed                                                                                           | Fixtures | Now      |
+  | ------- | ---------- | ------------------------------------------------------------------------------------------------------- | -------- | -------- |
+  | 2022-23 | 1-6, 8-15  | `starts`, `expected_goals`, `expected_assists`, `expected_goal_involvements`, `expected_goals_conceded` | 136      | **NULL** |
+  | 2022-23 | 29         | `expected_goal_involvements` alone                                                                      | 16       | **NULL** |
+  | 2022-23 | 16, 33, 38 | influence, creativity, threat, `ict_index`                                                              | 15       | still 0  |
+  | 2021-22 | 38         | influence, creativity, threat, `ict_index`                                                              | 10       | still 0  |
+  | 2019-20 | 21         | influence, creativity, threat, `ict_index`                                                              | 1        | still 0  |
 
   The 2022-23 block is the upstream scraper starting to collect those five
   columns at round 16 and writing `0` for the fourteen rounds before, which is
@@ -1082,7 +1085,7 @@ around it.
   drift from FPL by a median of **2.9% to 6.8%** depending on season and column
   — printed by `verify:history-past`'s attribution-split table, which item 7
   added because item 6 reported only a combined figure. (The 0.6-2.0% in the
-  entry below are the medians of the 38 *unexplained* cells and are a different
+  entry below are the medians of the 38 _unexplained_ cells and are a different
   population; do not reuse them for this.) The expected family in 2022-23 drifts
   by **36.1% to 38.6%** on the same measure. An order of magnitude apart, and
   that gap is the argument.
@@ -1099,8 +1102,8 @@ around it.
 
   **What a real fix looks like, so this reads as declined rather than
   dismissed.** Blanking is the wrong instrument for one missing round in
-  thirty-eight. The right one is a total that renders *with a marker saying a
-  round is missing* — the number, kept, plus an honest annotation. That is a UI
+  thirty-eight. The right one is a total that renders _with a marker saying a
+  round is missing_ — the number, kept, plus an honest annotation. That is a UI
   affordance nothing in the app has today, and it is named in Deferred.
 
   Detection is unaffected: `verify:history-past` calls `findHoles` with all nine
@@ -1151,6 +1154,7 @@ around it.
   are now two clicks away instead of unreachable, so the zeros are no longer the
   only thing the app can show. The labelled split is still the right answer and
   still open.
+
 - **After 2026-27 finishes, its GW38 will stay `is_current` until 2027-28 is
   ingested**, because `is_current` is the latest gameweek whose deadline has
   passed (API identity rule 6). Right at every other moment of a season; wrong
@@ -1173,7 +1177,7 @@ around it.
 
   **Why the obvious detection does not work:** a round holding fewer than ten
   fixtures is not a signal, because a genuine blank gameweek is exactly that and
-  is entirely normal. The only signal is the *existence* of a round-less fixture
+  is entirely normal. The only signal is the _existence_ of a round-less fixture
   in the season, so any fix has to look for those rather than count per round.
 
   **The consequential failure is not the missing tab**, and item 5 closed that
@@ -1181,6 +1185,7 @@ around it.
   all, invisible to every per-round query. The gameweek sync refuses to write
   them and says why, with a test. Unreachable today either way — all 380 of
   2026-27's fixtures carry a round.
+
 - **`end_cost` for 2026-27 is NULL and nothing will fill it until the season is
   over and the CSV backfill runs for it.** That is correct — a season in
   progress has not ended at a price — and the career row renders `Price` as
@@ -1188,7 +1193,7 @@ around it.
 
   **That consequence is visible now, and the old wording said it was not.** The
   entry claimed it "cannot be seen today", on the grounds that the detail page
-  files the default season under "This Season" and only *previous* seasons reach
+  files the default season under "This Season" and only _previous_ seasons reach
   the career table, so it would take a newer season being ingested. Item 8's
   selector reaches it without one: select any earlier season and 2026-27 becomes
   a previous season on every career table. Observed on Haaland's, reading
@@ -1224,7 +1229,7 @@ layer was built and what each step decided.
       postponed-fixture duplicates in 2019-20, 10 byte-identical duplicates in
       2025-26. Nothing else is dropped — an unresolved id throws.
 - [x] **6. Repository and cutover.** `server/src/repositories/{seasons,teams,
-    players,fixtures}.ts` hold every query; the three routes read Postgres
+  players,fixtures}.ts` hold every query; the three routes read Postgres
       through them. Response shapes are unchanged bar the identity changes in
       "API Identity Rules" and the five null live-only fields. Verified with a
       field-by-field diff against responses captured from the live API before
@@ -1365,6 +1370,14 @@ numbers from the events themselves rather than counting them.
 
 Same rule as Phase 0: one item per session, committed between each, and the
 section below is the record of what each decided.
+
+**Commits go directly to `main`.** No branches, no `Co-Authored-By` trailer.
+This is a solo repository with no reviewer and no CI, so a pull request has
+nothing to serve: the working agreement above makes the session the unit of
+work and the commit the boundary between units. Every commit in this history
+was made this way. Standing guidance to branch before committing on a default
+branch does not apply here, and flagging the conflict each session is
+unnecessary once this line exists.
 
 - [x] **1. Career history on the player detail page.** Three sections — header
       card, "This Season", "Previous Seasons". The last is
@@ -1823,7 +1836,7 @@ section below is the record of what each decided.
       takes an injectable fetcher and a stub proves one failure aborts the run.
 
 - [x] **6. The `history_past` cross-check, run wide.** `npm run
-      verify:history-past` sums `player_gameweeks` per player-season and diffs
+    verify:history-past` sums `player_gameweeks` per player-season and diffs
       it against FPL's `element-summary/{id}/history_past` — a different
       pipeline from the vaastav CSVs, and the only prior-season data the
       official API exposes. Read-only. Item 5 ran this by hand over 60 players
@@ -2192,7 +2205,7 @@ every hour, and needs somewhere to put them and a policy for how often.
 
   **Watch the run output for a hole.** Item 7 made the sync apply the same
   NULL-for-a-hole rule the CSV ingest does, and print a loud block when it
-  fires. On the live path it means FPL served a *settled* round with a column
+  fires. On the live path it means FPL served a _settled_ round with a column
   unpublished, which is an outage rather than a scraper gap — so **re-run the
   sync** once FPL has published and the upsert overwrites the NULL. Nothing in
   the database distinguishes a transient hole from a permanent one, so that
@@ -2202,6 +2215,7 @@ every hour, and needs somewhere to put them and a policy for how often.
   line.** Nobody reads the output of a cron job, and a hole that self-heals only
   if somebody notices does not self-heal. Belongs with the scheduling work, not
   before it.
+
 - **A season total that says a round is missing, rather than blanking or
   lying.** The instrument item 7 wanted and did not have. `measuredSum` has two
   settings — a number, or the no-value marker — so a column measured for 37 of
@@ -2223,6 +2237,7 @@ every hour, and needs somewhere to put them and a policy for how often.
   migration that dropping `NOT NULL` on four columns would require, and the
   `starts` case gets better too: "24, and 14 rounds unmeasured" beats both "24"
   and "—". **Blocks nothing; blocked on nothing.**
+
 - **The pre-season player list: this season's price and ownership beside the
   last completed season's totals, each labelled which it is.** Deliberately not
   FPL's approach of showing carryover totals under a "this season" heading. Left
