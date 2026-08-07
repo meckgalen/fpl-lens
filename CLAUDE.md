@@ -2275,3 +2275,22 @@ every hour, and needs somewhere to put them and a policy for how often.
   than none.
 - End each session by updating the Current State section above so the next
   session starts from truth rather than a stale description.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `meckgalen/fpl-lens`, via the `gh` CLI. **The Deferred list
+above stays a personal scratchpad and is not migrated to issues** — only work
+entering the spec/ticket flow becomes one. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, each label string equal to its name. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — `CONTEXT.md` and `docs/adr/` at the repo root, neither of which
+exists yet; they are created lazily when a term or decision actually resolves.
+See `docs/agents/domain.md`.
