@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table';
-import { PlayerAvatar, PosBadge } from '../components/PosBadge';
+import { PosBadge } from '../components/PosBadge';
+import { PlayerShirt } from '../components/PlayerShirt';
 import { Countdown } from '../components/Countdown';
 import { OpenPlayerButton } from '../components/OpenPlayerButton';
 import { NO_DEADLINE, NO_VALUE, POSITION_MAP, fmtNum, fmtPrice } from '../types/fpl';
@@ -215,7 +216,7 @@ export default function Dashboard({
                   <TableCell className="font-display font-semibold text-border pl-4">{i + 1}</TableCell>
                   <TableCell className="p-1.5 pl-3">
                     <div className="w-8 h-8 rounded-lg bg-muted flex items-end justify-center overflow-hidden">
-                      <PlayerAvatar size={22} />
+                      <PlayerShirt teamCode={p.team} elementType={p.element_type} />
                     </div>
                   </TableCell>
                   <TableCell>
@@ -256,7 +257,7 @@ export default function Dashboard({
               >
                 <span className="font-display font-bold text-[11px] text-border w-4 text-center">#{i + 1}</span>
                 <div className="w-9 h-9 rounded-lg bg-muted flex items-end justify-center overflow-hidden flex-shrink-0">
-                  <PlayerAvatar size={26} />
+                  <PlayerShirt teamCode={p.team} elementType={p.element_type} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <OpenPlayerButton
@@ -303,7 +304,7 @@ export default function Dashboard({
             >
               <span className="font-display font-bold text-[11px] text-border w-4 text-center shrink-0">{i + 1}</span>
               <div className="w-8 h-8 rounded-lg bg-muted flex items-end justify-center overflow-hidden flex-shrink-0">
-                <PlayerAvatar size={22} />
+                <PlayerShirt teamCode={p.team} elementType={p.element_type} />
               </div>
               <div className="flex-1 min-w-0">
                 <OpenPlayerButton

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { Player, PlayerIdentity, Team } from '../types/fpl';
 import { POSITION_MAP, fmtNum, fmtOr, fmtPrice, statusOf } from '../types/fpl';
 import { Card, CardContent } from './ui/Card';
 import { PlayerAvatar, PosBadge } from './PosBadge';
+import { PlayerShirt } from './PlayerShirt';
 
 /**
  * The player's photograph, hot-linked from premierleague.com the way FPL's own
@@ -21,30 +22,52 @@ import { PlayerAvatar, PosBadge } from './PosBadge';
  * while the `premierleague25`- and `premierleague26`-prefixed variants some
  * seasons used return 403 and 502.
  *
+ * **The size directory is the CSS size, not the pixel size — the file served is
+ * 2x.** `250x250` is really 500x500 and 346 KB, for a box rendered at 56px.
+ * `110x140` is 220x280 and 111 KB, still comfortably 2x for a retina display,
+ * and is what this asks for. Measured in the browser, cache-busted, the two
+ * sizes **interleaved** so both saw the same network: 404 ms against 170 ms,
+ * medians of nine. Interleaving matters — absolute numbers taken minutes apart
+ * drifted by 60% during the session that measured this.
+ *
  * **The fallback is required, not decoration.** A newly published roster has
  * players with no photograph for weeks — five of the six newest 2026-27 codes
  * returned 403 when this was written — and they are exactly the players people
  * look up in August. Without `onError` a large share of the new squad would
  * render as a broken image.
+ *
+ * What it falls back *to* is the caller's decision, because the two callers
+ * differ on it — see `PartialHeader`.
  */
-function PlayerPhoto({ photo, name }: { photo: string | null | undefined; name: string }) {
-  const [failed, setFailed] = useState(false);
+function PlayerPhoto({
+  photo,
+  name,
+  fallback,
+}: {
+  photo: string | null | undefined;
+  name: string;
+  fallback: ReactNode;
+}) {
   const code = photo?.replace(/\.[a-z]+$/i, '');
-  const src = code ? `https://resources.premierleague.com/premierleague/photos/players/250x250/p${code}.png` : null;
+  const src = code ? `https://resources.premierleague.com/premierleague/photos/players/110x140/p${code}.png` : null;
+
+  // Which src failed, rather than a bare "it failed". The detail page reuses
+  // this component across players without a key, so a boolean would never reset
+  // and one player's missing photograph would suppress the next player's real
+  // one.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
 
   return (
     <div className="w-14 h-14 rounded-lg bg-muted flex items-end justify-center overflow-hidden flex-shrink-0">
-      {src && !failed ? (
+      {src && failedSrc !== src ? (
         <img
           src={src}
           alt={name}
           className="w-full h-full object-cover object-top"
-          onError={() => setFailed(true)}
+          onError={() => setFailedSrc(src)}
         />
       ) : (
-        // Not alt text: the name is already beside it, so a second copy would
-        // be announced twice. The placeholder is decorative.
-        <PlayerAvatar size={40} />
+        fallback
       )}
     </div>
   );
@@ -80,13 +103,24 @@ interface Props {
  *
  * Name and photo survive because both derive from `fpl_code`, which is
  * permanent across seasons.
+ *
+ * **Which is also why the photograph falls back to the grey placeholder here
+ * and not to a club shirt.** A shirt needs a club, this player has none for
+ * this season, and the only club available is the one the previously selected
+ * season put on screen a moment ago. Rendering that would be the stale-snapshot
+ * bug described above, reintroduced as an image in the one case where
+ * re-lookup cannot fix it.
  */
 function PartialHeader({ identity, season }: { identity: PlayerIdentity; season: string }) {
   return (
     <Card className="mb-4">
       <CardContent>
         <div className="flex items-center gap-3">
-          <PlayerPhoto photo={identity.photo} name={identity.web_name} />
+          <PlayerPhoto
+            photo={identity.photo}
+            name={identity.web_name}
+            fallback={<PlayerAvatar size={40} />}
+          />
           <div>
             <h2 className="font-display text-xl font-semibold text-foreground">
               {identity.first_name} {identity.second_name}
@@ -135,7 +169,11 @@ export default function PlayerHeader({ player, identity, team, season }: Props) 
       <CardContent>
         <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
           <div className="flex items-center gap-3">
-            <PlayerPhoto photo={player.photo} name={player.web_name} />
+            <PlayerPhoto
+              photo={player.photo}
+              name={player.web_name}
+              fallback={<PlayerShirt teamCode={player.team} elementType={player.element_type} size={110} />}
+            />
           <div>
             <h2 className="font-display text-xl font-semibold text-foreground">
               {player.first_name} {player.second_name}

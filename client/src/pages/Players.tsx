@@ -2,7 +2,8 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { DisclosureButton } from '../components/ui/DisclosureButton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table';
-import { PlayerAvatar, PosBadge, StatusDot } from '../components/PosBadge';
+import { PosBadge, StatusDot } from '../components/PosBadge';
+import { PlayerShirt } from '../components/PlayerShirt';
 import { POSITION_MAP, fmtNum, fmtPrice, statusBucket } from '../types/fpl';
 import type { Player } from '../types/fpl';
 import { useBootstrap } from '../lib/bootstrap';
@@ -212,7 +213,7 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
                   >
                     <TableCell className="p-1.5 pl-4">
                       <div className="w-8 h-8 rounded-lg bg-muted flex items-end justify-center overflow-hidden">
-                        <PlayerAvatar size={22} />
+                        <PlayerShirt teamCode={p.team} elementType={p.element_type} />
                       </div>
                     </TableCell>
                     <TableCell>

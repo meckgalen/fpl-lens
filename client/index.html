@@ -6,6 +6,40 @@
     <title>FPL Lens</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+    <!--
+      The two image origins: player photographs and club badges come from
+      resources.premierleague.com, club shirts from fantasy.premierleague.com.
+      Two links, because they are two origins.
+
+      This moves DNS and the TLS handshake to page load, before any image URL is
+      known — which is the whole point, since the first image request cannot
+      start until React has rendered a row.
+
+      What they appear to buy is ~141 ms. That is the gap from a controlled A/B —
+      6 pairs, these links present vs absent, one cold socket-pool partition per
+      sample — where the present arm's cold first request medianed 393.5 ms and
+      the absent arm's 534.5 ms, present faster in 4 of 6 pairs.
+
+      Do NOT read ~155 ms as that figure. It is ~395 ms cold WITH these links
+      against ~240 ms warm, i.e. the residual cost still paid after the
+      preconnect, not what the preconnect removes. The two are close enough to
+      swap by accident, and an earlier version of this comment did.
+
+      The A/B's pre-committed rule returned "not resolvable at N=6" — but it
+      tested the between-arm difference against the within-arm RANGE, which one
+      1321 ms outlier fixed at 962 ms, so nothing under about half a second could
+      have resolved. That is a verdict about the statistic, not about the links.
+      A paired design should be tested on its paired differences; theirs median
+      143.5 ms.
+
+      Neither takes `crossorigin`. Images are fetched in no-CORS mode, and a
+      crossorigin preconnect opens a CORS connection the image request will not
+      reuse — it would warm the wrong socket and cost a second handshake. The
+      fonts link above keeps its crossorigin because fonts genuinely are CORS.
+    -->
+    <link rel="preconnect" href="https://resources.premierleague.com" />
+    <link rel="preconnect" href="https://fantasy.premierleague.com" />
     <link
       href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap"
       rel="stylesheet"

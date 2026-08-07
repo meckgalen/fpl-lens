@@ -127,3 +127,24 @@ describe('Players: sorting is reachable without a mouse', () => {
     expect(goals.closest('th')).toHaveAttribute('aria-sort', 'none');
   });
 });
+
+/**
+ * The shirt's wiring, pinned here rather than only in `PlayerShirt.test.tsx`.
+ * That file proves the component builds a URL from the props it is given; this
+ * one proves the list hands it the right ones. A row passing the wrong player's
+ * team code would pass every unit test in that file.
+ */
+describe('Players: the row renders its own club shirt', () => {
+  it('keys each row on that player’s permanent team code', () => {
+    const { container } = renderPlayers();
+
+    const shirts = [...container.querySelectorAll('img')].map((i) => i.getAttribute('src'));
+
+    // Saka is Arsenal (3) and Haaland is Man City (43), so the two rows must
+    // differ — a hardcoded or captured code would make them identical.
+    expect(shirts).toEqual([
+      'https://fantasy.premierleague.com/dist/img/shirts/standard/shirt_3-66.png',
+      'https://fantasy.premierleague.com/dist/img/shirts/standard/shirt_43-66.png',
+    ]);
+  });
+});
