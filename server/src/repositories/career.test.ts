@@ -191,12 +191,24 @@ describe('career: the acceptance values', () => {
   });
 
   it('keeps points_per_game on appearances, not rounds', async () => {
-    // 157 / 31 appearances = 5.1. Dividing by his 38 rounds would give 4.1, and
-    // both are defensible until you compare them with FPL's own number.
+    // 157 / 31 appearances. Dividing by his 38 rounds would give 4.1, and both
+    // are defensible until you compare them with FPL's own number, which is 5.1.
     const row = bySeason(await getPlayerCareer(pool, SAKA)).get('2025-26');
     assert.ok(row);
     assert.equal(row.appearances, 31);
-    assert.equal(row.points_per_game, 5.1);
+
+    // **Unrounded on the wire, which is the item 11 change.** It used to arrive as
+    // 5.1, rounded half-to-even by to_char in SQL — the only pre-formatted value in
+    // the API, and the reason the same rounding rule existed in two languages and
+    // drifted. Rounding now happens once, in the client formatter that also renders
+    // the averages row, so the two cannot disagree.
+    //
+    // Asserted as the quotient rather than as a literal: a literal here would be a
+    // second copy of the arithmetic, and this is the assertion that the server does
+    // NOT round.
+    assert.equal(row.points_per_game, 157 / 31);
+    assert.equal(row.points_per_game, row.total_points / row.appearances);
+    assert.notEqual(row.points_per_game, 5.1);
   });
 });
 

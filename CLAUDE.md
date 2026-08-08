@@ -773,9 +773,83 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
    `photo` is `${fpl_code}.jpg`, which is how FPL builds it.
    `points_per_game` is total points over **matches appeared in**
    (`minutes > 0`), not over rounds — rule 13 requires saying which, and this is
-   the one that reproduces FPL's own value. It rounds half-to-even, matching
-   FPL's Python; Postgres `numeric` rounds half away from zero and disagreed
-   with the live API on ten players before that was fixed.
+   the one that reproduces FPL's own value. Confirmed on **400 of 400** comparable
+   players by `npm run verify:ppg`; the only disagreement in the whole run is one
+   element whose *totals* differ, where FPL's own `history_past` backs ours.
+
+   **The numerator is the whole season's points; only the denominator is filtered
+   to appearances.** The two are not symmetric, and item 11 found out the hard way:
+   some rows with no minutes still carry values, and FPL counts them in the season
+   total. Filtering the numerator by `minutes > 0` as well looks obviously right, and
+   it disagreed with FPL on **7 player-seasons**.
+
+   **Nine of the 26 averaged columns can be non-zero on a row with no minutes.** An
+   earlier draft of this entry said `total_points` was the only one; that was wrong
+   and self-contradicting, since the rows were found *by* their yellow card. Measured
+   over all ten seasons — **19 rows, 18 player-seasons, nine seasons (not 2018-19)**:
+
+   | Column | Rows | Range | Column | Rows | Range |
+   | --- | --- | --- | --- | --- | --- |
+   | `bps` | 15 | −9 … 4 | `influence` | 2 | 1.0 … 2.0 |
+   | `total_points` | 14 | −3 … −1 | `creativity` | 2 | 0.4 … 1.1 |
+   | `yellow_cards` | 13 | 1 | `expected_goals_conceded` | 2 | 0.37 |
+   | `ict_index` | 3 | 0.1 … 0.4 | `red_cards` | 1 | 1 |
+   | | | | `threat` | 1 | 2.0 |
+
+   The other seventeen are 0 on every such row: goals, assists, clean sheets, goals
+   conceded, own goals, both penalty columns, saves, bonus, the expected family bar
+   xGC, and the defensive quartet.
+
+   **Those 19 rows are two disjoint populations, and only one of them has an
+   established cause.** No row carries both a card and an ICT-family or xGC value —
+   checked, the overlap is exactly 0.
+
+   - **14 rows are bookings**, and these are fully accounted for: 13 yellows at
+     −1 point / −3 BPS, and one red (Matheus N., 2022-23 round 28) at −3 / −9. The
+     ICT family and xGC are 0 on every one. This explains `total_points`,
+     `yellow_cards`, `red_cards`, and 14 of the 15 `bps` rows.
+   - **5 rows carry attacking or defensive values with no card at all**, which a
+     booking does not account for — a BPS penalty is negative, and a card generates
+     no threat: De Bruyne 2016-17 r32 (creativity 1.1), Philip 2017-18 r37
+     (influence 1.0), Kerkez and Kluivert 2023-24 r28 (xGC 0.37 each — same club,
+     same round, a double gameweek), and Ferguson 2024-25 r24 (threat 2.0,
+     influence 2.0, creativity 0.4, and the one **positive** BPS, +4).
+
+   **The cause of that second group is not established and was not chased.** A
+   minutes figure wrong at source is the obvious guess — threat implies a shot, xGC
+   implies time on the pitch — but it is a guess and is recorded as one. It does not
+   need settling: the arithmetic reproduces FPL at **400 of 400** either way, so
+   whatever the source's story is, we tell the same one.
+
+   **This changed the averages of all nine columns, not just Pts** — each numerator
+   now includes rows its denominator does not count. That is correct for the same
+   reason the points treatment is: it is what FPL's own totals do. `total_points` is
+   simply the only one printed beside a second number that could expose a
+   disagreement, which is why the PPG cross-check caught it and nothing else would
+   have. Of the 13 player-seasons with a bench row carrying points, **7 differ once
+   rounded to one decimal**; the rest are absorbed by the rounding.
+
+   **It is sent unrounded, and rounded once on the client — changed in item 11.**
+   It used to be rounded in SQL by `to_char(round((x * 10)::float8)…)`, which made
+   it the **only value in the API arriving pre-formatted**, against rule 8. Worse,
+   it put the same rounding rule in two languages: SQL here and `toFixed` in the
+   averages row, free to disagree, which they did on 111 player-seasons. Rounding
+   now happens in `roundHalfEven` (`client/src/lib/averages.ts`), in the one
+   formatter that renders both this number and the averages row beneath it.
+
+   The convention is unchanged and still matters: FPL computes in Python and rounds
+   **half-to-even**, while Postgres `numeric` rounds half away from zero and
+   disagreed with the live API on ten players before that was first fixed. Note
+   that `toFixed` is **not** an implementation of the other convention — it is
+   whatever the binary representation gives, so it must never be used for this.
+
+   **A consequence worth expecting: sorting changed.** `ppm` on the Players list
+   and the Dashboard's `bestPerMatch` sort on the real quotient now rather than on
+   a value pre-rounded to one decimal. One decimal left only 54-62 distinct values
+   for 624-865 players, with the largest tie group running 119-305 players ordered
+   by FPL element code — so 4,206 of 7,338 player-seasons change position, moving
+   out of an arbitrary order into a meaningful one. The Dashboard's top-3
+   membership is unchanged in all ten seasons.
 6. **`is_current` / `is_next` are derived from the deadline and the clock, never
    stored.** Rewritten in item 4, which gave the app a live season and so made
    the old wording — "false on every event" — false itself. The reason it was

@@ -57,16 +57,22 @@ const ELEMENT_TYPE_BY_POSITION = `CASE ps.position
  * points_per_game divides by appearances (minutes > 0), not by rounds in the
  * season. Rule 13 requires saying which, and this is the one that reproduces
  * the FPL API's own value: Saka 2025-26 is 157/31 = 5.1, where dividing by his
- * 38 rounds would give 4.1.
+ * 38 rounds would give 4.1. Confirmed against FPL's own published figure on
+ * 400 of 400 comparable players — see the verify script.
  *
- * The rounding goes through float8 deliberately. Postgres rounds numeric half
- * away from zero (3.250 -> 3.3), while FPL — computing in Python — rounds half
- * to even (3.250 -> 3.2). Ten players in 2025-26 land exactly on a tie and
- * disagreed before this. round() on a double precision uses rint(), which is
- * half-to-even, so this reproduces the upstream value instead of being a
- * defensible-but-different number. The division stays in numeric so only the
- * tie-break itself sees a float, and to_char pins the one-decimal presentation
- * that rounding is for; the mapper then parses that text to a number.
+ * **It is sent unrounded, and the rounding happens once on the client.** This
+ * used to end in `to_char(round((x * 10)::float8)::numeric / 10, 'FM9990.0')`,
+ * which reproduced FPL's half-to-even rounding in SQL. That was correct and it
+ * was in the wrong place: it made this the only value in the whole API that
+ * crossed the wire pre-formatted, against rule 8, and it meant the same rounding
+ * rule existed in two languages — SQL here, `toFixed` in the averages row — free
+ * to disagree in the last digit, which they did on 111 player-seasons.
+ *
+ * The convention itself is unchanged and still matters: Postgres rounds numeric
+ * half away from zero (3.250 -> 3.3) while FPL, computing in Python, rounds half
+ * to even (3.250 -> 3.2). It now lives in `roundHalfEven` in
+ * `client/src/lib/averages.ts`, applied by the one formatter that renders both
+ * this number and the averages row. See API identity rule 5.
  */
 /**
  * The total of a column that is NULL where it was not measured — NULL unless
@@ -129,15 +135,17 @@ const SEASON_AGGREGATE = `COALESCE(sum(pg.total_points), 0)::int AS total_points
 
             count(*) FILTER (WHERE pg.minutes > 0)::int AS appearances,
 
-            to_char(
-              round(
-                (COALESCE(
-                   sum(pg.total_points)::numeric
-                     / NULLIF(count(*) FILTER (WHERE pg.minutes > 0), 0),
-                   0
-                 ) * 10)::float8
-              )::numeric / 10,
-              'FM9990.0'
+            -- Unrounded. The rounding moved to the client, and that is the whole
+            -- point rather than a tidy-up: the to_char(round(...)) that used to be
+            -- here made this the ONE value in the API arriving pre-formatted, so
+            -- the averages row and this number were rounded by two implementations
+            -- in two languages and could disagree in the last digit. Now one
+            -- formatter produces both and they cannot. See lib/averages.ts, rule 5.
+            -- (No backticks in here: this SQL is itself a template literal.)
+            COALESCE(
+              sum(pg.total_points)::numeric
+                / NULLIF(count(*) FILTER (WHERE pg.minutes > 0), 0),
+              0
             ) AS points_per_game`;
 
 /**

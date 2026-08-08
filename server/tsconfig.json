@@ -9,5 +9,25 @@
     "esModuleInterop": true,
     "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  /*
+   * The one file outside this program, and the reason is a deliberate trade rather
+   * than an oversight.
+   *
+   * `verify/ppg-check.ts` imports `client/src/lib/averages.ts` so that it runs the
+   * SHIPPED averaging module over the real 253,509 rows. A verification that
+   * reimplements the arithmetic it is checking proves nothing — that is the failure
+   * the Working Agreement names — so importing the real module is the point of it.
+   *
+   * `rootDir` is `./src`, so pulling a file from `../client` into the program raises
+   * TS6059 on it and on everything it imports. Removing `rootDir` would re-root the
+   * emit at the repo root and turn `dist/index.js` into `dist/server/src/index.js`,
+   * breaking `npm start`; project references would be a bigger change than the
+   * script is worth.
+   *
+   * Cost, stated because it is real: **this one file is not typechecked**. It is a
+   * read-only script, it is run by hand, and `tsx` executes it correctly — verified.
+   * If it grows, the right fix is a shared package rather than a wider `rootDir`.
+   */
+  "exclude": ["src/verify/ppg-check.ts"]
 }

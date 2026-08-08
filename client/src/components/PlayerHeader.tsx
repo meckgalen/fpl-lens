@@ -4,6 +4,7 @@ import { POSITION_MAP, fmtNum, fmtOr, fmtPrice, statusOf } from '../types/fpl';
 import { Card, CardContent } from './ui/Card';
 import { PlayerAvatar, PosBadge } from './PosBadge';
 import { PlayerShirt } from './PlayerShirt';
+import { fmtPpg } from '../lib/averages';
 
 /**
  * The player's photograph, hot-linked from premierleague.com the way FPL's own
@@ -149,7 +150,7 @@ export default function PlayerHeader({ player, identity, team, season }: Props) 
   // one round, so neither number is the count of rounds (rule 13).
   const stats: { label: string; value: string | number }[] = [
     { label: 'Total Pts', value: player.total_points },
-    { label: 'PPG', value: fmtNum(player.points_per_game, 1) },
+    { label: 'PPG', value: fmtPpg(player.points_per_game) },
     { label: 'Form', value: fmtOr(player.form) },
     { label: 'Price', value: fmtPrice(player.now_cost) },
     { label: 'Ownership', value: fmtOr(player.selected_by_percent, '%') },

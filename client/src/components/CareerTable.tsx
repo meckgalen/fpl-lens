@@ -5,6 +5,7 @@ import { EDGE_PINNED, Z_PINNED, hoverInert, striped } from '../lib/rowSurface';
 import { Card } from './ui/Card';
 import { DisclosureButton } from './ui/DisclosureButton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
+import { fmtPpg } from '../lib/averages';
 
 interface Props {
   seasons: PlayerCareerSeason[];
@@ -62,7 +63,7 @@ const COLUMNS: Column[] = [
   },
   { label: 'Starts', title: 'Not collected before 2022-23', render: (s) => fmtNum(s.starts, 0) },
   { label: 'Pts', render: (s) => String(s.total_points) },
-  { label: 'PPG', title: 'Points per appearance, not per round', render: (s) => fmtNum(s.points_per_game, 1) },
+  { label: 'PPG', title: 'Points per appearance, not per round', render: (s) => fmtPpg(s.points_per_game) },
   { label: 'Min', render: (s) => String(s.minutes) },
   { label: 'G', render: (s) => String(s.goals_scored) },
   { label: 'A', render: (s) => String(s.assists) },

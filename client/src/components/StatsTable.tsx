@@ -9,6 +9,15 @@ import {
   Z_PINNED_HEADER,
   striped,
 } from '../lib/rowSurface';
+import { columnAverage, fmtAverage } from '../lib/averages';
+import type { ColumnAverage, Normalization } from '../lib/averages';
+
+/**
+ * How the averages divide. A named constant rather than an inline literal because
+ * it is the seam the deferred per-90 toggle turns into a piece of state — see
+ * `lib/averages.ts`. This item ships one value and no toggle.
+ */
+const NORMALIZATION: Normalization = 'per-appearance';
 import { Card } from './ui/Card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 
@@ -165,26 +174,55 @@ const STICKY_HEAD = `sticky top-0 ${Z_HEADER}`;
 const STICKY_HEAD_PINNED = `sticky top-0 ${Z_PINNED_HEADER}`;
 
 /**
- * The averages row's denominator, as a line beneath the table.
+ * What the averages rest on, as a line beneath the table.
  *
  * Rule 13 makes stating the denominator mandatory — a double gameweek is two rows in
  * one round, a blank is none, and a fixture the player sat out is a row of zeroes, so
- * "per gameweek" is ambiguous and "per appearance" is wrong. It used to be printed
- * inside the averages row's Opp cell, which is where a 95.6px footnote ended up
- * setting a pinned column's width. It says the same thing from outside the table,
- * where it dictates nothing.
+ * "per gameweek" is ambiguous on its own. It used to be printed inside the averages
+ * row's Opp cell, which is where a 95.6px footnote ended up setting a pinned column's
+ * width. It says the same thing from outside the table, where it dictates nothing.
  *
- * **It takes the number as a prop and renders only what it is handed.** It does not
- * count rows and does not compose the figure from a season length. The denominator is
- * being revisited as its own item and may become per-column rather than one number
- * for the table; taking it as an input means that lands at the one call site instead
- * of in here. Nothing about the *value* changed in this item — it is still the
- * filtered row count, which is what the cell printed before.
+ * **One sentence with one substitution**, never two separately worded ones:
+ *
+ *     Averages over 37 appearances in 38 fixtures      (min === max)
+ *     Averages over 12–16 appearances in 38 fixtures   (2022-23, and only there)
+ *
+ * The earlier draft read "over 37 of 38 fixtures played", which does not scan: the
+ * trailing participle lets a fast reader take 38 as the played count, which is the
+ * one number it is not. Putting the count next to its own noun fixes that, uses the
+ * word the career table's APPS column and FPL both use, and leaves 38 unambiguously
+ * the total.
+ *
+ * The range is honest at the low end rather than approximate: each average really is
+ * computed over between 12 and 16 **appearances**, because 2022-23 measures the
+ * expected family only from round 16 (item 7). So the range describes the averages,
+ * not the player.
+ *
+ * **It renders what it is handed and computes nothing** — including the decision of
+ * whether to appear at all, which stays with the caller. That is what keeps it free
+ * of the empty-range case: `Math.min()` of no values is `Infinity`, and defending
+ * against that here would put the caller's knowledge in the wrong place.
  */
-export function AveragesNote({ denominator }: { denominator: number }) {
+export function AveragesNote({
+  min,
+  max,
+  fixtures,
+  breakdown,
+}: {
+  /** The smallest denominator any rendered average used. */
+  min: number;
+  /** The largest. Equal to `min` in every season but 2022-23. */
+  max: number;
+  /** Rows shown — the availability signal the old denominator used to carry. */
+  fixtures: number;
+  /** Per-column detail for the title, where the two differ. */
+  breakdown?: string;
+}) {
+  const appearances = min === max ? String(min) : `${min}–${max}`;
   return (
-    <p className="mt-2 text-[11px] text-muted-foreground">
-      Averages over {denominator} {denominator === 1 ? 'fixture' : 'fixtures'}
+    <p className="mt-2 text-[11px] text-muted-foreground" title={breakdown}>
+      Averages over {appearances} {min === 1 && max === 1 ? 'appearance' : 'appearances'} in{' '}
+      {fixtures} {fixtures === 1 ? 'fixture' : 'fixtures'}
     </p>
   );
 }
@@ -225,26 +263,65 @@ export default function StatsTable({ history, teams, scroll = true }: Props) {
   });
 
   /**
-   * The mean over the fixtures shown, not over rounds and not over appearances.
+   * The mean over the fixtures the player actually **played**, per column.
    *
-   * Rule 13 makes stating the denominator mandatory, so the row prints it as a
-   * count rather than a word: a double gameweek contributes two rows in one
-   * round, a blank contributes none, and a fixture the player sat out
-   * contributes a row of zeroes. All three make "per gameweek" ambiguous and
-   * "per appearance" wrong. The rows are also the filtered ones, so the number
-   * moves with the filters, which is another reason to show it.
+   * It used to divide by every row shown, which put two averages of the same
+   * quantity on one screen disagreeing with each other: Tarkowski's 2025-26 read
+   * AVG Pts 4.5 (170/38) under a career row saying PPG 4.6 (170/37), neither
+   * labelled as differing from the other. `points_per_game` has divided by
+   * appearances since Phase 0, so this makes the gameweek table agree with the
+   * convention the career table already documents.
    *
-   * Nulls are skipped rather than summed as zero. Before, a season with no xG
-   * averaged 0.00 across 38 fixtures and looked like a measured result; now the
-   * denominator is the fixtures that actually carry a value, and a column with
-   * none of them shows the placeholder.
+   * Nulls are still skipped, and the two filters compose — see `columnAverage`. A
+   * column with nothing contributing shows the placeholder rather than 0.00.
+   *
+   * The denominators come back with the values because they do not agree: 2022-23
+   * measures the expected family only from round 16, so one row can carry three of
+   * them. The footnote is built from them below.
    */
+  const averages = new Map<SortKey, ColumnAverage>(
+    COLUMNS.filter((col) => col.averaged).map((col) => [
+      col.key,
+      columnAverage(history, (gw) => numericValue(gw, col.key), NORMALIZATION),
+    ])
+  );
+
   const avg = (key: SortKey): string => {
-    const values = history.map((gw) => numericValue(gw, key)).filter((v): v is number => v !== null);
-    if (values.length === 0) return NO_VALUE;
-    const mean = values.reduce((a, b) => a + b, 0) / values.length;
-    return mean.toFixed(1);
+    const a = averages.get(key);
+    return a === undefined || a.value === null ? NO_VALUE : fmtAverage(a.value);
   };
+
+  /**
+   * The footnote's numbers, and the three cases the caller owns.
+   *
+   * **Only columns that render a number contribute a denominator.** A column whose
+   * denominator is 0 shows `—`, and letting it into the range would drag the low end
+   * to 0 on every season with a rule-6 column — which is all ten — and make them all
+   * look divergent when only 2022-23 is.
+   *
+   * That leaves the set empty exactly when nothing rendered, which is a real case
+   * rather than a hypothetical: a player with no appearances among the rows shown,
+   * either because he never played or because the filters selected a window he
+   * missed. `Math.min()` of an empty array is `Infinity`, so this is handled here
+   * rather than in the note — the sentence would otherwise read "Averages over
+   * Infinity appearances in 38 fixtures", and it would read that on the largest
+   * population this item changes.
+   *
+   * Zero is the true floor there rather than a guard value: with no appearances
+   * there are no averages, and the appearance count really is 0.
+   */
+  const rendered = [...averages.values()].filter((a) => a.denominator > 0);
+  const denominators = rendered.map((a) => a.denominator);
+  const minDenominator = denominators.length === 0 ? 0 : Math.min(...denominators);
+  const maxDenominator = denominators.length === 0 ? 0 : Math.max(...denominators);
+
+  /** Per-column detail for the note's title, only where the columns disagree. */
+  const breakdown =
+    minDenominator === maxDenominator
+      ? undefined
+      : COLUMNS.filter((col) => col.averaged && (averages.get(col.key)?.denominator ?? 0) > 0)
+          .map((col) => `${col.label}: ${averages.get(col.key)!.denominator}`)
+          .join(' · ');
 
   // Built first and wrapped after, rather than through a component chosen at
   // render time: a component defined inside the body is a new type on every
@@ -344,6 +421,11 @@ export default function StatsTable({ history, teams, scroll = true }: Props) {
    * The note sits OUTSIDE the wrapper deliberately. Inside it, it would scroll
    * horizontally away with the columns — a footnote about the whole table that you
    * have to scroll back to read.
+   *
+   * **No note at all when no rows are shown.** There is no denominator to state, and
+   * `GameweekSection` already prints "None of X's N matches match the selected
+   * filters." directly beneath — which says the useful thing. Before this item it
+   * read "Averages over 0 fixtures", which was noise.
    */
   return (
     <>
@@ -352,7 +434,14 @@ export default function StatsTable({ history, teams, scroll = true }: Props) {
       ) : (
         <div className="rounded-lg border border-border bg-card">{table}</div>
       )}
-      <AveragesNote denominator={history.length} />
+      {history.length > 0 && (
+        <AveragesNote
+          min={minDenominator}
+          max={maxDenominator}
+          fixtures={history.length}
+          breakdown={breakdown}
+        />
+      )}
     </>
   );
 }

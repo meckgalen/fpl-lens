@@ -190,28 +190,39 @@ describe('the pinned pair', () => {
 
 describe('the averages footnote', () => {
   /**
-   * **It renders the number it is handed.** The denominator is being revisited as its
-   * own item and may become per-column rather than one figure for the table, so the
-   * seam is what is pinned here: a value that matches no row count in the table, to
-   * separate "displayed the input" from "recounted the rows and got the same answer".
+   * **It renders the numbers it is handed.** Item 10 built this seam for item 11 to
+   * use, and item 11 used it: the props went from one denominator to a range, and
+   * the note still computes nothing. Values chosen to match no count in the table,
+   * to separate "displayed the input" from "recounted the rows and got the same
+   * answer".
    */
-  it('renders the denominator it is given, not one it recounted', () => {
-    render(<AveragesNote denominator={17} />);
-    expect(screen.getByText(/Averages over 17 fixtures/)).toBeInTheDocument();
+  it('renders the numbers it is given, not ones it recounted', () => {
+    render(<AveragesNote min={17} max={17} fixtures={23} />);
+    expect(screen.getByText('Averages over 17 appearances in 23 fixtures')).toBeInTheDocument();
   });
 
-  it('pluralises from the input', () => {
-    render(<AveragesNote denominator={1} />);
-    expect(screen.getByText('Averages over 1 fixture')).toBeInTheDocument();
+  it('collapses to a single number when the denominators agree', () => {
+    render(<AveragesNote min={9} max={9} fixtures={12} />);
+    // One sentence with one substitution — not a separately worded degenerate form.
+    expect(screen.getByText('Averages over 9 appearances in 12 fixtures')).toBeInTheDocument();
   });
 
-  /**
-   * And the value StatsTable passes is unchanged by this item: still the filtered row
-   * count, which is what the Opp cell printed before it moved out of the table.
-   */
-  it('is handed the filtered row count by StatsTable', () => {
+  it('states a range when they do not', () => {
+    render(<AveragesNote min={12} max={16} fixtures={38} />);
+    expect(screen.getByText('Averages over 12–16 appearances in 38 fixtures')).toBeInTheDocument();
+  });
+
+  it('pluralises both counts from the input', () => {
+    render(<AveragesNote min={1} max={1} fixtures={1} />);
+    expect(screen.getByText('Averages over 1 appearance in 1 fixture')).toBeInTheDocument();
+  });
+
+  /** Every row played, so the denominator is the row count and the form collapses. */
+  it('is handed the appearance count by StatsTable', () => {
     render(<StatsTable history={HISTORY} teams={TEAMS} />);
-    expect(screen.getByText(`Averages over ${HISTORY.length} fixtures`)).toBeInTheDocument();
+    expect(
+      screen.getByText(`Averages over ${HISTORY.length} appearances in ${HISTORY.length} fixtures`)
+    ).toBeInTheDocument();
   });
 
   /** Outside the scroll wrapper, or it scrolls sideways away from the table it describes. */

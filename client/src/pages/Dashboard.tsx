@@ -10,6 +10,7 @@ import { NO_DEADLINE, NO_VALUE, POSITION_MAP, fmtNum, fmtPrice } from '../types/
 import type { Player } from '../types/fpl';
 import { currentGameweek, nextGameweek, useBootstrap } from '../lib/bootstrap';
 import { striped } from '../lib/rowSurface';
+import { fmtPpg } from '../lib/averages';
 
 /**
  * The two `<div>` rankings stripe by hand, and that is why they are here at all.
@@ -294,7 +295,7 @@ export default function Dashboard({
                 </div>
                 <div className="text-right flex-shrink-0">
                   <div className="font-display font-bold text-xl text-foreground tabular-nums">
-                    {fmtNum(p.points_per_game, 1)}
+                    {fmtPpg(p.points_per_game)}
                   </div>
                   <div className="text-[9px] text-muted-foreground uppercase tracking-wider">PPM</div>
                 </div>

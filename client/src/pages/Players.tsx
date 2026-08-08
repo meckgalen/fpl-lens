@@ -8,6 +8,7 @@ import { POSITION_MAP, fmtNum, fmtPrice, statusBucket } from '../types/fpl';
 import type { Player } from '../types/fpl';
 import { useBootstrap } from '../lib/bootstrap';
 import { EDGE_PINNED, Z_HEADER, Z_PINNED, Z_PINNED_HEADER, striped } from '../lib/rowSurface';
+import { fmtPpg } from '../lib/averages';
 
 /**
  * `form` and `selected_by_percent` were columns here and were sortable. Both
@@ -131,7 +132,7 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
       case 'price':
         return fmtPrice(p.now_cost);
       case 'ppm':
-        return fmtNum(p.points_per_game, 1);
+        return fmtPpg(p.points_per_game);
       case 'pts':
         return p.total_points;
       case 'goals':
