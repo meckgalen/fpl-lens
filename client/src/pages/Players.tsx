@@ -7,6 +7,7 @@ import { PlayerShirt } from '../components/PlayerShirt';
 import { POSITION_MAP, fmtNum, fmtPrice, statusBucket } from '../types/fpl';
 import type { Player } from '../types/fpl';
 import { useBootstrap } from '../lib/bootstrap';
+import { EDGE_PINNED, Z_HEADER, Z_PINNED, Z_PINNED_HEADER, striped } from '../lib/rowSurface';
 
 /**
  * `form` and `selected_by_percent` were columns here and were sortable. Both
@@ -22,6 +23,28 @@ const POSITIONS = ['ALL', 'GKP', 'DEF', 'MID', 'FWD'] as const;
 
 /** The row a player's toggle points `aria-controls` at while it is open. */
 const expandedRowId = (playerCode: number) => `player-summary-${playerCode}`;
+
+/**
+ * The pinned Player column, and the cap on it.
+ *
+ * Capped because `table-layout: auto` hands a column any slack going: measured at a
+ * 2033px table width this column rendered **495px** for content whose intrinsic width
+ * is **131px** (the widest name in 2026-27 being `Dewsbury-Hall` at 107px plus 24px of
+ * `px-3`). 11rem/176px leaves 45px of headroom for a longer name in another season and
+ * keeps the whole table inside roughly 760px, so at a 1024px content width nothing has
+ * to scroll at all.
+ *
+ * Only this column is pinned, per the item's scope. The shirt column sits to its left
+ * and scrolls *under* this cell rather than beside it, which works because the cell is
+ * opaque. Pinning both would need a concrete offset equal to the shirt column's width,
+ * and that column declares `w-10` (40px) while rendering 60px — its cell content wins
+ * — so the offset would be a number that has to be measured rather than read.
+ *
+ * Geometry only, no z-index: this column is `Z_PINNED` in the body and
+ * `Z_PINNED_HEADER` in the header, and two `z-*` utilities on one cell are two equal
+ * declarations whose winner depends on emission order.
+ */
+const PINNED_PLAYER = `sticky left-0 w-44 max-w-[11rem] ${EDGE_PINNED}`;
 
 const numForKey = (p: Player, k: SortKey): number => {
   switch (k) {
@@ -175,18 +198,36 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
         <span className="ml-auto text-xs text-muted-foreground">{list.length} players</span>
       </div>
 
-      <Card className="overflow-hidden">
+      {/*
+        No `overflow` on the card, and that is the whole reason the header sticks.
+        `<main>` is this page's scroll container — bounded, and its `overflow-x`
+        computes to `auto` by the same spec rule that bites elsewhere — so with nothing
+        in between, `sticky top-0` on the header cells resolves against it. Any
+        `overflow` here would make this card the scrollport instead: an unbounded one,
+        which never scrolls vertically, so the header would silently never stick.
+
+        It was `overflow-hidden`, which was that bug plus a second one — hidden is a
+        scroll container with no scrollbar, so below about an 800px viewport the
+        right-hand columns were unreachable with nothing on screen saying so.
+
+        The cost, accepted: horizontal scroll on this page moves the whole main area,
+        heading and filter bar included, rather than just the table. The career table
+        works the other way round, and the asymmetry is deliberate — see CareerTable.
+      */}
+      <Card>
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-10 pl-4"> </TableHead>
-              <TableHead>Player</TableHead>
-              <TableHead>Pos</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead className={`w-10 pl-4 sticky top-0 ${Z_HEADER}`}> </TableHead>
+              <TableHead className={`${PINNED_PLAYER} top-0 ${Z_PINNED_HEADER}`}>Player</TableHead>
+              <TableHead className={`sticky top-0 ${Z_HEADER}`}>Pos</TableHead>
+              <TableHead className={`sticky top-0 ${Z_HEADER}`}>Status</TableHead>
               {cols.map((c) => (
                 <TableHead
                   key={c.v}
-                  className={`text-right ${sort === c.v ? 'text-foreground' : ''}`}
+                  className={`text-right sticky top-0 ${Z_HEADER} ${
+                    sort === c.v ? 'text-foreground' : ''
+                  }`}
                   onClick={() => handleSort(c.v)}
                   // -1 is descending here, which is what the ▾ draws for it.
                   sortDirection={
@@ -204,11 +245,16 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
             </TableRow>
           </TableHeader>
           <TableBody>
-            {list.slice(0, 200).map((p) => {
+            {list.slice(0, 200).map((p, i) => {
               const bucket = statusBucket(p.status);
+              // From the map index, not `nth-child`. An open row inserts a sibling
+              // <tr> into this same <tbody>, which flips the parity of every row
+              // below it — only one row can be open at a time, but one is enough.
+              const stripe = striped(i);
               return (
                 <Fragment key={p.id}>
                   <TableRow
+                    className={stripe}
                     onClick={() => setExpanded(expanded === p.id ? null : p.id)}
                   >
                     <TableCell className="p-1.5 pl-4">
@@ -216,7 +262,7 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
                         <PlayerShirt teamCode={p.team} elementType={p.element_type} />
                       </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className={`${PINNED_PLAYER} ${Z_PINNED}`}>
                       {/* The same disclosure the career table uses, so one
                           gesture works identically in both. The button carries
                           the player's name, which makes that its accessible
@@ -256,9 +302,19 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
                     ))}
                   </TableRow>
 
+                  {/* Takes its summary row's stripe so an open player reads as one
+                      block. A plain <tr>/<td> rather than TableRow/TableCell, as it
+                      always has been, so it carries the surface itself.
+
+                      On an even index `stripe` is empty and the cell falls through to
+                      its `transparent` default, which is the right colour rather than
+                      a gap: `--row` equals `--card` in both themes, so transparent
+                      over the card is exactly what an unstriped row paints. Setting
+                      `--row-bg` explicitly here as well would be two declarations of
+                      equal specificity racing on emission order. */}
                   {expanded === p.id && (
-                    <tr id={expandedRowId(p.id)}>
-                      <td colSpan={colWidth} className="p-0">
+                    <tr id={expandedRowId(p.id)} className={stripe}>
+                      <td colSpan={colWidth} className="p-0 bg-[color:var(--row-bg,transparent)]">
                         <div className="px-4 py-3 bg-muted/50 flex gap-8 flex-wrap items-center">
                           {[
                             ['Minutes', p.minutes],

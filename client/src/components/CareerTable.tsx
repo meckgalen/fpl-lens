@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { PlayerCareerSeason } from '../types/fpl';
 import { NO_VALUE, POSITION_MAP, fmtNum } from '../types/fpl';
+import { EDGE_PINNED, Z_PINNED, hoverInert, striped } from '../lib/rowSurface';
 import { Card } from './ui/Card';
 import { DisclosureButton } from './ui/DisclosureButton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
@@ -126,24 +127,50 @@ function fmtPriceCell(cost: number | null): string {
  * opens the row off the left edge, and the number you are reading and the
  * button you need are never visible at once.
  *
- * Opaque backgrounds are required: a transparent sticky cell shows the columns
- * sliding under it. `bg-card` and `bg-muted` both follow the theme. The rule on
- * the right is a box-shadow because Tailwind's reset collapses table borders,
- * and a collapsed border belongs to the table rather than the cell, so it
- * scrolls away from the column it was meant to separate.
+ * No background of its own any more. The cell paints `--row-bg`, which the row
+ * holds, so it stripes and hovers in step with the rest of the row instead of
+ * stepping away from it — see the comment in `ui/Table.tsx`. Still opaque, which is
+ * the requirement a sticky cell actually has.
+ *
+ * **This table gets no sticky header**, deliberately. Ten rows never need one, and
+ * leaving it off keeps the z-index ladder at the three levels `rowSurface` defines
+ * rather than adding a fourth for a header that would have to sit above the
+ * gameweek tables' headers nested inside it.
  */
-const STICKY_COL = 'sticky left-0 z-10 shadow-[1px_0_0_0_hsl(var(--border))]';
+const STICKY_COL = `sticky left-0 ${Z_PINNED} ${EDGE_PINNED}`;
 
 /** The row a season's toggle points `aria-controls` at while it is open. */
 const detailRowId = (season: string) => `career-gameweeks-${season}`;
 
 export default function CareerTable({ seasons, expanded, onToggle, renderExpanded }: Props) {
   return (
-    <Card className="overflow-x-auto">
+    /*
+     * A bounded pane, and the bound is what makes the nested gameweek tables' sticky
+     * headers work at all.
+     *
+     * `overflow-x-auto` on its own does not. Per the overflow spec, `overflow-x: auto`
+     * with `overflow-y: visible` computes `overflow-y` to **auto**, so this was
+     * already a vertical scroll container — just an unbounded one, which never scrolls
+     * and which a sticky header therefore resolves against and does nothing.
+     *
+     * The nested tables cannot be given a scroller of their own instead: each one
+     * lives inside a `colSpan={34}` cell that is as wide as this whole table, so its
+     * wrapper is never narrow enough to scroll horizontally. This card is their
+     * scrollport on both axes, so this is where the bound has to be.
+     *
+     * It earns its keep beyond the sticky header. Ten expandable seasons at 38 rows
+     * each is a 400-row page; a pane keeps the season list reachable while you read
+     * one season. And it costs nothing collapsed — the table is ~200px tall with four
+     * rows closed, so no scrollbar exists until something is open.
+     *
+     * `overscroll-behavior` stays at its default: the wheel should chain onto the page
+     * once the pane bottoms out. `contain` would make the trapping worse, not better.
+     */
+    <Card className="overflow-auto max-h-[75vh]">
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className={`${STICKY_COL} bg-card text-left`}>Season</TableHead>
+            <TableHead className={`${STICKY_COL} text-left`}>Season</TableHead>
             {COLUMNS.map((col) => (
               <TableHead key={col.label} className="text-right" title={col.title}>
                 {col.label}
@@ -152,12 +179,16 @@ export default function CareerTable({ seasons, expanded, onToggle, renderExpande
           </TableRow>
         </TableHeader>
         <TableBody>
-          {seasons.map((s) => {
+          {seasons.map((s, i) => {
             const isOpen = expanded.has(s.season);
+            // From the map index, not `nth-child`. An open season inserts a sibling
+            // <tr> into this same <tbody>, so parity would alternate between summary
+            // rows and expansion rows and flip everything below the open one.
+            const stripe = striped(i);
             return [
-              <TableRow key={s.season} className="group" onClick={() => onToggle(s.season)}>
+              <TableRow key={s.season} className={stripe} onClick={() => onToggle(s.season)}>
                 <TableCell
-                  className={`${STICKY_COL} bg-card group-hover:bg-muted font-display text-[13px] font-semibold text-foreground whitespace-nowrap`}
+                  className={`${STICKY_COL} font-display text-[13px] font-semibold text-foreground whitespace-nowrap`}
                 >
                   {/* The row keeps its own onClick, so a mouse can still open a
                       season by clicking anywhere along it. This is the control
@@ -189,7 +220,12 @@ export default function CareerTable({ seasons, expanded, onToggle, renderExpande
                 <TableRow
                   key={`${s.season}-detail`}
                   id={detailRowId(s.season)}
-                  className="hover:bg-transparent"
+                  // Takes its summary row's stripe so an open season reads as one
+                  // block, and cancels the hover — hovering the gameweeks inside it
+                  // should not tint the panel they sit in. `hoverInert` takes the same
+                  // index so the cancel names this row's own surface; cancelling to
+                  // the default colour would step an open striped season back to plain.
+                  className={`${stripe} ${hoverInert(i)}`}
                 >
                   <TableCell colSpan={COLUMNS.length + 1} className="p-0">
                     <div className="px-3 py-3 bg-muted/30">{renderExpanded(s.season)}</div>

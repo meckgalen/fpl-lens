@@ -24,6 +24,12 @@
     --input: 33 13% 87%;
     --ring: 228 36% 42%;
     --radius: 0.75rem;
+    /* Table row surfaces. See the block below `.dark` for why these are four
+       opaque tokens rather than an alpha on `muted`. */
+    --row: 36 50% 99%;
+    --row-alt: 36 26% 97%;
+    --row-hover: 36 20% 93%;
+    --row-head: 36 18% 90%;
     --sidebar-background: 36 50% 99%;
     --sidebar-foreground: 25 9% 10%;
     --sidebar-border: 33 13% 87%;
@@ -62,7 +68,45 @@
     --sidebar-primary: 228 50% 62%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-ring: 228 50% 62%;
+    --row: 30 5% 14%;
+    --row-alt: 30 5% 16.5%;
+    --row-hover: 30 6% 20%;
+    --row-head: 30 6% 23%;
   }
+
+  /*
+   * The four row surfaces, and why they are tokens rather than an alpha.
+   *
+   * Every table cell paints `var(--row-bg)`, which its row sets — so a pinned
+   * cell holds the ROW's colour and stripes and hovers in lockstep with the rest
+   * of it. That only works if the value is OPAQUE. The pinned cells used to carry
+   * `bg-card` for exactly this reason: a translucent sticky cell shows the
+   * columns sliding underneath it, so `hsl(var(--muted) / 0.35)` here would
+   * reintroduce the bug the indirection exists to fix, on every row.
+   *
+   * `bg-muted/50` is also the wrong instrument for a second reason. The same
+   * alpha reads differently in the two themes: light `--card` is 99% lightness
+   * against `--muted`'s 92%, a seven-point gap, while dark is 14% against 17%, a
+   * three-point one. An alpha tuned to be subtle in light is invisible in dark.
+   *
+   *   --row       the ordinary row. Equal to `--card` in both themes, so an
+   *               unstriped, unhovered table is exactly the colour it was.
+   *   --row-alt   the stripe. Between `--row` and `--row-hover`, so it cannot be
+   *               mistaken for a hover.
+   *   --row-hover picked to composite-match the old `muted/50`-over-card, so the
+   *               hover did not get stronger when it stopped being translucent.
+   *   --row-head  the header band, and the AVG row, which are the same kind of
+   *               thing: a row that is not one of the data rows and cannot take
+   *               the data rows' colour.
+   *
+   * The four must be separated from each other, not merely from `--row`, and the
+   * first attempt was not. Measured in the browser: dark `--row-head` at 17% put the
+   * header band on rgb(46,43,41) against a striped row's rgb(44,42,40) — two units,
+   * indistinguishable — and light `--row-head` at 94% sat one point off `--row-hover`
+   * at 93%, so a hovered row read as a second header. `--row-head` is now the
+   * strongest tint in both themes, which is right for a chrome band: header, then
+   * hover, then stripe, then the plain row.
+   */
 
   * {
     box-sizing: border-box;

@@ -272,19 +272,35 @@ export default function App() {
           </div>
         </aside>
 
+        {/*
+          The page padding is on the INNER div, not on `<main>`, and that is load-bearing
+          rather than tidying.
+
+          `<main>` is the scroll container. A scroll container's padding is inside its
+          scrollport, so content scrolls *through* it — and a sticky header resolves
+          against the content box, which `p-8` here pushed 32px down. The Players list's
+          header stuck at 32px and rows scrolled visibly above it in the strip. Found in
+          the browser; nothing in jsdom can see it, since jsdom has no scrollports.
+
+          On an inner element the same 32px is ordinary content that scrolls away, so the
+          header sticks flush at 0 and nothing can pass above it. Visually identical at
+          rest, which is why this reads as a no-op and is not one.
+        */}
         <main
-          className={cn('flex-1 overflow-y-auto p-8 transition-opacity', switching && 'opacity-60')}
+          className={cn('flex-1 overflow-y-auto transition-opacity', switching && 'opacity-60')}
           aria-busy={switching}
         >
-          {detailCode != null ? (
-            <PlayerDetail code={detailCode} player={detailPlayer} onBack={() => setDetailCode(null)} />
-          ) : (
-            <>
-              {page === 'dashboard' && <Dashboard onOpenDetail={openDetail} />}
-              {page === 'players' && <Players onOpenDetail={openDetail} />}
-              {page === 'fixtures' && <Fixtures />}
-            </>
-          )}
+          <div className="p-8">
+            {detailCode != null ? (
+              <PlayerDetail code={detailCode} player={detailPlayer} onBack={() => setDetailCode(null)} />
+            ) : (
+              <>
+                {page === 'dashboard' && <Dashboard onOpenDetail={openDetail} />}
+                {page === 'players' && <Players onOpenDetail={openDetail} />}
+                {page === 'fixtures' && <Fixtures />}
+              </>
+            )}
+          </div>
         </main>
       </div>
     </BootstrapContext.Provider>

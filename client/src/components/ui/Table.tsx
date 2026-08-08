@@ -1,16 +1,58 @@
 import type { ReactNode } from 'react';
 import { FOCUS_RING, cn } from '../../lib/cn';
+import { EDGE_HEADER, ROW_BAND } from '../../lib/rowSurface';
 
+/**
+ * Every cell paints the colour its ROW is holding, rather than one of its own.
+ *
+ * This is the whole point of the indirection. A pinned cell has to be opaque or the
+ * columns show through it as they slide underneath — which is why the pinned cells
+ * used to carry `bg-card` and, on hover, `group-hover:bg-muted`. But an opaque
+ * colour of its own cannot follow the row: the rest of the row hovered to
+ * `muted/50` over card (≈ rgb 246,244,241) while the pinned cell went to an opaque
+ * `muted` (rgb 238,235,231), which put a visible step at the boundary and made the
+ * pinned cell look like the only thing highlighted. Holding the row's colour, a
+ * pinned cell stripes and hovers in lockstep with the cells beside it and stays
+ * opaque doing it.
+ *
+ * `color:` is a type hint, not decoration — `bg-[var(…)]` is ambiguous between
+ * background-color and background-image and Tailwind is entitled to guess the other
+ * one. The `transparent` fallback covers a row that sets no `--row-bg` at all.
+ */
+const CELL_SURFACE = 'bg-[color:var(--row-bg,transparent)]';
+
+/**
+ * `border-separate border-spacing-0` rather than Preflight's `border-collapse`.
+ *
+ * Two reasons, and the first is the one that matters. A **collapsed** border belongs
+ * to the table rather than to the cell, so it scrolls out from under a sticky
+ * element and leaves the header floating with no edge under it; the separated model
+ * keeps every edge on the element that drew it. At zero spacing the two models look
+ * identical when there are no borders, so this costs nothing now and means a border
+ * added later just works.
+ *
+ * The second is a consequence rather than a choice, and it is worth stating because
+ * it is invisible: **in the separated model a `<tr>` cannot have a border at all.**
+ * Row borders are simply not rendered. So switching here is what removed the
+ * horizontal row separators and the header underline from every table in the app —
+ * `TableRow` and `TableHeader` no longer carry a `border-b` because one there would
+ * be silently dead, not because the separators were deleted separately. The stripe
+ * does that work now, and the header is defined by its fill and its box-shadow.
+ */
 export function Table({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <table className={cn('w-full caption-bottom text-sm', className)}>{children}</table>;
+  return (
+    <table className={cn('w-full caption-bottom text-sm border-separate border-spacing-0', className)}>
+      {children}
+    </table>
+  );
 }
 
 export function TableHeader({ children }: { children: ReactNode }) {
-  return <thead className="[&_tr]:border-b [&_tr]:border-border">{children}</thead>;
+  return <thead>{children}</thead>;
 }
 
 export function TableBody({ children }: { children: ReactNode }) {
-  return <tbody className="[&_tr:last-child]:border-0">{children}</tbody>;
+  return <tbody>{children}</tbody>;
 }
 
 export function TableRow({
@@ -29,8 +71,14 @@ export function TableRow({
     <tr
       id={id}
       onClick={onClick}
+      // The row holds a colour; the cells paint it. `--row` equals `--card` in both
+      // themes, so a row with no stripe and no hover is exactly the colour it was.
+      //
+      // A stripe passed in via `className` cannot beat the hover by accident: a
+      // `hover:` variant carries a pseudo-class, so it is specificity (0,2,0)
+      // against the stripe's (0,1,0) and wins regardless of source order.
       className={cn(
-        'border-b border-border transition-colors hover:bg-muted/50',
+        '[--row-bg:hsl(var(--row))] hover:[--row-bg:hsl(var(--row-hover))] transition-colors',
         onClick && 'cursor-pointer',
         className
       )}
@@ -78,9 +126,19 @@ export function TableHead({
   const TYPE =
     'text-left align-middle text-[10px] font-semibold uppercase tracking-[.08em] text-muted-foreground whitespace-nowrap';
 
+  // The band goes on the cell rather than on `<thead>` via a `[&_tr]:` variant,
+  // because the variant would have to be built by interpolating ROW_BAND and
+  // Tailwind's scanner only sees literal class strings — the rule would never be
+  // generated and the header would silently take a data row's colour.
+  // The band, the fill that paints it, and the rule under it. The rule is here
+  // rather than at the call sites because `border-separate` dropped `<thead>`'s
+  // underline from every table in the app, including the Dashboard's, whose header
+  // is not sticky and would otherwise have no edge at all.
+  const SURFACE = cn(ROW_BAND, CELL_SURFACE, EDGE_HEADER);
+
   if (!onClick) {
     return (
-      <th title={title} className={cn('h-10 px-3', TYPE, className)}>
+      <th title={title} className={cn('h-10 px-3', SURFACE, TYPE, className)}>
         {children}
       </th>
     );
@@ -97,7 +155,7 @@ export function TableHead({
       // cascade, and `height: 100%` then resolved against a cell that no longer
       // had a height of its own. The classes all looked right, which is why the
       // test on them passed and only the browser caught it.
-      className={cn('h-10 px-0', TYPE, className)}
+      className={cn('h-10 px-0', SURFACE, TYPE, className)}
     >
       <button
         type="button"
@@ -134,7 +192,7 @@ export function TableCell({
   colSpan?: number;
 }) {
   return (
-    <td colSpan={colSpan} className={cn('px-3 py-2.5 align-middle', className)}>
+    <td colSpan={colSpan} className={cn('px-3 py-2.5 align-middle', CELL_SURFACE, className)}>
       {children}
     </td>
   );

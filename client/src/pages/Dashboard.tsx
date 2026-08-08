@@ -9,6 +9,25 @@ import { OpenPlayerButton } from '../components/OpenPlayerButton';
 import { NO_DEADLINE, NO_VALUE, POSITION_MAP, fmtNum, fmtPrice } from '../types/fpl';
 import type { Player } from '../types/fpl';
 import { currentGameweek, nextGameweek, useBootstrap } from '../lib/bootstrap';
+import { striped } from '../lib/rowSurface';
+
+/**
+ * The two `<div>` rankings stripe by hand, and that is why they are here at all.
+ *
+ * Item 10 made the row surface a table concern: `border-collapse: separate` dropped
+ * `<tr>` borders app-wide and the stripe replaced them. Only **one** of this page's
+ * three rankings is a `<Table>` though — Top Performers. The other two are flex rows
+ * in a `CardContent`, so they were untouched by any of it, and leaving them would have
+ * produced one borderless striped table beside two bordered lists: less consistent
+ * than before the change rather than more.
+ *
+ * So they take the same `--row-alt` fill on the same odd indices and drop their
+ * per-item `border-b`. `bg-` rather than `--row-bg` because nothing here reads that
+ * property — these are divs, not cells, and inventing a row/cell split for a flex row
+ * would be machinery for its own sake.
+ */
+const LIST_STRIPE = 'bg-[color:hsl(var(--row-alt))]';
+const listRow = (index: number) => (index % 2 === 1 ? LIST_STRIPE : '');
 
 /**
  * Minimum appearances before a per-match average is worth ranking on.
@@ -212,7 +231,7 @@ export default function Dashboard({
             </TableHeader>
             <TableBody>
               {topPoints.map((p, i) => (
-                <TableRow key={p.id}>
+                <TableRow key={p.id} className={striped(i)}>
                   <TableCell className="font-display font-semibold text-border pl-4">{i + 1}</TableCell>
                   <TableCell className="p-1.5 pl-3">
                     <div className="w-8 h-8 rounded-lg bg-muted flex items-end justify-center overflow-hidden">
@@ -253,7 +272,7 @@ export default function Dashboard({
             {bestPerMatch.map((p, i) => (
               <div
                 key={p.id}
-                className={`flex items-center gap-3 py-3 ${i < bestPerMatch.length - 1 ? 'border-b border-border' : ''}`}
+                className={`flex items-center gap-3 py-3 px-2 -mx-2 rounded-md ${listRow(i)}`}
               >
                 <span className="font-display font-bold text-[11px] text-border w-4 text-center">#{i + 1}</span>
                 <div className="w-9 h-9 rounded-lg bg-muted flex items-end justify-center overflow-hidden flex-shrink-0">
@@ -300,7 +319,7 @@ export default function Dashboard({
           {!noMatchesYet && ictTop.map((p, i) => (
             <div
               key={p.id}
-              className={`flex items-center gap-3 py-2.5 ${i < ictTop.length - 1 ? 'border-b border-border' : ''}`}
+              className={`flex items-center gap-3 py-2.5 px-2 -mx-2 rounded-md ${listRow(i)}`}
             >
               <span className="font-display font-bold text-[11px] text-border w-4 text-center shrink-0">{i + 1}</span>
               <div className="w-8 h-8 rounded-lg bg-muted flex items-end justify-center overflow-hidden flex-shrink-0">

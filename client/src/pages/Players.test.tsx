@@ -17,6 +17,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Players from './Players';
 import { BootstrapContext } from '../lib/bootstrap';
+import { ROW_STRIPE, Z_HEADER, Z_PINNED, Z_PINNED_HEADER } from '../lib/rowSurface';
 import { aBootstrap, aPlayer, aTeam } from '../test/factories';
 
 const SAKA = aPlayer({ id: 223340, web_name: 'Saka', team: 3, total_points: 157 });
@@ -146,5 +147,126 @@ describe('Players: the row renders its own club shirt', () => {
       'https://fantasy.premierleague.com/dist/img/shirts/standard/shirt_3-66.png',
       'https://fantasy.premierleague.com/dist/img/shirts/standard/shirt_43-66.png',
     ]);
+  });
+});
+
+/**
+ * The sticky header and the pinned Player column, asserted here as well as in
+ * `TableSurface.test.tsx` for the same reason the disclosure is: `ui/Table` is shared,
+ * and a change that quietly stopped applying to this page would pass the StatsTable
+ * file and fail nothing.
+ *
+ * **Same limit as that file.** jsdom does not lay out, so none of this shows that
+ * anything sticks or that the column holds its width — only that the code still asks
+ * for it. The browser pass is where those claims live.
+ */
+describe('Players: the header sticks and the Player column is pinned', () => {
+  it('makes every header cell sticky to the top', () => {
+    renderPlayers();
+
+    for (const th of screen.getByRole('table').querySelectorAll('thead th')) {
+      expect(th.className).toContain('sticky');
+      expect(th.className).toContain('top-0');
+    }
+  });
+
+  it('puts the Player header at the corner level and the rest below it', () => {
+    renderPlayers();
+    const heads = [...screen.getByRole('table').querySelectorAll('thead th')];
+
+    // Index 1 is Player — the only cell pinned on both axes, so the only one that
+    // has to sit above both the header row and the pinned body column.
+    expect(heads[1]).toHaveTextContent('Player');
+    expect(heads[1].className).toContain(Z_PINNED_HEADER);
+    expect(heads[0].className).toContain(Z_HEADER);
+    expect(heads[2].className).toContain(Z_HEADER);
+  });
+
+  /**
+   * Capped, not just pinned. Measured at a 2033px table width, this column rendered
+   * **495px** for content whose intrinsic width is **131px**, because `table-layout:
+   * auto` hands a column whatever slack is going — and a 495px pinned column would eat
+   * half the table on the narrow viewport where pinning is the point.
+   */
+  it('pins the Player column at a capped width, and only that column', () => {
+    renderPlayers();
+    const row = toggleFor('Saka').closest('tr') as HTMLElement;
+    const cells = [...row.querySelectorAll('td')];
+
+    expect(cells[1].className).toContain('sticky');
+    expect(cells[1].className).toContain('left-0');
+    expect(cells[1].className).toContain('max-w-[11rem]');
+    expect(cells[1].className).toContain(Z_PINNED);
+    // The shirt cell before it and the Pos cell after it both scroll.
+    expect(cells[0].className).not.toContain('sticky');
+    expect(cells[2].className).not.toContain('sticky');
+  });
+
+  it('has no overflow on the card, which is what lets the header stick to main', () => {
+    // `<main>` is this page's scroll container and it is bounded. Any `overflow` on
+    // the card would make the card the scrollport instead — an unbounded one, which
+    // never scrolls vertically, so the header would silently never stick. It used to
+    // be `overflow-hidden`, which was that plus a second bug: hidden is a scroll
+    // container with no scrollbar, so below ~800px the right columns were unreachable.
+    const { container } = renderPlayers();
+    const card = screen.getByRole('table').parentElement as HTMLElement;
+
+    expect(container).toContainElement(card);
+    expect(card.className).toContain('bg-card');
+    expect(card.className).not.toMatch(/overflow-/);
+  });
+});
+
+describe('Players: striping survives an open row', () => {
+  /**
+   * The case DOM parity gets wrong. An open player inserts a sibling `<tr>` into the
+   * same `<tbody>`, shifting every row below it by one position — so `nth-child(even)`
+   * is green while everything is collapsed and wrong the moment anything is open.
+   *
+   * Four players, Saka first, and opening him must leave Haaland striped as row 1
+   * despite his row now sitting at DOM position 3.
+   */
+  it('keeps the stripe on the data index, not the DOM position', async () => {
+    const user = userEvent.setup();
+    const players = [
+      SAKA,
+      HAALAND,
+      aPlayer({ id: 1, web_name: 'Palmer', team: 3, total_points: 130 }),
+      aPlayer({ id: 2, web_name: 'Salah', team: 43, total_points: 120 }),
+    ];
+    render(
+      <BootstrapContext.Provider value={aBootstrap({ players, teams: bootstrap.teams })}>
+        <Players onOpenDetail={() => {}} />
+      </BootstrapContext.Provider>
+    );
+
+    const rowFor = (name: string) => toggleFor(name).closest('tr') as HTMLElement;
+
+    await user.click(toggleFor('Saka'));
+
+    // The sibling row is really there, so the parity really has shifted.
+    const body = screen.getByRole('table').querySelector('tbody') as HTMLElement;
+    expect(body.querySelectorAll('tr')).toHaveLength(5);
+    expect(rowFor('Haaland').previousElementSibling).toHaveAttribute(
+      'id',
+      `player-summary-${SAKA.id}`
+    );
+
+    expect(rowFor('Saka').className).not.toContain(ROW_STRIPE);
+    expect(rowFor('Haaland').className).toContain(ROW_STRIPE);
+    expect(rowFor('Palmer').className).not.toContain(ROW_STRIPE);
+    expect(rowFor('Salah').className).toContain(ROW_STRIPE);
+  });
+
+  it('gives the open player’s panel its own row’s surface', async () => {
+    const user = userEvent.setup();
+    renderPlayers();
+
+    // Haaland is index 1, the striped one, so his panel takes the stripe too and the
+    // pair reads as one block.
+    await user.click(toggleFor('Haaland'));
+    const panel = document.getElementById(`player-summary-${HAALAND.id}`) as HTMLElement;
+
+    expect(panel.className).toContain(ROW_STRIPE);
   });
 });

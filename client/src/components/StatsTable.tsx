@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import type { GameweekHistory, Team } from '../types/fpl';
 import { NO_VALUE, fmtNum } from '../types/fpl';
+import {
+  EDGE_PINNED,
+  ROW_BAND,
+  Z_HEADER,
+  Z_PINNED,
+  Z_PINNED_HEADER,
+  striped,
+} from '../lib/rowSurface';
 import { Card } from './ui/Card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 
@@ -99,25 +107,87 @@ const COLUMNS: Column[] = [
 ];
 
 /**
- * The pinned first column.
+ * The two pinned columns, and the widths that make the pair line up.
  *
- * Thirty-one columns do not fit, so the card scrolls horizontally — and a row
- * of numbers with the round scrolled off the left edge cannot be attributed to
- * a gameweek at all. GW therefore stays put.
+ * Thirty-one columns do not fit, so the card scrolls horizontally — and a row of
+ * numbers with the round scrolled off the left edge cannot be attributed to a
+ * gameweek at all, nor to an opponent. GW and Opp therefore both stay put.
  *
- * The background has to be opaque and its own: a transparent sticky cell shows
- * the columns sliding underneath it. `bg-card` and `bg-muted` are both defined
- * per theme, so this follows the light/dark toggle. The hover tint is a shade
- * stronger here than the `bg-muted/50` on the rest of the row, because a
- * translucent hover cannot be layered over an opaque base without compounding;
- * it reads as the pinned column being distinct, which it is.
+ * **A second pinned column needs a concrete offset equal to the first column's
+ * width, so the first column's width has to be real.** Under `table-layout: auto` a
+ * declared width is a strong hint and no more: a cell whose content is wider wins.
+ * Measured intrinsic widths are GW **51.3px** (the `GW▴` header text at 26.5px and
+ * two digits at 27.3px, plus 24px of `px-3`) and Opp **~52px** (three-letter
+ * opponent codes). Both clear 3.5rem/56px with about 5px of headroom, and `w-14`
+ * equals `left-14`, so the invariant reads off the classes.
  *
- * The right-hand rule is a box-shadow rather than a border because Tailwind's
- * reset collapses table borders, and a collapsed border belongs to the table
- * rather than to the cell — so it scrolls away with the columns it was meant to
- * separate.
+ * The brief specified 3rem/3.5rem. 3rem is **48px, below GW's 51.3px** — GW would
+ * have rendered wider than declared and Opp's `left: 3rem` would have overlapped it
+ * by about 3px. Not adopted.
+ *
+ * Opp measured **119.6px** before this item, which is why the pair would have cost
+ * 171px. The cause was not the opponent codes: it was the averages row's
+ * `over 38 fixtures` sitting in this column at 95.6px of `whitespace-nowrap` text.
+ * That note is a line beneath the table now — see AveragesNote. A footnote must not
+ * dictate a pinned column's width.
+ *
+ * Failure mode if the headroom is ever eaten (a display font that fails to load and
+ * falls back wider): a visible seam or overlap between the two pinned columns when
+ * scrolled right. **Loud rather than silent**, which is why 5px is accepted here;
+ * `table-layout: fixed` would make it a guarantee at the cost of declaring all 31
+ * widths.
+ *
+ * No background and no hover colour of their own any more. The cells paint
+ * `--row-bg`, which the row holds, so they stripe and hover with the rest of the row
+ * instead of stepping away from it — see the comment in `ui/Table.tsx`.
+ *
+ * Geometry only, **no z-index**: the level is added at each call site, because the
+ * same column is `Z_PINNED` in the body and `Z_PINNED_HEADER` in the header, and two
+ * `z-*` utilities on one cell are two declarations of equal specificity whose winner
+ * depends on Tailwind's emission order.
  */
-const STICKY_COL = 'sticky left-0 z-10 bg-card group-hover:bg-muted shadow-[1px_0_0_0_hsl(var(--border))]';
+const PIN_W = 'w-14 min-w-[3.5rem]';
+const PINNED_GW = `sticky left-0 ${PIN_W}`;
+const PINNED_OPP = `sticky left-14 ${PIN_W} ${EDGE_PINNED}`;
+
+/**
+ * The header, sticky on the vertical axis.
+ *
+ * `position: sticky` on the individual `<th>`, never on `<thead>` or `<tr>`. It also
+ * only does anything if the nearest scroll container is **bounded**: a wrapper with
+ * `overflow-x: auto` has its `overflow-y` computed to `auto` by the spec, which makes
+ * it a vertical scroll container of unbounded height, and a sticky header inside one
+ * never sticks — no error, no warning. Both of this table's scrollports are bounded
+ * for that reason; see the render at the bottom of this file.
+ */
+const STICKY_HEAD = `sticky top-0 ${Z_HEADER}`;
+/** For the two corner cells, which are pinned on both axes at once. */
+const STICKY_HEAD_PINNED = `sticky top-0 ${Z_PINNED_HEADER}`;
+
+/**
+ * The averages row's denominator, as a line beneath the table.
+ *
+ * Rule 13 makes stating the denominator mandatory — a double gameweek is two rows in
+ * one round, a blank is none, and a fixture the player sat out is a row of zeroes, so
+ * "per gameweek" is ambiguous and "per appearance" is wrong. It used to be printed
+ * inside the averages row's Opp cell, which is where a 95.6px footnote ended up
+ * setting a pinned column's width. It says the same thing from outside the table,
+ * where it dictates nothing.
+ *
+ * **It takes the number as a prop and renders only what it is handed.** It does not
+ * count rows and does not compose the figure from a season length. The denominator is
+ * being revisited as its own item and may become per-column rather than one number
+ * for the table; taking it as an input means that lands at the one call site instead
+ * of in here. Nothing about the *value* changed in this item — it is still the
+ * filtered row count, which is what the cell printed before.
+ */
+export function AveragesNote({ denominator }: { denominator: number }) {
+  return (
+    <p className="mt-2 text-[11px] text-muted-foreground">
+      Averages over {denominator} {denominator === 1 ? 'fixture' : 'fixtures'}
+    </p>
+  );
+}
 
 /** The sortable/averageable value of a cell, or null where there is none. */
 function numericValue(gw: GameweekHistory, key: SortKey): number | null {
@@ -194,8 +264,8 @@ export default function StatsTable({ history, teams, scroll = true }: Props) {
                   sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'
                 }
                 className={`text-right ${sortKey === col.key ? 'text-foreground' : ''} ${
-                  i === 0 ? STICKY_COL : ''
-                }`}
+                  i <= 1 ? STICKY_HEAD_PINNED : STICKY_HEAD
+                } ${i === 0 ? PINNED_GW : ''} ${i === 1 ? PINNED_OPP : ''}`.trim()}
               >
                 {col.label}
                 {sortKey === col.key && (
@@ -213,39 +283,40 @@ export default function StatsTable({ history, teams, scroll = true }: Props) {
               collapsed them into a duplicate key that React warns about and
               renders wrong (rule 13). Not an edge case: 2025-26 alone has three
               such rounds — 26 (79 players), 33 (248) and 36 (82). */}
-          {sorted.map((gw) => (
-            <TableRow key={gw.fixture} className="group">
-              {COLUMNS.map((col, i) => (
+          {sorted.map((gw, i) => (
+            // The stripe comes from the map index, not `nth-child`: the AVG row is
+            // the last `<tbody>` child, so parity would tint it half the time
+            // depending on how many fixtures the filters left. See rowSurface.
+            <TableRow key={gw.fixture} className={striped(i)}>
+              {COLUMNS.map((col, c) => (
                 <TableCell
                   key={col.key}
                   className={`text-right font-display text-[13px] tabular-nums text-foreground whitespace-nowrap ${
-                    i === 0 ? STICKY_COL : ''
-                  }`}
+                    c === 0 ? `${PINNED_GW} ${Z_PINNED}` : ''
+                  } ${c === 1 ? `${PINNED_OPP} ${Z_PINNED}` : ''}`}
                 >
                   {col.render(gw, teamMap)}
                 </TableCell>
               ))}
             </TableRow>
           ))}
-          <TableRow className="bg-muted/50 font-semibold">
+          {/* The averages row takes the band surface for the same reason the header
+              does: it is not one of the data rows, so it cannot take a data row's
+              colour, and it has to be opaque because its first two cells are pinned.
+              `bg-muted/50` was translucent, which is exactly why its pinned cell
+              needed a second, differently-coloured literal of its own. */}
+          <TableRow className={`${ROW_BAND} font-semibold`}>
             {COLUMNS.map((col, i) => (
               <TableCell
                 key={col.key}
                 className={`text-right font-display text-[12px] tabular-nums text-muted-foreground whitespace-nowrap ${
-                  // The averages row is already tinted, so its pinned cell takes
-                  // the opaque `muted` rather than the card colour.
-                  i === 0
-                    ? 'sticky left-0 z-10 bg-muted shadow-[1px_0_0_0_hsl(var(--border))]'
-                    : ''
-                }`}
+                  i === 0 ? `${PINNED_GW} ${Z_PINNED}` : ''
+                } ${i === 1 ? `${PINNED_OPP} ${Z_PINNED}` : ''}`}
               >
-                {i === 0
-                  ? 'AVG'
-                  : i === 1
-                  ? `over ${history.length} ${history.length === 1 ? 'fixture' : 'fixtures'}`
-                  : col.averaged
-                  ? avg(col.key)
-                  : ''}
+                {/* The denominator used to live in the Opp cell, where 95.6px of
+                    nowrap text set that column's width at 119.6px and made the
+                    pinned pair cost 171px. It is a line under the table now. */}
+                {i === 0 ? 'AVG' : col.averaged ? avg(col.key) : ''}
               </TableCell>
             ))}
           </TableRow>
@@ -253,9 +324,35 @@ export default function StatsTable({ history, teams, scroll = true }: Props) {
     </Table>
   );
 
-  return scroll ? (
-    <Card className="overflow-x-auto">{table}</Card>
-  ) : (
-    <div className="rounded-lg border border-border bg-card">{table}</div>
+  /**
+   * The wrappers, and why the standalone one is bounded.
+   *
+   * `overflow-x-auto` alone does not work. Per the overflow spec, `overflow-x: auto`
+   * with `overflow-y: visible` computes `overflow-y` to **auto** — so the wrapper is a
+   * vertical scroll container whose height is its content height, meaning it never
+   * scrolls vertically and a sticky header inside it silently never sticks. Measured
+   * before this item: `clientHeight === scrollHeight === 1635`, `max-height: none`.
+   *
+   * Bounding it is what makes the header work, and it makes this table its own scroll
+   * pane. `overscroll-behavior` is deliberately left at its default so the wheel
+   * chains onto the page once the pane bottoms out; `contain` would trap it.
+   *
+   * The nested case is unchanged, because that wrapper is not a scroll container at
+   * all — `scroll={false}` shares the career table's scroller, which is bounded for
+   * this same reason, and that is what its sticky header resolves against.
+   *
+   * The note sits OUTSIDE the wrapper deliberately. Inside it, it would scroll
+   * horizontally away with the columns — a footnote about the whole table that you
+   * have to scroll back to read.
+   */
+  return (
+    <>
+      {scroll ? (
+        <Card className="overflow-auto max-h-[70vh]">{table}</Card>
+      ) : (
+        <div className="rounded-lg border border-border bg-card">{table}</div>
+      )}
+      <AveragesNote denominator={history.length} />
+    </>
   );
 }
