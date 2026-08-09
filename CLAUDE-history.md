@@ -37,7 +37,7 @@ introduced it.
 | 10 | Sticky headers, pinned columns, row striping | `2ce4fd9` |
 | 11 | Averages divide by appearances, not fixtures | `5fad1b8` |
 | 12 | The selected season merged into the career table | `0becf6d` |
-| 13 | Selectable stat columns on the Players list | `422871b` |
+| 13 | Selectable stat columns on the Players list | `5c61e16` |
 
 Items 10 and 11 were already stubs before the split and stay that way: their
 commit messages are detailed records in their own right, so `git show` is the
