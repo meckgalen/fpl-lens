@@ -172,6 +172,88 @@ describe('career: one row per season, newest first', () => {
   });
 });
 
+describe('career: `rounds` describes the season, not the player', () => {
+  /**
+   * The distinction the field exists for, and the only assertion that can catch
+   * it being derived from the wrong side.
+   *
+   * A list built from the player's own `player_gameweeks` rows would be a subset
+   * of this one and would look completely reasonable — 33 ascending round
+   * numbers with gaps in them. What it could not do is tell a consumer what a
+   * gap MEANS. Here every gap has one reading: the season did not play that
+   * round. From the player's rows a gap could equally be a week he was not in
+   * the squad, and the two are indistinguishable once they are in one array.
+   *
+   * So both subjects are chosen for having **fewer rounds than their season**,
+   * which is what makes the two derivations produce different answers. Against a
+   * player who appeared in every round they are identical and the test is
+   * vacuous.
+   */
+  it('lists rounds the player has no row in', async () => {
+    const saka = bySeason(await getPlayerCareer(pool, SAKA));
+    const s1920 = saka.get('2019-20');
+    assert.ok(s1920);
+
+    // 38 rounds numbered up to 47: the Covid suspension emptied 30-38 and they
+    // were replayed as 39-47. This is the case a maximum-from-a-count gets
+    // wrong, which is why PlayerDetail stopped deriving one.
+    assert.deepEqual(s1920.rounds, [
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+      20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+      39, 40, 41, 42, 43, 44, 45, 46, 47,
+    ]);
+
+    // The half that makes it a season list. He has rows in 33 of those 38.
+    const played = new Set((await getPlayerHistory(pool, SAKA, '2019-20')).map((r) => r.round));
+    assert.equal(played.size, 33);
+    assert.ok(
+      s1920.rounds.some((gw) => !played.has(gw)),
+      'pick a player-season with fewer rounds than its season, or this proves nothing'
+    );
+  });
+
+  it('omits a round the season never played', async () => {
+    const maguire = bySeason(await getPlayerCareer(pool, MAGUIRE));
+    const s2223 = maguire.get('2022-23');
+    assert.ok(s2223);
+
+    // Round 7 was postponed after the Queen's death and never replayed, so the
+    // season is 37 rounds whose highest is 38. The absence is the season's, and
+    // it must be absent here for a player who has 33 of the other 36 as well.
+    assert.equal(s2223.rounds.length, 37);
+    assert.equal(s2223.rounds.includes(7), false);
+    assert.equal(s2223.rounds.at(0), 1);
+    assert.equal(s2223.rounds.at(-1), 38);
+
+    const played = new Set((await getPlayerHistory(pool, MAGUIRE, '2022-23')).map((r) => r.round));
+    assert.equal(played.size, 33);
+  });
+
+  it('is ascending and non-empty on every season of a full career', async () => {
+    // Including 2026-27, which has 380 fixtures and no match rows at all — the
+    // season whose rounds cannot come from anybody's gameweeks, because nobody
+    // has any. It is the strongest single case for the field's source.
+    const career = await getPlayerCareer(pool, MAGUIRE);
+    assert.equal(career.length, ALL_SEASONS.length);
+
+    for (const row of career) {
+      assert.ok(row.rounds.length > 0, `${row.season} has no rounds`);
+      assert.deepEqual(
+        row.rounds,
+        [...row.rounds].sort((a, b) => a - b),
+        `${row.season} is not ascending`
+      );
+      assert.equal(new Set(row.rounds).size, row.rounds.length, `${row.season} repeats a round`);
+      assert.ok(
+        row.rounds.every((gw) => Number.isInteger(gw)),
+        `${row.season} carries a non-integer round — the driver returned strings`
+      );
+    }
+
+    assert.equal(bySeason(career).get('2026-27')?.rounds.length, 38);
+  });
+});
+
 describe('career: the acceptance values', () => {
   it('reproduces all nine for Saka 2025-26', async () => {
     // From the official API's history_past, a separate pipeline from the

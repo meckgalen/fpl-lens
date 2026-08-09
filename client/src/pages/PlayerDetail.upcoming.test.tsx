@@ -109,7 +109,11 @@ describe('the upcoming fixtures strip', () => {
     // before item 4 and have to keep looking like it: no heading, no empty box.
     renderDetail([]);
 
-    await screen.findByText('This Season');
+    // Waits on the career table rather than on "This Season", which item 12
+    // removed. The anchor has to be something drawn *after* the page has settled,
+    // or the absence below is asserted against a page that has not rendered yet
+    // and passes for the wrong reason.
+    await screen.findByRole('button', { name: SEASON });
     expect(screen.queryByText('Upcoming')).not.toBeInTheDocument();
   });
 

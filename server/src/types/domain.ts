@@ -224,6 +224,31 @@ export interface PlayerCareerSeason extends MatchStats {
   team_name: string;
   team_short_name: string;
 
+  /**
+   * Every round this SEASON played, ascending — a property of the season, not
+   * of the player, and that distinction is the entire point of the field.
+   *
+   * Derived from `fixtures`, which is what "which rounds exist" has always come
+   * from here (`listEvents` LEFT JOINs `events` onto it rather than the other
+   * way round). Deriving it instead from the player's own `player_gameweeks`
+   * rows would produce a list with two different kinds of gap in it and nothing
+   * telling them apart: 2019-20 is missing 30-38 because the season **skipped
+   * them** after the Covid restart, and would be missing others because the
+   * player was not in the squad. A consumer cannot read one meaning off that.
+   *
+   * So a gap here always means the same thing — the season did not play that
+   * round. 2019-20 is `[1..29, 39..47]` and 2022-23 is `[1..6, 8..38]`.
+   *
+   * It rides on the row rather than arriving as a manifest beside the rows,
+   * which is API identity rule 7: the row already names its season, so the two
+   * cannot disagree. A `Record<season, number[]>` on the response would be the
+   * shape that rule refused for `season` itself in Phase 1 item 1.
+   *
+   * `[]` where the season has no fixture carrying a round, which no season in
+   * this database is.
+   */
+  rounds: number[];
+
   /** 1=GK, 2=DEF, 3=MID, 4=FWD (rule 10). Position is season-level. */
   element_type: number;
   /** £0.1m units, raw (rule 9). Not aliased to `now_cost`: on a 2016-17 row

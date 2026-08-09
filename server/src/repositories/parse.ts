@@ -44,3 +44,32 @@ export function numOrNull(value: DbNumeric | null, field: string): number | null
   if (value === null || value === undefined) return null;
   return num(value, field);
 }
+
+/**
+ * Parse an aggregated array column — today only `rounds` on a career row.
+ *
+ * **Explicit rather than trusted, even though it currently needs no conversion.**
+ * `fixtures.gw` is `smallint`, so `array_agg` produces `int2[]` (OID 1005) and
+ * node-postgres already hands back a JS array of numbers; verified against this
+ * database rather than assumed, because the answer depends on the column's width.
+ * Had `gw` been `bigint` the driver would have produced an array of **strings**,
+ * for the same reason `sum()` does, and it would have reached the client looking
+ * exactly like a number array in JSON.
+ *
+ * So this exists to make the width irrelevant: every element goes through `num`,
+ * which converts a string and throws on anything else. The one thing it will not
+ * do is invent a value — a null element is a hole in a list of round numbers and
+ * has no honest reading, so it throws rather than being dropped or zeroed.
+ *
+ * A null array becomes `[]`. That is not rule 6 being bent: the column is
+ * `array_agg` over a season's fixtures, so null means the season has no fixture
+ * with a round, which is the same fact as an empty list. There is no "we did not
+ * measure which rounds this season played".
+ */
+export function numArray(value: readonly (DbNumeric | null)[] | null, field: string): number[] {
+  if (value === null || value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`${field}: expected an array, got ${JSON.stringify(value)}`);
+  }
+  return value.map((v, i) => num(v, `${field}[${i}]`));
+}

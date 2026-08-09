@@ -122,8 +122,13 @@ beforeEach(() => {
   careerMock.mockImplementation(async (code) => ({
     player: anIdentity({ id: code }),
     seasons: [
-      aCareerSeason({ season: LIVE, team_short_name: 'ARS' }),
-      aCareerSeason({ season: DONE, team_short_name: 'ARS' }),
+      // `bps` overridden off the factory default, which is 570 — the same value
+      // as BPS[DONE]. That was harmless while the career table excluded the
+      // selected season; item 12 puts both seasons in it, so the gameweek marker
+      // would match three cells and stop identifying anything. A marker has to be
+      // unique to the table it is marking.
+      aCareerSeason({ season: LIVE, team_short_name: 'ARS', bps: 9001 }),
+      aCareerSeason({ season: DONE, team_short_name: 'ARS', bps: 9002 }),
     ],
   }));
 });
@@ -282,8 +287,17 @@ describe('an open detail page across a season change', () => {
     await user.click(screen.getByRole('button', { name: 'Players' }));
     await user.click(await screen.findByRole('button', { name: /Saka/ }));
     await user.click(await screen.findByRole('button', { name: /View gameweek detail/ }));
-    await screen.findByText('This Season');
+    // The selected season's row in the career table, which item 12 made the
+    // landmark that "This Season" used to be. It is drawn once the career
+    // resolves, which is what this is waiting for.
+    await seasonRow(LIVE);
   }
+
+  /** The career table's disclosure for a season — one per row, named by it. */
+  const seasonRow = (season: string) => screen.findByRole('button', { name: season });
+
+  /** The `<tr>` holding a season's gameweeks, present only while it is open. */
+  const expansionFor = (season: string) => document.getElementById(`career-gameweeks-${season}`);
 
   /**
    * The header's Total Pts tile, read through its own label rather than by
@@ -308,8 +322,65 @@ describe('an open detail page across a season change', () => {
     // captured at click time — 2026-27's zeros — while the table below it moved
     // to 2025-26, and nothing on screen said so.
     await waitFor(() => expect(totalPts()).toContain(String(POINTS[DONE])));
-    await waitFor(() => expect(screen.getByText(String(BPS[DONE]))).toBeInTheDocument());
+    await waitFor(() => expect(expansionFor(DONE)).not.toBeNull());
+    expect(within(expansionFor(DONE)!).getByText(String(BPS[DONE]))).toBeInTheDocument();
+
+    /*
+     * This used to assert the LIVE season's rows were GONE from the document,
+     * which happened to be true for a reason that no longer holds: there was one
+     * "This Season" table and a season change replaced its contents, so the old
+     * marker disappearing and the new one arriving were the same event.
+     *
+     * Now there is one table of expandable rows, LIVE's row is closed because the
+     * selector closed the row it had opened, and the rows are unmounted rather
+     * than hidden — so the marker really is absent again, by a different
+     * mechanism. Both facts are asserted rather than just the survivor, because
+     * "absent" alone would also pass if the whole career table failed to render.
+     */
+    expect(expansionFor(LIVE)).toBeNull();
     expect(screen.queryByText(String(BPS[LIVE]))).not.toBeInTheDocument();
+    expect(within(expansionFor(DONE)!).queryByText(String(BPS[LIVE]))).not.toBeInTheDocument();
+  });
+
+  /**
+   * **Expansions must not accumulate across season changes**, and this is the
+   * measurement that decided the rule rather than an argument for it.
+   *
+   * The first implementation opened the newly selected season and closed nothing,
+   * so that a season a user had deliberately expanded survived. In the browser, on
+   * Haaland's five-season career, four ordinary season changes left **all five**
+   * expanded: the pane grew from 1,986px to ~7,300px against a 920px scrollport
+   * and the number of season totals visible at once fell from 5 to 2. Merging the
+   * seasons into one table is exactly so their totals sit in line, so that is the
+   * feature undoing itself after four clicks.
+   *
+   * The rule is therefore ownership: the row the selector opened is the
+   * selector's to close, and a row the user opened is theirs to keep. Both halves
+   * are asserted here, because either alone is satisfiable by a wrong rule —
+   * "close everything" passes the first, "close nothing" passes the second.
+   */
+  it('closes the row the selector opened, and keeps the row the user opened', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await openDetail(user);
+
+    // The user's own row. DONE is not selected, so opening it is a deliberate act.
+    await user.click(await seasonRow(DONE));
+    expect(expansionFor(DONE)).not.toBeNull();
+    expect(expansionFor(LIVE)).not.toBeNull();
+
+    await user.selectOptions(seasonSelect(), DONE);
+
+    // LIVE was opened by the selector on the way in, so the selector closes it.
+    await waitFor(() => expect(expansionFor(LIVE)).toBeNull());
+    // DONE stays open — it was already the user's, and it is now also selected.
+    expect(expansionFor(DONE)).not.toBeNull();
+
+    // Back again. DONE is now the user's row (they toggled it), so it must
+    // survive even though the selector is moving off it.
+    await user.selectOptions(seasonSelect(), LIVE);
+    await waitFor(() => expect(expansionFor(LIVE)).not.toBeNull());
+    expect(expansionFor(DONE)).not.toBeNull();
   });
 
   it('never claims a finished season is about to start while its rows load', async () => {
@@ -326,7 +397,10 @@ describe('an open detail page across a season change', () => {
     detailMock.mockImplementationOnce(() => new Promise((resolve) => (release = resolve)));
 
     await user.selectOptions(seasonSelect(), DONE);
-    await waitFor(() => expect(screen.getByText('This Season')).toBeInTheDocument());
+    // The newly selected season's row, which item 12's effect opens on the way
+    // in — so the window this test is about is inside an expansion now rather
+    // than inside a section, and is otherwise unchanged.
+    await waitFor(async () => expect(await seasonRow(DONE)).toBeInTheDocument());
 
     // The load-bearing assertion is the negative one. The failure mode is a
     // plausible sentence about the wrong thing, not a missing one.
@@ -382,7 +456,12 @@ describe('an open detail page across a season change', () => {
     for (const label of ['Total Pts', 'Ownership', 'Form', 'Minutes', 'Goals', 'Assists', 'Bonus']) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
-    // And the career table is untouched: it is what the page is still for.
-    expect(screen.getByText('Previous Seasons')).toBeInTheDocument();
+    // And the career table is untouched: it is what the page is still for. Its
+    // heading is gone since item 12, so this asks for the table itself — and
+    // specifically for the LIVE season's row, which is the one the career has
+    // and the newly selected season does not. That is the shape of this state:
+    // a career table with rows in it, and no row for the season on screen.
+    expect(await seasonRow(LIVE)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: DONE })).not.toBeInTheDocument();
   });
 });

@@ -9,8 +9,8 @@ import {
   Z_PINNED_HEADER,
   striped,
 } from '../lib/rowSurface';
-import { columnAverage, fmtAverage } from '../lib/averages';
-import type { ColumnAverage, Normalization } from '../lib/averages';
+import { buildFootnote, columnAverage, fmtAverage } from '../lib/averages';
+import type { ColumnAverage, FootnoteModel, Normalization } from '../lib/averages';
 
 /**
  * How the averages divide. A named constant rather than an inline literal because
@@ -22,20 +22,20 @@ import { Card } from './ui/Card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 
 interface Props {
+  /** The rows to show. Already filtered — every number on screen describes these. */
   history: GameweekHistory[];
-  teams: Team[];
   /**
-   * Whether this table owns its horizontal scrolling.
+   * Every row of the player-season, before filtering. Defaults to `history`.
    *
-   * True standalone. **False when nested inside the career table**, and it has
-   * to be: `position: sticky` resolves against the nearest scrolling ancestor,
-   * so a table wrapped in its own `overflow-x-auto` that is never narrow enough
-   * to scroll would pin GW to a container that does not move, and the column
-   * would slide away with the rest when the outer table scrolls. Sharing the
-   * outer scroller also means one scrollbar for the section rather than two
-   * nested ones.
+   * Used for **one** thing: locating the round at which a partly measured column
+   * starts being measured, which is a fact about the season and not about the
+   * filter. Reading that off `history` would let a venue filter report the first
+   * measured *home* round and print it as the season's boundary. Every other
+   * number here — the averages and both denominators — describes what is on
+   * screen and correctly comes from `history`.
    */
-  scroll?: boolean;
+  seasonHistory?: GameweekHistory[];
+  teams: Team[];
 }
 
 type SortKey = keyof GameweekHistory;
@@ -47,7 +47,20 @@ interface Column {
   render: (gw: GameweekHistory, teamMap: Record<number, string>) => string;
   /** False for the columns an average is meaningless for. */
   averaged: boolean;
+  /**
+   * What to call this column's family when the footnote has to name it.
+   *
+   * Declared here, on the column, so the footnote reads the grouping off the
+   * column set rather than out of a second list of names that could fall out of
+   * step with it. Only the expected family needs one today: it is the one group
+   * that is measured over a different number of appearances than the rest, and
+   * only in 2022-23, where it starts at round 16 (item 7).
+   */
+  group?: string;
 }
+
+/** The one column family the footnote ever has to name. See `Column.group`. */
+const EXPECTED = 'Expected stats';
 
 const num = (v: number) => String(v);
 
@@ -77,19 +90,33 @@ const COLUMNS: Column[] = [
   { key: 'yellow_cards', label: 'YC', render: (g) => num(g.yellow_cards), averaged: true },
   { key: 'red_cards', label: 'RC', render: (g) => num(g.red_cards), averaged: true },
   { key: 'saves', label: 'S', render: (g) => num(g.saves), averaged: true },
-  { key: 'expected_goals', label: 'xG', render: (g) => fmtNum(g.expected_goals, 2), averaged: true },
-  { key: 'expected_assists', label: 'xA', render: (g) => fmtNum(g.expected_assists, 2), averaged: true },
+  {
+    key: 'expected_goals',
+    label: 'xG',
+    render: (g) => fmtNum(g.expected_goals, 2),
+    averaged: true,
+    group: EXPECTED,
+  },
+  {
+    key: 'expected_assists',
+    label: 'xA',
+    render: (g) => fmtNum(g.expected_assists, 2),
+    averaged: true,
+    group: EXPECTED,
+  },
   {
     key: 'expected_goal_involvements',
     label: 'xGI',
     render: (g) => fmtNum(g.expected_goal_involvements, 2),
     averaged: true,
+    group: EXPECTED,
   },
   {
     key: 'expected_goals_conceded',
     label: 'xGC',
     render: (g) => fmtNum(g.expected_goals_conceded, 2),
     averaged: true,
+    group: EXPECTED,
   },
   { key: 'tackles', label: 'Tck', render: (g) => fmtNum(g.tackles, 0), averaged: true },
   {
@@ -182,48 +209,64 @@ const STICKY_HEAD_PINNED = `sticky top-0 ${Z_PINNED_HEADER}`;
  * row's Opp cell, which is where a 95.6px footnote ended up setting a pinned column's
  * width. It says the same thing from outside the table, where it dictates nothing.
  *
- * **One sentence with one substitution**, never two separately worded ones:
+ * **The groups are named, not spanned.** Item 11 printed one sentence with one
+ * substitution, and the substituted form did not communicate:
  *
- *     Averages over 37 appearances in 38 fixtures      (min === max)
- *     Averages over 12–16 appearances in 38 fixtures   (2022-23, and only there)
+ *     Averages over 23–35 appearances in 38 fixtures   (Haaland 2022-23)
  *
- * The earlier draft read "over 37 of 38 fixtures played", which does not scan: the
- * trailing participle lets a fast reader take 38 as the played count, which is the
- * one number it is not. Putting the count next to its own noun fixes that, uses the
- * word the career table's APPS column and FPL both use, and leaves 38 unambiguously
- * the total.
+ * True, and it tells a reader nothing — it spans two groups of columns without
+ * naming either, so 23 has no owner and the gap has no cause. Item 12 names them:
  *
- * The range is honest at the low end rather than approximate: each average really is
- * computed over between 12 and 16 **appearances**, because 2022-23 measures the
- * expected family only from round 16 (item 7). So the range describes the averages,
- * not the player.
+ *     Averages over 37 appearances in 38 fixtures.                (they agree)
+ *     Averages over 35 appearances in 38 fixtures.                (2022-23)
+ *     Expected stats over 23, not measured before GW16.
+ *
+ * The second line renders only where the denominators diverge, which is 2022-23 and
+ * nowhere else. Everywhere else the first line stands alone exactly as before.
+ *
+ * The earlier draft of the first line read "over 37 of 38 fixtures played", which
+ * does not scan: the trailing participle lets a fast reader take 38 as the played
+ * count, which is the one number it is not. Putting the count next to its own noun
+ * fixes that, uses the word the career table's APPS column and FPL both use, and
+ * leaves 38 unambiguously the total.
  *
  * **It renders what it is handed and computes nothing** — including the decision of
- * whether to appear at all, which stays with the caller. That is what keeps it free
- * of the empty-range case: `Math.min()` of no values is `Infinity`, and defending
- * against that here would put the caller's knowledge in the wrong place.
+ * whether to appear at all, which stays with the caller. `buildFootnote` in
+ * `lib/averages.ts` owns every choice this sentence expresses: which denominator is
+ * the main one, what the divergent group is called, and whether "before GWn"
+ * describes the gap at all.
  */
 export function AveragesNote({
-  min,
-  max,
+  model,
   fixtures,
   breakdown,
 }: {
-  /** The smallest denominator any rendered average used. */
-  min: number;
-  /** The largest. Equal to `min` in every season but 2022-23. */
-  max: number;
+  /** Everything the sentence says, decided by `buildFootnote`. */
+  model: FootnoteModel;
   /** Rows shown — the availability signal the old denominator used to carry. */
   fixtures: number;
-  /** Per-column detail for the title, where the two differ. */
+  /** Per-column detail for the title, where the denominators differ. */
   breakdown?: string;
 }) {
-  const appearances = min === max ? String(min) : `${min}–${max}`;
+  const { main, divergent } = model;
+  const appearances = main.kind === 'exact' ? String(main.value) : `${main.min}–${main.max}`;
+  const singular = main.kind === 'exact' && main.value === 1;
+
   return (
-    <p className="mt-2 text-[11px] text-muted-foreground" title={breakdown}>
-      Averages over {appearances} {min === 1 && max === 1 ? 'appearance' : 'appearances'} in{' '}
-      {fixtures} {fixtures === 1 ? 'fixture' : 'fixtures'}
-    </p>
+    <div className="mt-2 text-[11px] text-muted-foreground">
+      <p title={breakdown}>
+        Averages over {appearances} {singular ? 'appearance' : 'appearances'} in {fixtures}{' '}
+        {fixtures === 1 ? 'fixture' : 'fixtures'}.
+      </p>
+      {divergent && (
+        <p>
+          {divergent.label} over {divergent.appearances}
+          {/* Dropped where the unmeasured rows are not a prefix — see
+              `measurementStart`. The rest of the sentence stays true. */}
+          {divergent.from !== null && `, not measured before GW${divergent.from}`}.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -235,7 +278,7 @@ function numericValue(gw: GameweekHistory, key: SortKey): number | null {
   return typeof v === 'number' ? v : null;
 }
 
-export default function StatsTable({ history, teams, scroll = true }: Props) {
+export default function StatsTable({ history, seasonHistory = history, teams }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('round');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
@@ -292,32 +335,36 @@ export default function StatsTable({ history, teams, scroll = true }: Props) {
   };
 
   /**
-   * The footnote's numbers, and the three cases the caller owns.
+   * The footnote, decided in `lib/averages.ts` and merely rendered here.
    *
-   * **Only columns that render a number contribute a denominator.** A column whose
-   * denominator is 0 shows `—`, and letting it into the range would drag the low end
-   * to 0 on every season with a rule-6 column — which is all ten — and make them all
-   * look divergent when only 2022-23 is.
+   * The columns are described to it off `COLUMNS` itself — label, group and the
+   * rule-6 measured predicate — so the grouping it names comes from the column set
+   * rather than from a second list of names kept in step by hand.
    *
-   * That leaves the set empty exactly when nothing rendered, which is a real case
-   * rather than a hypothetical: a player with no appearances among the rows shown,
-   * either because he never played or because the filters selected a window he
-   * missed. `Math.min()` of an empty array is `Infinity`, so this is handled here
-   * rather than in the note — the sentence would otherwise read "Averages over
-   * Infinity appearances in 38 fixtures", and it would read that on the largest
-   * population this item changes.
-   *
-   * Zero is the true floor there rather than a guard value: with no appearances
-   * there are no averages, and the appearance count really is 0.
+   * `seasonHistory` rather than `history` is the second argument, and that is the
+   * distinction the whole model turns on: the denominators below describe the rows
+   * on screen, the measurement threshold describes the season.
    */
-  const rendered = [...averages.values()].filter((a) => a.denominator > 0);
-  const denominators = rendered.map((a) => a.denominator);
-  const minDenominator = denominators.length === 0 ? 0 : Math.min(...denominators);
-  const maxDenominator = denominators.length === 0 ? 0 : Math.max(...denominators);
+  const footnote = buildFootnote(
+    COLUMNS.filter((col) => col.averaged).map((col) => ({
+      label: col.label,
+      group: col.group,
+      denominator: averages.get(col.key)?.denominator ?? 0,
+      measured: (gw: GameweekHistory) => numericValue(gw, col.key) !== null,
+    })),
+    seasonHistory
+  );
 
-  /** Per-column detail for the note's title, only where the columns disagree. */
+  /**
+   * Per-column detail for the note's title, only where the columns disagree.
+   *
+   * Still every rendered column rather than only the divergent ones: the point of
+   * the hover is to show which number each column actually rests on, and half the
+   * table is not an answer to that.
+   */
+  const denominators = [...averages.values()].map((a) => a.denominator).filter((d) => d > 0);
   const breakdown =
-    minDenominator === maxDenominator
+    new Set(denominators).size <= 1
       ? undefined
       : COLUMNS.filter((col) => col.averaged && (averages.get(col.key)?.denominator ?? 0) > 0)
           .map((col) => `${col.label}: ${averages.get(col.key)!.denominator}`)
@@ -402,45 +449,40 @@ export default function StatsTable({ history, teams, scroll = true }: Props) {
   );
 
   /**
-   * The wrappers, and why the standalone one is bounded.
+   * The wrapper, which is deliberately **not** a scroll container.
    *
-   * `overflow-x-auto` alone does not work. Per the overflow spec, `overflow-x: auto`
-   * with `overflow-y: visible` computes `overflow-y` to **auto** — so the wrapper is a
-   * vertical scroll container whose height is its content height, meaning it never
-   * scrolls vertically and a sticky header inside it silently never sticks. Measured
-   * before this item: `clientHeight === scrollHeight === 1635`, `max-height: none`.
+   * This table only ever renders inside an expanded career row now, so the career
+   * `Card` is its scrollport on both axes and the sticky header above resolves
+   * against that. The reasoning for why that pane has to be *bounded* moved there
+   * with the responsibility — see `CareerTable`.
    *
-   * Bounding it is what makes the header work, and it makes this table its own scroll
-   * pane. `overscroll-behavior` is deliberately left at its default so the wheel
-   * chains onto the page once the pane bottoms out; `contain` would trap it.
+   * There used to be a `scroll` prop selecting between this and a bounded
+   * `Card className="overflow-auto max-h-[70vh]"`, for the standalone "This Season"
+   * table. Item 12 merged that section into the career table, so every caller passed
+   * `false` and the other branch became unreachable. It was deleted rather than left:
+   * it carried the longest explanation in the file, and an explanation attached to
+   * dead code reads to the next person as a description of something live.
    *
-   * The nested case is unchanged, because that wrapper is not a scroll container at
-   * all — `scroll={false}` shares the career table's scroller, which is bounded for
-   * this same reason, and that is what its sticky header resolves against.
+   * A scroller here would not work anyway, which is why the nested case was always
+   * the `false` one: this table sits in a `colSpan={34}` cell as wide as the career
+   * table itself, so its own wrapper is never narrow enough to scroll horizontally,
+   * and `position: sticky` would resolve against a container that does not move.
    *
-   * The note sits OUTSIDE the wrapper deliberately. Inside it, it would scroll
+   * The note sits outside the table deliberately. Inside it, it would scroll
    * horizontally away with the columns — a footnote about the whole table that you
-   * have to scroll back to read.
+   * have to scroll back to read. (It still scrolls with the career pane, which is a
+   * separate and pre-existing thing.)
    *
    * **No note at all when no rows are shown.** There is no denominator to state, and
    * `GameweekSection` already prints "None of X's N matches match the selected
-   * filters." directly beneath — which says the useful thing. Before this item it
-   * read "Averages over 0 fixtures", which was noise.
+   * filters." directly beneath — which says the useful thing. Before item 11 it read
+   * "Averages over 0 fixtures", which was noise.
    */
   return (
     <>
-      {scroll ? (
-        <Card className="overflow-auto max-h-[70vh]">{table}</Card>
-      ) : (
-        <div className="rounded-lg border border-border bg-card">{table}</div>
-      )}
+      <div className="rounded-lg border border-border bg-card">{table}</div>
       {history.length > 0 && (
-        <AveragesNote
-          min={minDenominator}
-          max={maxDenominator}
-          fixtures={history.length}
-          breakdown={breakdown}
-        />
+        <AveragesNote model={footnote} fixtures={history.length} breakdown={breakdown} />
       )}
     </>
   );

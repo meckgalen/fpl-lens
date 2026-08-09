@@ -25,6 +25,7 @@ import userEvent from '@testing-library/user-event';
 import StatsTable, { AveragesNote } from './StatsTable';
 import CareerTable from './CareerTable';
 import { ROW_STRIPE, Z_HEADER, Z_PINNED, Z_PINNED_HEADER } from '../lib/rowSurface';
+import type { FootnoteModel } from '../lib/averages';
 import { aCareerSeason, aGameweek, aTeam } from '../test/factories';
 
 const TEAMS = [aTeam(), aTeam({ id: 43, short_name: 'MCI' })];
@@ -189,49 +190,141 @@ describe('the pinned pair', () => {
 });
 
 describe('the averages footnote', () => {
+  const exact = (value: number): FootnoteModel => ({
+    main: { kind: 'exact', value },
+    divergent: null,
+  });
+
   /**
-   * **It renders the numbers it is handed.** Item 10 built this seam for item 11 to
-   * use, and item 11 used it: the props went from one denominator to a range, and
-   * the note still computes nothing. Values chosen to match no count in the table,
-   * to separate "displayed the input" from "recounted the rows and got the same
-   * answer".
+   * **It renders what it is handed.** Item 10 built this seam, item 11 widened it
+   * from one denominator to a range, and item 12 replaced the range with a model
+   * — and through all three the note has computed nothing. Values chosen to match
+   * no count in any table, to separate "displayed the input" from "recounted the
+   * rows and got the same answer".
    */
   it('renders the numbers it is given, not ones it recounted', () => {
-    render(<AveragesNote min={17} max={17} fixtures={23} />);
-    expect(screen.getByText('Averages over 17 appearances in 23 fixtures')).toBeInTheDocument();
+    render(<AveragesNote model={exact(17)} fixtures={23} />);
+    expect(screen.getByText('Averages over 17 appearances in 23 fixtures.')).toBeInTheDocument();
   });
 
-  it('collapses to a single number when the denominators agree', () => {
-    render(<AveragesNote min={9} max={9} fixtures={12} />);
-    // One sentence with one substitution — not a separately worded degenerate form.
-    expect(screen.getByText('Averages over 9 appearances in 12 fixtures')).toBeInTheDocument();
+  it('renders one line when the denominators agree', () => {
+    render(<AveragesNote model={exact(9)} fixtures={12} />);
+    expect(screen.getByText('Averages over 9 appearances in 12 fixtures.')).toBeInTheDocument();
+    expect(screen.queryByText(/over 9,/)).not.toBeInTheDocument();
   });
 
-  it('states a range when they do not', () => {
-    render(<AveragesNote min={12} max={16} fixtures={38} />);
-    expect(screen.getByText('Averages over 12–16 appearances in 38 fixtures')).toBeInTheDocument();
-  });
+  /**
+   * The two-line form, which is the whole point of item 12's change to this note.
+   * Item 11's "Averages over 23–35 appearances in 38 fixtures" was true and told a
+   * reader nothing: it spanned two groups without naming either.
+   */
+  it('names the divergent group on a second line', () => {
+    render(
+      <AveragesNote
+        model={{
+          main: { kind: 'exact', value: 35 },
+          divergent: { label: 'Expected stats', appearances: 23, from: 16 },
+        }}
+        fixtures={38}
+      />
+    );
 
-  it('pluralises both counts from the input', () => {
-    render(<AveragesNote min={1} max={1} fixtures={1} />);
-    expect(screen.getByText('Averages over 1 appearance in 1 fixture')).toBeInTheDocument();
-  });
-
-  /** Every row played, so the denominator is the row count and the form collapses. */
-  it('is handed the appearance count by StatsTable', () => {
-    render(<StatsTable history={HISTORY} teams={TEAMS} />);
+    expect(screen.getByText('Averages over 35 appearances in 38 fixtures.')).toBeInTheDocument();
     expect(
-      screen.getByText(`Averages over ${HISTORY.length} appearances in ${HISTORY.length} fixtures`)
+      screen.getByText('Expected stats over 23, not measured before GW16.')
     ).toBeInTheDocument();
   });
 
-  /** Outside the scroll wrapper, or it scrolls sideways away from the table it describes. */
-  it('sits outside the table’s scroll container', () => {
-    render(<StatsTable history={HISTORY} teams={TEAMS} />);
-    const note = screen.getByText(/Averages over/);
+  /**
+   * The clause is dropped where the gap is not a prefix — `buildFootnote` decides
+   * that and signals it with `from: null`. The rest of the sentence is still true,
+   * so it is kept rather than the whole line being suppressed.
+   */
+  it('drops the "before GWn" clause when it is handed no threshold', () => {
+    render(
+      <AveragesNote
+        model={{
+          main: { kind: 'exact', value: 35 },
+          divergent: { label: 'xGI', appearances: 22, from: null },
+        }}
+        fixtures={38}
+      />
+    );
 
-    expect(note.closest('table')).toBeNull();
-    expect(note.closest('[class*="overflow-auto"]')).toBeNull();
+    expect(screen.getByText('xGI over 22.')).toBeInTheDocument();
+    expect(screen.queryByText(/not measured before/)).not.toBeInTheDocument();
+  });
+
+  /** The fallback for three or more distinct denominators. Nothing produces it today. */
+  it('states a range when it is given one', () => {
+    render(<AveragesNote model={{ main: { kind: 'range', min: 12, max: 16 }, divergent: null }} fixtures={38} />);
+    expect(screen.getByText('Averages over 12–16 appearances in 38 fixtures.')).toBeInTheDocument();
+  });
+
+  it('pluralises both counts from the input', () => {
+    render(<AveragesNote model={exact(1)} fixtures={1} />);
+    expect(screen.getByText('Averages over 1 appearance in 1 fixture.')).toBeInTheDocument();
+  });
+
+  /** Every row played, so the denominator is the row count and one line suffices. */
+  it('is handed the appearance count by StatsTable', () => {
+    render(<StatsTable history={HISTORY} teams={TEAMS} />);
+    expect(
+      screen.getByText(`Averages over ${HISTORY.length} appearances in ${HISTORY.length} fixtures.`)
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * Outside the table, or it scrolls sideways away from the columns it describes.
+   *
+   * **This used to also assert `closest('[class*="overflow-auto"]')` is null, and
+   * that assertion was deleted rather than kept.** Item 12 removed `StatsTable`'s
+   * bounded-`Card` branch — every caller now renders inside an expanded career
+   * row, whose scroller is the career `Card`. With no `overflow-auto` anywhere in
+   * *this* render, `closest` returns null wherever the note sits, so the check
+   * would have survived the change while pinning nothing at all.
+   *
+   * The claim it was written for is still real; it just moved. Its home is the
+   * nested render below, where the scrollport actually exists.
+   */
+  it('sits outside the table', () => {
+    render(<StatsTable history={HISTORY} teams={TEAMS} />);
+    expect(screen.getByText(/Averages over/).closest('table')).toBeNull();
+  });
+
+  it('is not inside the career pane’s scroller when nested', async () => {
+    // The real arrangement: a StatsTable inside an expanded career row, whose
+    // scrollport is the career Card. Only here is there an overflow-auto ancestor
+    // for the note to be wrongly placed inside of, so only here does asking
+    // whether it is mean anything.
+    const user = userEvent.setup();
+
+    function Harness() {
+      const [expanded, setExpanded] = useState<Set<string>>(new Set());
+      return (
+        <CareerTable
+          seasons={[aCareerSeason({ season: '2024-25' })]}
+          expanded={expanded}
+          onToggle={(season) => setExpanded(new Set([season]))}
+          renderExpanded={() => <StatsTable history={HISTORY} teams={TEAMS} />}
+        />
+      );
+    }
+
+    render(<Harness />);
+    await user.click(screen.getByRole('button', { name: '2024-25' }));
+
+    const note = screen.getByText(/Averages over/);
+    const [career, gameweeks] = screen.getAllByRole('table');
+
+    // It IS inside the career table and its scroller, unavoidably — the whole
+    // expanded row is a cell of that table, and that is pre-existing. The claim
+    // is narrower and is the one the note's placement was chosen for: it is not
+    // inside the table it describes, so the columns cannot scroll out from under
+    // it and take the sentence about them with it.
+    expect(gameweeks.contains(note)).toBe(false);
+    expect(career.contains(note)).toBe(true);
+    expect(note.closest('[class*="overflow-auto"]')).not.toBeNull();
   });
 });
 

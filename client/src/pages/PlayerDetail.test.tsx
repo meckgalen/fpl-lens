@@ -113,13 +113,24 @@ function detailFor(code: number, season: string) {
   });
 }
 
+/** A career total per season, so a row can be told apart from the other one. */
+const CAREER_POINTS: Record<string, number> = { [CURRENT]: 6101, [PREVIOUS]: 6102 };
+
 beforeEach(() => {
   detailMock.mockImplementation(async (code, season) => detailFor(code, season));
   careerMock.mockImplementation(async (code) => ({
     player: anIdentity({ id: code }),
     seasons: [
-      aCareerSeason({ season: CURRENT, team_short_name: 'ARS' }),
-      aCareerSeason({ season: PREVIOUS, team_short_name: 'ARS' }),
+      aCareerSeason({
+        season: CURRENT,
+        team_short_name: 'ARS',
+        total_points: CAREER_POINTS[CURRENT],
+      }),
+      aCareerSeason({
+        season: PREVIOUS,
+        team_short_name: 'ARS',
+        total_points: CAREER_POINTS[PREVIOUS],
+      }),
     ],
   }));
 });
@@ -131,16 +142,24 @@ const callsFor = (season: string) =>
 /**
  * The clickable summary row for a season.
  *
- * `findBy*`, because "Previous Seasons" is drawn only once the career promise
- * resolves — a synchronous query followed by `fireEvent.click` fires before the
- * row exists.
+ * `findBy*`, because the career table is drawn only once its promise resolves —
+ * a synchronous query followed by `fireEvent.click` fires before the row exists.
+ *
+ * Found through the disclosure **button** rather than by text since item 12. The
+ * selected season is now a row in this table as well as the label on the header
+ * card above it, so `findByText('2025-26')` matches two elements. The button's
+ * accessible name is the season and there is exactly one per row, which is also
+ * why the "Selected" badge sits outside it.
  */
 async function seasonRow(season: string) {
-  const cell = await screen.findByText(season);
-  const row = cell.closest('tr');
-  if (!row) throw new Error(`no row around the ${season} cell`);
+  const toggle = await screen.findByRole('button', { name: season });
+  const row = toggle.closest('tr');
+  if (!row) throw new Error(`no row around the ${season} toggle`);
   return row;
 }
+
+/** The `<tr>` holding a season's gameweeks, present only while it is open. */
+const expansionFor = (season: string) => document.getElementById(`career-gameweeks-${season}`);
 
 describe('PlayerDetail: expanding a previous season', () => {
   it('issues exactly one request for the season it opens', async () => {
@@ -203,19 +222,198 @@ describe('PlayerDetail: the cache does not outlive its player', () => {
   });
 });
 
-describe('PlayerDetail: the sections', () => {
-  it('shows the current season above, and the rest as expandable rows', async () => {
+describe('PlayerDetail: the selected season is a row like any other', () => {
+  /**
+   * The inversion item 12 is. This assertion used to read
+   * `expect(screen.queryByRole('row', { name: new RegExp(CURRENT) })).toBeNull()`
+   * — the career table deliberately excluded the season shown above it, and the
+   * two were rendered in different shapes on one page.
+   */
+  it('puts the selected season in the same table as the others', async () => {
     renderInApp(<PlayerDetail code={SAKA.id} player={SAKA} onBack={() => {}} />, bootstrap);
 
-    // "This Season" is labelled with the season the detail response resolved,
-    // and the career table excludes it — it is already above, in full.
-    await screen.findByText('This Season');
-    const previous = await screen.findByText('Previous Seasons');
-    const note = previous.parentElement;
-    expect(note?.textContent).toMatch(/1 season/);
+    const current = await seasonRow(CURRENT);
+    const previous = await seasonRow(PREVIOUS);
+    expect(current).not.toBe(previous);
 
-    const row = await seasonRow(PREVIOUS);
-    expect(within(row).getByText(PREVIOUS)).toBeInTheDocument();
-    expect(screen.queryByRole('row', { name: new RegExp(CURRENT) })).toBeNull();
+    // One table, one header. Two would mean the section came back in disguise.
+    expect(screen.getAllByRole('table').filter((t) => within(t).queryByText('Season'))).toHaveLength(1);
+
+    // And neither heading survives. Both asserted something false: "This Season"
+    // whenever the selector is off the live season, "Previous Seasons" on any
+    // season with later ones listed above it.
+    expect(screen.queryByText('This Season')).not.toBeInTheDocument();
+    expect(screen.queryByText('Previous Seasons')).not.toBeInTheDocument();
+  });
+
+  it('keeps the selected season’s totals in line when it is collapsed', async () => {
+    // The point of the change, and the thing the reverted attempt got wrong: a
+    // collapse must leave the totals on screen, in the same shape as every other
+    // season's, not remove the season from the page.
+    renderInApp(<PlayerDetail code={SAKA.id} player={SAKA} onBack={() => {}} />, bootstrap);
+
+    const row = await seasonRow(CURRENT);
+    fireEvent.click(row);
+
+    expect(expansionFor(CURRENT)).toBeNull();
+    expect(within(await seasonRow(CURRENT)).getByText(String(CAREER_POINTS[CURRENT])))
+      .toBeInTheDocument();
+    // Beside the other season's, which is what "in line" means.
+    expect(within(await seasonRow(PREVIOUS)).getByText(String(CAREER_POINTS[PREVIOUS])))
+      .toBeInTheDocument();
+  });
+
+  it('marks the selected season and no other', async () => {
+    renderInApp(<PlayerDetail code={SAKA.id} player={SAKA} onBack={() => {}} />, bootstrap);
+
+    // Scoped to the summary rows rather than the document, and not for tidiness:
+    // `StatsTable` has an ownership column whose header is also "Selected", and it
+    // is rendered inside the expanded row a few `<tr>`s below. A summary row is a
+    // sibling of its expansion rather than its parent, so `within` a row sees only
+    // the row — which is exactly the scope the claim is about.
+    const mark = within(await seasonRow(CURRENT)).getByText('Selected');
+    expect(within(await seasonRow(PREVIOUS)).queryByText('Selected')).not.toBeInTheDocument();
+
+    // Outside the toggle, or every such row would announce as "2025-26 Selected"
+    // — a control renaming itself from page state. This query finding the button
+    // by the bare season is the same assertion `seasonRow` depends on.
+    expect(screen.getByRole('button', { name: CURRENT })).not.toContainElement(mark);
+  });
+
+  it('starts the selected season expanded and the others collapsed', async () => {
+    // What the page did before the merge: "This Season" was always open.
+    renderInApp(<PlayerDetail code={SAKA.id} player={SAKA} onBack={() => {}} />, bootstrap);
+
+    await screen.findByText(bps(SAKA.id, CURRENT));
+    expect(expansionFor(CURRENT)).not.toBeNull();
+    expect(expansionFor(PREVIOUS)).toBeNull();
+  });
+});
+
+/**
+ * Filters, which every expansion has now rather than one of them.
+ *
+ * The consequence that is easy to underestimate: the state has to be **per
+ * season**, because the GW options are. 2019-20 runs to 47 after the Covid
+ * restart and 2022-23 has no round 7, so one shared range would offer a season a
+ * round it never played — and, more quietly, a range narrowed on one season
+ * would silently hide rows on the next one opened.
+ */
+describe('PlayerDetail: the filters belong to their season', () => {
+  const ROUNDS_1920 = [
+    ...Array.from({ length: 29 }, (_, i) => i + 1),
+    ...Array.from({ length: 9 }, (_, i) => i + 39),
+  ];
+
+  /** Two seasons with genuinely different round sets, both with rows to filter. */
+  function twoSeasonCareer() {
+    careerMock.mockImplementation(async (code) => ({
+      player: anIdentity({ id: code }),
+      seasons: [
+        aCareerSeason({ season: CURRENT, total_points: CAREER_POINTS[CURRENT] }),
+        aCareerSeason({
+          season: PREVIOUS,
+          total_points: CAREER_POINTS[PREVIOUS],
+          rounds: ROUNDS_1920,
+        }),
+      ],
+    }));
+    detailMock.mockImplementation(async (code, season) =>
+      aPlayerDetail({
+        season,
+        history: [
+          aGameweek({ fixture: 1, round: 1, bps: BPS[code][season] }),
+          aGameweek({ fixture: 2, round: season === PREVIOUS ? 47 : 38, bps: BPS[code][season] + 1 }),
+        ],
+      })
+    );
+  }
+
+  /** The GW-from select inside one season's expansion. */
+  const gwFrom = (season: string) =>
+    within(expansionFor(season)!).getAllByRole('combobox')[0] as HTMLSelectElement;
+
+  it('offers each season its own rounds, not the selected season’s', async () => {
+    twoSeasonCareer();
+    renderInApp(<PlayerDetail code={SAKA.id} player={SAKA} onBack={() => {}} />, bootstrap);
+
+    fireEvent.click(await seasonRow(PREVIOUS));
+    await screen.findByText(bps(SAKA.id, PREVIOUS));
+
+    const previousOptions = [...gwFrom(PREVIOUS).options].map((o) => Number(o.value));
+    const currentOptions = [...gwFrom(CURRENT).options].map((o) => Number(o.value));
+
+    // 47 exists in one season and not in the other, which is the whole point.
+    expect(previousOptions).toEqual(ROUNDS_1920);
+    expect(previousOptions).toContain(47);
+    expect(currentOptions).not.toContain(47);
+
+    // And the gap is the season's, not the player's: he has rows in rounds 1 and
+    // 47 only, so a list built from his gameweeks would be [1, 47]. A list built
+    // from the season has 38 entries with 30-38 missing, and a reader can tell
+    // what that gap means.
+    expect(previousOptions).toContain(29);
+    expect(previousOptions).not.toContain(30);
+    expect(previousOptions).toHaveLength(38);
+  });
+
+  it('narrowing one season’s range leaves the other’s alone', async () => {
+    twoSeasonCareer();
+    renderInApp(<PlayerDetail code={SAKA.id} player={SAKA} onBack={() => {}} />, bootstrap);
+
+    fireEvent.click(await seasonRow(PREVIOUS));
+    await screen.findByText(bps(SAKA.id, PREVIOUS));
+
+    // Both open, both showing both of their rows.
+    expect(within(expansionFor(CURRENT)!).getByText(String(BPS[SAKA.id][CURRENT] + 1))).toBeInTheDocument();
+
+    // Narrow the previous season past its round-1 row. With one shared pair this
+    // would move the selected season's range too and hide its round-1 row as
+    // well — which is the failure this file exists to catch, and it looks like
+    // nothing more than a table that lost a row.
+    fireEvent.change(gwFrom(PREVIOUS), { target: { value: '39' } });
+
+    expect(within(expansionFor(PREVIOUS)!).queryByText(bps(SAKA.id, PREVIOUS))).not.toBeInTheDocument();
+    expect(within(expansionFor(CURRENT)!).getByText(bps(SAKA.id, CURRENT))).toBeInTheDocument();
+    expect(gwFrom(CURRENT).value).toBe('1');
+  });
+
+  it('draws no filter bar over a season with no rows to filter', async () => {
+    // 2026-27's rounds come from its fixtures, so the season has all 38 of them
+    // and not one match played. Gating the bar on rounds rather than on rows put
+    // a full GW range above "Data will appear here once the season is underway"
+    // — three controls that can only filter nothing. Found in the browser.
+    careerMock.mockImplementation(async (code) => ({
+      player: anIdentity({ id: code }),
+      seasons: [aCareerSeason({ season: CURRENT, matches: 0, appearances: 0 })],
+    }));
+    detailMock.mockImplementation(async (code, season) =>
+      aPlayerDetail({ season, history: [] })
+    );
+
+    renderInApp(<PlayerDetail code={SAKA.id} player={SAKA} onBack={() => {}} />, bootstrap);
+
+    await screen.findByText(/is underway/);
+    expect(within(expansionFor(CURRENT)!).queryByRole('combobox')).not.toBeInTheDocument();
+  });
+
+  it('forgets the filters when the player changes', async () => {
+    // Not a defect the merge introduced — it is one it had to fix. Before item 12
+    // the venue filter reset on nothing at all and the range only on a season
+    // change, so opening a second player inherited the first one's window.
+    twoSeasonCareer();
+    const { rerender } = renderInApp(
+      <PlayerDetail code={SAKA.id} player={SAKA} onBack={() => {}} />,
+      bootstrap
+    );
+
+    await screen.findByText(bps(SAKA.id, CURRENT));
+    fireEvent.change(gwFrom(CURRENT), { target: { value: '38' } });
+    expect(within(expansionFor(CURRENT)!).queryByText(bps(SAKA.id, CURRENT))).not.toBeInTheDocument();
+
+    rerender(<PlayerDetail code={MAGUIRE.id} player={MAGUIRE} onBack={() => {}} />);
+    await screen.findByText(bps(MAGUIRE.id, CURRENT));
+
+    expect(gwFrom(CURRENT).value).toBe('1');
   });
 });

@@ -26,7 +26,7 @@ import type {
   PlayerSeasonTotals,
   UpcomingFixture,
 } from '../types/domain.js';
-import { num, numOrNull, type DbNumeric } from './parse.js';
+import { num, numArray, numOrNull, type DbNumeric } from './parse.js';
 
 /** Rule 10's mapping, run backwards for the wire format. */
 const ELEMENT_TYPE_BY_POSITION = `CASE ps.position
@@ -460,6 +460,8 @@ export async function getPlayerHistory(
 
 interface CareerDbRow {
   season: string;
+  /** int2[] from the driver, so already numbers — parsed anyway, see `numArray`. */
+  rounds: DbNumeric[] | null;
   team: number;
   team_name: string;
   team_short_name: string;
@@ -506,6 +508,7 @@ interface CareerDbRow {
 function toPlayerCareerSeason(r: CareerDbRow): PlayerCareerSeason {
   return {
     season: r.season,
+    rounds: numArray(r.rounds, 'rounds'),
 
     team: r.team,
     team_name: r.team_name,
@@ -596,6 +599,18 @@ export async function getPlayerCareer(
 ): Promise<PlayerCareerSeason[]> {
   const { rows } = await db.query<CareerDbRow>(
     `SELECT ps.season,
+
+            -- Every round the SEASON played, not every round this player has a
+            -- row in. A correlated subquery rather than a join, so the GROUP BY
+            -- below stays the list of scalar columns it already is.
+            --
+            -- \`gw IS NOT NULL\` matches listEvents. A postponed fixture has its
+            -- round nulled until a new one is assigned, and it must neither
+            -- invent a round nor remove one that other fixtures still populate.
+            (SELECT array_agg(DISTINCT f.gw ORDER BY f.gw)
+               FROM fixtures f
+              WHERE f.season = ps.season AND f.gw IS NOT NULL) AS rounds,
+
             t.fpl_team_code AS team,
             t.name          AS team_name,
             t.short_name    AS team_short_name,

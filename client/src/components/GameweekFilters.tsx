@@ -18,7 +18,30 @@ export default function GameweekFilters({ gwRange, rounds, homeAway, onGwRangeCh
   const gwOptions = rounds;
 
   return (
-    <div className="flex flex-wrap items-center gap-4 mb-4">
+    /*
+     * Pinned to the left edge of whatever is scrolling it, for the same reason
+     * the GW and Opp columns are.
+     *
+     * Since item 12 this bar renders inside an expanded career row, which lives
+     * in a `colSpan={34}` cell as wide as a 31-column table — so the career
+     * card scrolls horizontally and everything in that cell scrolls with it.
+     * Measured before the fix, at `scrollLeft: 700` in a 894px pane: the
+     * controls sat at **-419px**, off the left edge, while the pinned Season and
+     * GW columns held at the pane's edge. Scrolling right to read BPS took the
+     * filters away with it.
+     *
+     * `w-fit` is load-bearing next to `sticky left-0`: a block-level child of
+     * that cell is as wide as the whole table, and a full-width box pinned at
+     * `left-0` does not appear to move at all — its left edge is already where
+     * it is being pinned to. Shrinking the box to its contents is what makes the
+     * pinning visible.
+     *
+     * The averages note beneath the table still scrolls away. That is
+     * pre-existing — it predates this item and applies to every nested table
+     * item 10 built — and it is a caption rather than a control, so it is
+     * recorded in CLAUDE.md rather than fixed here.
+     */
+    <div className="sticky left-0 w-fit flex flex-wrap items-center gap-4 mb-4">
       <label className="flex items-center gap-2 text-xs text-muted-foreground">
         GW from
         <select

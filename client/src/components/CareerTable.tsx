@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { PlayerCareerSeason } from '../types/fpl';
 import { NO_VALUE, POSITION_MAP, fmtNum } from '../types/fpl';
 import { EDGE_PINNED, Z_PINNED, hoverInert, striped } from '../lib/rowSurface';
+import { Badge } from './ui/Badge';
 import { Card } from './ui/Card';
 import { DisclosureButton } from './ui/DisclosureButton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
@@ -14,6 +15,18 @@ interface Props {
   onToggle: (season: string) => void;
   /** The gameweeks for an expanded season, rendered inside the spanning row. */
   renderExpanded: (season: string) => ReactNode;
+  /**
+   * The season the rest of the page is showing, marked **in place**.
+   *
+   * Not pinned to the top, deliberately: pinning would reorder the table on
+   * every season change, and a table that rearranges itself is a worse cost than
+   * the marked row being third. The order stays chronological, which is the one
+   * ordering a career has.
+   *
+   * Optional because the marker is a page concern — this table is perfectly
+   * meaningful without one, and its own tests render it that way.
+   */
+  selected?: string;
 }
 
 interface Column {
@@ -143,23 +156,41 @@ const STICKY_COL = `sticky left-0 ${Z_PINNED} ${EDGE_PINNED}`;
 /** The row a season's toggle points `aria-controls` at while it is open. */
 const detailRowId = (season: string) => `career-gameweeks-${season}`;
 
-export default function CareerTable({ seasons, expanded, onToggle, renderExpanded }: Props) {
+export default function CareerTable({
+  seasons,
+  expanded,
+  onToggle,
+  renderExpanded,
+  selected,
+}: Props) {
   return (
     /*
      * A bounded pane, and the bound is what makes the nested gameweek tables' sticky
      * headers work at all.
      *
-     * `overflow-x-auto` on its own does not. Per the overflow spec, `overflow-x: auto`
-     * with `overflow-y: visible` computes `overflow-y` to **auto**, so this was
-     * already a vertical scroll container — just an unbounded one, which never scrolls
-     * and which a sticky header therefore resolves against and does nothing.
+     * **This is now the only scroll container on the page**, so the explanation for
+     * why it has to be bounded lives here in full. It used to be split between this
+     * comment and `StatsTable`'s wrapper, which had a second, bounded branch for the
+     * standalone "This Season" table; item 12 merged that section into this table and
+     * the branch became unreachable, so it was deleted and its reasoning moved here
+     * rather than being left attached to code nothing calls.
+     *
+     * The mechanism, which is not obvious and has caught this project once already:
+     * `overflow-x-auto` on its own does not produce a usable scrollport. Per the
+     * overflow spec, `overflow-x: auto` with `overflow-y: visible` computes
+     * `overflow-y` to **auto** — so a wrapper with only horizontal overflow set is
+     * already a vertical scroll container, just an unbounded one whose height is its
+     * content height. It never scrolls vertically, and a sticky header inside it
+     * resolves against it and silently does nothing. No error, no warning. Measured
+     * on the standalone table before item 10: `clientHeight === scrollHeight === 1635`
+     * with `max-height: none`.
      *
      * The nested tables cannot be given a scroller of their own instead: each one
      * lives inside a `colSpan={34}` cell that is as wide as this whole table, so its
      * wrapper is never narrow enough to scroll horizontally. This card is their
      * scrollport on both axes, so this is where the bound has to be.
      *
-     * It earns its keep beyond the sticky header. Ten expandable seasons at 38 rows
+     * It earns its keep beyond the sticky header. Eleven expandable seasons at 38 rows
      * each is a 400-row page; a pane keeps the season list reachable while you read
      * one season. And it costs nothing collapsed — the table is ~200px tall with four
      * rows closed, so no scrollbar exists until something is open.
@@ -204,6 +235,25 @@ export default function CareerTable({ seasons, expanded, onToggle, renderExpande
                   >
                     {s.season}
                   </DisclosureButton>
+                  {/* "Selected", never "This season" — which is the word both
+                      removed section headings got wrong. The page can be on any
+                      of the eleven, so "this" names nothing; "Selected" names the
+                      thing that put it there, the selector in the sidebar.
+
+                      Text rather than a colour cue alone, so it survives being
+                      read out and being looked at in either theme. It sits
+                      OUTSIDE the button on purpose: inside, it would join the
+                      accessible name and every such row would announce as
+                      "2022-23 Selected", which is a control renaming itself
+                      based on page state.
+
+                      Safe to widen this cell — unlike StatsTable's pinned pair,
+                      nothing here is offset against its width. */}
+                  {s.season === selected && (
+                    <Badge variant="primary-tint" className="ml-2 align-middle">
+                      Selected
+                    </Badge>
+                  )}
                 </TableCell>
                 {COLUMNS.map((col) => (
                   <TableCell

@@ -181,6 +181,21 @@ export interface GameweekHistory extends MatchStats {
 export interface PlayerCareerSeason extends MatchStats {
   season: string;
 
+  /**
+   * Every round this SEASON played, ascending — 2019-20 is `[1..29, 39..47]`
+   * and 2022-23 is `[1..6, 8..38]`.
+   *
+   * A property of the season, not of the player, which is what makes it usable
+   * as the GW filter's options: a gap here always means the season did not play
+   * that round. Built from the player's own rows it would additionally have gaps
+   * for weeks he was not in the squad, and the two would be indistinguishable.
+   *
+   * This is what the round selector reads. It used to come from the bootstrap's
+   * events, which only ever describe the *selected* season — fine while one
+   * season had filters, wrong the moment every expanded season does.
+   */
+  rounds: number[];
+
   team: number;
   team_name: string;
   team_short_name: string;

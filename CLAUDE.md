@@ -113,10 +113,18 @@ fixed the `detailPlayer` snapshot that had been in Known Issues since item 1,
 made `currentGameweek`/`nextGameweek` return null instead of a plausible wrong
 answer, and made the last of the four empty states reachable.
 
-`npm test` runs **two suites on two runners**: **77 server tests** and **82
+`npm test` runs **two suites on two runners**: **80 server tests** and **149
 client tests**, all passing. They are counted separately on purpose — two
 runners print two summaries, and a combined figure would be maintained by hand
 against neither of them.
+
+**The client figure read 82 until item 12 and had been wrong since item 9**,
+which is worth a sentence because the cause is not carelessness. Items 10 and 11
+both changed it — to 111 and then to 134 — and **neither wrote a Phase 1
+record**, so there was no place the number was being restated and nothing to
+notice it drifting. Both records are stubs below now, and the working
+agreement's "end each session by updating Current State" is what they were
+missing.
 
 The root script is `run-s --continue-on-error test:server test:client`, so the
 client suite runs even when the server suite is red and the overall exit code is
@@ -213,7 +221,7 @@ additionally pin URL shapes and `res.ok` handling, which the server suite
 already covers. `@testing-library/user-event` drives anything involving a
 keyboard — `fireEvent` dispatches a synthetic click and so cannot tell a
 `<button>` from a `<div onClick>`, which is the entire distinction item 3 turns
-on. Fourteen files:
+on. Eighteen files:
 
 - `client/src/components/PlayerShirt.test.tsx` — the club shirt and its two
   fallbacks. URLs asserted **in full** rather than pattern-matched, for the
@@ -268,12 +276,32 @@ on. Fourteen files:
   and after a `rerender`.
 - `client/src/components/GameweekSection.test.tsx` — the four empty states, each
   pinned by the wording that distinguishes it, including the sentence that must
-  **not** appear when a season is registered but empty. Two of the four are
-  unreachable from the UI and reachable here.
+  **not** appear when a season is registered but empty. All four are reachable
+  from the UI now, three inside an expanded season and one at page level; this
+  is still where the wording is pinned, and `NotInGame` is exported so the page
+  renders the same sentence rather than a second copy of it.
 - `client/src/pages/PlayerDetail.test.tsx` — expanding a career row issues one
   request, reopening after a collapse issues none, and changing player clears
   the cache. Payloads differ per (player, season) so a stale cache is visible
   rather than merely absent.
+
+  **Item 12 added the merge and the filters.** That the selected season is a row
+  in the same table rather than a section above it — the inverse of what this
+  file used to assert — that its totals stay on screen when it is collapsed,
+  that it alone is marked, and that it starts expanded. Then the per-season
+  filters: two seasons open at once with different ranges, a range narrowed on
+  one leaving the other alone, round options taken from the season rather than
+  the selected one (the 2019-20-to-47 case), no filter bar over a season with no
+  rows, and the filters resetting on a player change.
+- `client/src/components/AveragesFootnote.test.tsx` — the footnote's three
+  shapes through `StatsTable`, which is where the decisions live: one line when
+  the denominators agree, a named group on a second line when they diverge, and
+  the column labels instead when the divergent set is only part of a group. Plus
+  the two cases the caller owns (zero appearances rather than `Infinity`, and no
+  footnote at all with no rows), and two item 12 additions — the threshold read
+  from the **unfiltered** season under a venue filter, and the boundary still
+  reported when one column is holed again later, which is Haaland 2022-23's real
+  shape and was found in the browser.
 - `client/src/components/StatsTable.test.tsx` — rule 6 on screen: a null renders
   `—` and a zero renders `0.00`, in the same column of the same table.
 - `client/src/components/CareerTable.test.tsx` — the season disclosure. Tab
@@ -322,11 +350,18 @@ client suite needs jsdom and a module mock, which is Vitest's job. Migrating the
 server suite to Vitest would be a tooling change wearing a testing item's
 clothes.
 
-**Phase 1 step 1 is done: the player detail page shows a career.** It has three
-sections — the header card, "This Season", and "Previous Seasons", which is one
-summary row per season with the gameweeks underneath every one of them. The FPL
-site shows that summary table and stops; expanding it is the app's reason to
-exist. See "Phase 1" below for what the step decided.
+**Phase 1 step 1 is done: the player detail page shows a career.** The FPL site
+shows a summary table of previous seasons and stops; expanding it is the app's
+reason to exist. See "Phase 1" below for what the step decided.
+
+**Item 12 then merged the selected season into that table, so the page is now
+the header card, an Upcoming strip, and one career table.** One row per season,
+newest first, every one of them expandable into that season's gameweeks with its
+own GW-range and venue filters. The selected season is a row like any other,
+marked "Selected" in place, and starts expanded. There is no "This Season"
+section and no "Previous Seasons" heading: both named something that stopped
+being true when item 8 added a selector — the first whenever the selector is off
+the live season, the second on any season with later ones listed above it.
 
 **All four routes read Postgres.** `GET /api/bootstrap`,
 `GET /api/player/:code`, `GET /api/player/:code/career` and `GET /api/fixtures`
@@ -355,6 +390,16 @@ It replaced that route's `playerExists` call rather than adding a query, and it
 is what lets the detail page name a player for a season he was not in the game
 for, where no player-season exists to name him from.
 
+**Each career row also carries `rounds: number[]`** — every round that season
+played, ascending, derived from `fixtures` by a correlated subquery. 2019-20 is
+`[1..29, 39..47]` and 2022-23 is `[1..6, 8..38]`. It is what the per-season GW
+filter offers, and it is a property of the **season** rather than of the player:
+derived instead from the player's own gameweek rows, a gap in the list could
+mean either that the season skipped the round or that he was not in the squad,
+and nothing would distinguish them. Costs +0.77 ms and +1,274 B on an
+eleven-season career, measured. See API identity rule 7 for why it rides on the
+row rather than arriving as a map.
+
 **The default follows the data, and since item 4 that means a season nobody has
 played yet.** The reasoning is written out beside `latestSeason()` in
 `server/src/repositories/seasons.ts`, which is where the next person will hit
@@ -376,8 +421,8 @@ The client sends `?season=` on all three season-scoped routes. `App.tsx` sends
 it on the bootstrap; `Fixtures.tsx` sends it with the round, which it must,
 because that page derives its round from the _selected_ season's events and a
 request without a season would ask the _default_ season for it; and the detail
-page sends the season bootstrap resolved for "This Season", or the row's own
-season when a previous one is expanded.
+detail page sends the season bootstrap resolved for the selected season's row,
+and each other row's own season when it is expanded.
 
 `GET /api/bootstrap` runs its aggregate per request. No cache and no
 materialized view: it is fast enough, and a cache is a second source of truth.
@@ -542,6 +587,7 @@ fpl-lens/
 │   │   ├── services/api.ts    # fetch wrappers + ApiError (status, available)
 │   │   ├── lib/
 │   │   │   ├── bootstrap.ts   # BootstrapContext, current/next gameweek
+│   │   │   ├── averages.ts    # normalization, rounding, the footnote model
 │   │   │   ├── shirtCache.ts  # clubs known to have no shirt; + the test reset
 │   │   │   └── cn.ts          # class name join
 │   │   ├── test/              # harness only — no component lives here
@@ -557,7 +603,7 @@ fpl-lens/
 │   │   │   ├── Players.test.tsx       # disclosure + sort, by keyboard
 │   │   │   ├── Fixtures.tsx   # by gameweek, with difficulty
 │   │   │   ├── Fixtures.test.tsx      # the round collision across a season change
-│   │   │   ├── PlayerDetail.tsx  # header / Upcoming / This Season / Previous
+│   │   │   ├── PlayerDetail.tsx  # header / Upcoming / one merged career table
 │   │   │   ├── PlayerDetail.test.tsx  # expand, collapse, cache reset
 │   │   │   └── PlayerDetail.upcoming.test.tsx  # the remaining fixtures strip
 │   │   └── components/
@@ -568,10 +614,11 @@ fpl-lens/
 │   │       ├── PlayerShirt.test.tsx # both URLs in full, both fallbacks
 │   │       ├── PlayerHeader.tsx     # + the hot-linked player photo
 │   │       ├── PlayerHeader.test.tsx  # the photo URL and its fallback
-│   │       ├── GameweekFilters.tsx
-│   │       ├── GameweekSection.tsx # a season's gameweeks + the 4 empty states
+│   │       ├── GameweekFilters.tsx  # sticky left-0: it scrolls with the pane
+│   │       ├── GameweekSection.tsx # a season's gameweeks + 3 empty states
+│   │       │                  # + NotInGame, which the page renders itself
 │   │       ├── GameweekSection.test.tsx  # all four, by their wording
-│   │       ├── CareerTable.tsx     # one row per season, each expandable
+│   │       ├── CareerTable.tsx     # EVERY season, incl. the selected one
 │   │       ├── CareerTable.test.tsx    # the disclosure: Tab, Enter, Space, ARIA
 │   │       ├── StatsTable.tsx
 │   │       ├── StatsTable.test.tsx # rule 6: null renders —, zero renders 0
@@ -898,6 +945,17 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
      `{ seasons: [...] }` and each element carries its own `season`, which is
      what a consumer must render against.
 
+   **A season-scoped fact that is not a stat belongs on the row too, and item 12
+   is the first case.** Career rows carry `rounds: number[]` — every round that
+   season played, derived from `fixtures`. It is a property of the season rather
+   than of the player, so the obvious alternative was a
+   `Record<season, number[]>` map beside the rows. That is the manifest shape
+   this rule refused for `season` itself, for the same reason: a map and the
+   rows it describes are two statements of one fact that can disagree. On the
+   row, the season naming itself and the rounds it played arrive together and
+   cannot come apart. Measured cost of carrying it per row on an eleven-season
+   career: +1,274 bytes, +0.77 ms.
+
    A top-level `season: null` on a career response was considered and rejected.
    Null already means "not measured" everywhere in this codebase (rule 6), and a
    second meaning for it is the ambiguity that rule exists to prevent; it would
@@ -999,12 +1057,20 @@ can be run alone with `npm run test:client`.
 - [x] Player list with search, position filter and sortable columns
 - [x] Player header card (season, team, position, price, apps, starts, xG, xA, ICT)
 - [x] Gameweek-by-gameweek stats table (sortable, all columns, keyed on fixture)
-- [x] Filters: gameweek range built from the rounds that exist, home/away
-- [x] Averages row in stats table, nulls skipped, denominator stated
+- [x] Filters on **every** expanded season, not just one: a GW range built from
+      that season's own rounds, and home/away. State is per season, because the
+      round sets differ — 2019-20 runs to 47, 2022-23 has no round 7
+- [x] Averages row in stats table, nulls skipped, denominator stated — and a
+      footnote that **names** the column group resting on a different number of
+      appearances rather than printing a range spanning both
 - [x] Dashboard, ranked on real aggregates: total points, points per match with
       an appearance floor, ICT index
 - [x] Fixtures page with difficulty ratings, by gameweek
 - [x] Every page header names the season it is showing
+- [x] One career table with the selected season merged into it as a row — its
+      totals in line with every other season when collapsed, its gameweeks
+      underneath when expanded, and no "This Season" / "Previous Seasons"
+      headings to be wrong about which is which
 - [x] Career history: one summary row per season on the detail page, each
       expanding into that season's gameweeks
 - [x] The eleven columns FPL shows that we used to drop — xGC, tackles, CBI,
@@ -1180,16 +1246,30 @@ around it.
   and is what `StatsTable` uses). Nothing needs the wider key yet — the career
   table renders one `StatsTable` per expanded season, so keys never have to be
   unique across seasons.
-- **All four empty states are now reachable from the UI**, down from two
-  unreachable at item 1 and one at item 4. "Not in the game that season" was the
-  last, and item 8's selector is what reached it: choose a season the open
-  player has no `player_seasons` row for and that is the state, with the header
-  degraded to name and photo. Confirmed in the browser on Haaland in 2016-17 and
-  De Bruyne in 2026-27, not inferred.
+- **All four empty states are reachable from the UI**, down from two unreachable
+  at item 1 and one at item 4. Item 8's selector reached the last of them; item
+  12 moved three of them and had to relocate the fourth entirely. Where each one
+  lives now, since the merge changed the answer:
 
-  "Registered, no rows yet" became real the day 2026-27 was ingested and is
-  what every 2026-27 player's "This Season" section shows — confirmed in the
-  browser, not inferred.
+  | State | Where it renders |
+  | --- | --- |
+  | Not in the game | **Page level**, above the career table |
+  | Registered, no rows | Inside that season's expanded row |
+  | Never played | Inside that season's expanded row |
+  | Filtered out | Inside any expanded row — every season has filters now |
+
+  **"Not in the game" could not stay in the table, and that is a structural fact
+  rather than a layout choice.** It fires exactly when the player has no
+  `player_seasons` row for the selected season — which is exactly when
+  `getPlayerCareer` returns no row for it, so the merged table has nothing to
+  attach the sentence to. The wording still lives in `GameweekSection.tsx`, as
+  the exported `NotInGame` both callers use. Confirmed in the browser on Haaland
+  at 2016-17: the sentence, a name-and-photo header, no season-scoped tiles, the
+  career table intact, and **no row marked "Selected"** — correct, because the
+  selected season has no row to mark.
+
+  "Registered, no rows yet" became real the day 2026-27 was ingested and is what
+  every 2026-27 player's row shows when expanded — confirmed in the browser.
 
   **The state is a fact about the data, not about the date**: a
   `player_seasons` row exists and no `player_gameweeks` row does. Playing the
@@ -1203,10 +1283,40 @@ around it.
   one is wrong in exactly the window between a season starting and its data
   landing.
 
-  "Not in the game that season" is still unreachable: it needs a player the
-  current squad does not contain, and the player list only holds players with a
-  `player_seasons` row for the default season. Search across all players would
-  reach it. Both remain rendered and asserted by `GameweekSection.test.tsx`.
+  **A trailing paragraph claiming "Not in the game that season" was still
+  unreachable was removed in item 12.** It contradicted this entry's own opening
+  sentence and had been false since item 8. That is the failure mode the working
+  agreement's "trace a claim to the code before repeating it" exists to catch,
+  found here by reading the entry end to end rather than by testing anything.
+
+  All four remain rendered and asserted by `GameweekSection.test.tsx`.
+
+- **Two elements read "Selected" on the same page, meaning different things.**
+  `StatsTable` has an ownership column whose header is `Selected` (FPL's
+  `selected_by`, a raw count), and item 12's marker on the selected career row
+  is a badge reading `Selected`. Both are visible at once on a 1558px viewport:
+  the badge in the pinned Season cell, the header ~31 columns right in the
+  nested gameweek table.
+
+  Found by a test collision rather than by eye — `getAllByText('Selected')`
+  returned two nodes — which is why the assertion is scoped to the summary row.
+  Left as is: contextually they are in different tables with different headers,
+  the badge was chosen deliberately over "This season" (the word both removed
+  headings got wrong), and renaming FPL's own column label is a bigger decision
+  than this item should take on the way past. Recorded so the next reader knows
+  it was seen rather than missed.
+
+- **The averages footnote scrolls horizontally away inside an expanded season.**
+  Pre-existing, not introduced by item 12 — it applies to every nested table
+  item 10 built. The note sits outside the gameweek table but inside the
+  `colSpan={34}` cell, so the career pane carries it sideways: scroll right to
+  read BPS and the sentence describing the averages has gone off the left edge.
+
+  Item 12 fixed exactly this for the **filter bar** (`sticky left-0 w-fit`,
+  measured at -419px before the fix) and deliberately did not extend it to the
+  note. The filter bar is three interactive controls and losing them is a
+  functional defect; the note is a caption. The same one-line instrument would
+  fix it whenever someone wants to.
 
 - **We hold NULL for `defensive_contribution` in 2024-25 where FPL reports a
   real number, on 290 player-seasons — every reachable player in the season.**
@@ -1393,11 +1503,12 @@ around it.
 
   **That consequence is visible now, and the old wording said it was not.** The
   entry claimed it "cannot be seen today", on the grounds that the detail page
-  files the default season under "This Season" and only _previous_ seasons reach
-  the career table, so it would take a newer season being ingested. Item 8's
-  selector reaches it without one: select any earlier season and 2026-27 becomes
-  a previous season on every career table. Observed on Haaland's, reading
-  `£15.5 → —`.
+  filed the default season under a separate "This Season" section and only
+  _previous_ seasons reached the career table, so it would take a newer season
+  being ingested. Item 8's selector reached it without one, and **item 12
+  removed the premise entirely**: every season is a row in one table now, so
+  2026-27 shows `£15.5 → —` on every career table whatever the selector is on.
+  Observed on Haaland's.
 
   Showing `start → now` instead was considered and rejected: the column says
   "end", and a season that has not ended did not end at today's price.
@@ -1619,6 +1730,12 @@ unnecessary once this line exists.
       container: `position: sticky` resolves against the nearest scrolling
       ancestor, and its own `overflow-x-auto` would never be narrow enough to
       scroll, so GW would have slid away with everything else.
+
+      (**The `scroll` prop no longer exists.** Item 12 merged the standalone
+      table into the career table, so every caller passed `false` and the other
+      branch became unreachable — it was deleted and its reasoning moved onto the
+      career `Card`. The behaviour described here is what `StatsTable` now does
+      unconditionally.)
 
       One bug found in the browser and not by the tests: the per-season fetch
       was fired **inside a `setExpanded` updater**, and React StrictMode
@@ -2622,6 +2739,192 @@ unnecessary once this line exists.
       | module-level shirtless set never consulted | **red**, 1 test |
       | per-instance reset removed | **red**, 1 test |
 
+- [x] **10. Sticky headers, pinned columns, row striping.** → `2ce4fd9`
+
+      Column headings scrolled away vertically and the identifying column
+      scrolled away horizontally on three wide tables. Adds sticky headers, pins
+      Opp beside GW, pins the Player column, stripes all four tables, and moves
+      row background colour from the cell to the row (`lib/rowSurface.ts`) so a
+      pinned cell paints `--row-bg` and stripes in step instead of stepping away
+      from it. The load-bearing discovery: `overflow-x: auto` with
+      `overflow-y: visible` computes `overflow-y` to **auto**, so every wrapper
+      was already an unbounded vertical scroller in which a sticky header
+      silently never sticks — resolved per table rather than uniformly.
+
+      **These two entries are stubs rather than full records**, written in item
+      12 after the fact. Both commit messages are detailed records in their own
+      right, so the entry's job is to say what the item was and point at the full
+      account rather than restate it. Read `git show 2ce4fd9` for the whole thing.
+
+- [x] **11. Averages divide by appearances, not fixtures.** → `5fad1b8`
+
+      The averages row divided by every row shown while the career row six inches
+      above divided by appearances — Tarkowski's 2025-26 read AVG Pts 4.5
+      (170/38) under a career row saying PPG 4.6 (170/37). New:
+      `client/src/lib/averages.ts`, a pure module holding the normalization
+      strategies, per-column denominators, `roundHalfEven` and `fmtPpg`. The
+      numerator and denominator filters are deliberately **not** symmetric — the
+      null filter picks the numerator, the played filter only the denominator —
+      which the wide verification run established and API identity rule 5 now
+      records in full. `points_per_game` also stopped being rounded in SQL and is
+      rounded once on the client by the same formatter as the row beneath it.
+
+      Full account: `git show 5fad1b8`.
+
+- [x] **12. The selected season merged into the career table.** The detail page
+      showed the selected season twice in two shapes — a "This Season" block with
+      filters and a `StatsTable`, and an absence, because the career table
+      explicitly deleted that season from its rows. It is one table now, and the
+      selected season is a row in it: totals in line when collapsed, gameweeks
+      underneath when expanded, exactly like every other season.
+
+      **Both section headings are gone rather than renamed**, because both
+      asserted something false once item 8 landed a selector. "This Season" is
+      wrong whenever the selector is off the live season; "Previous Seasons" is
+      wrong on Haaland at 2022-23, where it filed 2026-27, 2025-26, 2024-25 and
+      2023-24 — every one of them later — under "previous".
+
+      **Filters moved from one season to every expansion**, which forced the
+      state to be per season. The GW options are season-specific — 2019-20 runs
+      to 47 after the Covid restart, 2022-23 has 37 rounds ending at 38 — so one
+      shared pair would carry a round 47 into a season that never played one.
+      `gwRange: null` means "the whole season" and is resolved at render against
+      that season's rounds, which **deletes** the effect item 8 had to key on
+      `b.season` rather than on `[firstRound, lastRound]`. It also fixed a
+      pre-existing gap: neither filter reset on a player change.
+
+      **`rounds: number[]` is new on every career row, and where it comes from is
+      the point.** Checked rather than assumed: `events` holds 38 rows, all
+      2026-27, so it cannot answer this for the ten CSV seasons. It is derived
+      from `fixtures`, which is what "which rounds exist" has always come from
+      here — complete for all eleven seasons, and reproducing 2019-20 as
+      `[1..29, 39..47]` and 2022-23 as `[1..6, 8..38]`.
+
+      **Deriving it from the player's own gameweek rows was rejected**, and this
+      is the item's sharpest decision. That list would carry two different kinds
+      of gap with nothing telling them apart: 2019-20 missing 30-38 because the
+      season *skipped* them, and missing others because the player was not in the
+      squad. A dropdown a reader cannot interpret is the same failure as the
+      averages footnote below. Measured cost of doing it properly, on an
+      eleven-season career: **+0.77 ms** (1.97 → 2.74 ms median of 15) and
+      **+1,274 B** (7,774 → 9,048, +16.4%), fetched once per player. It rides on
+      the row under API identity rule 7, so it cannot disagree with the season
+      that row already names.
+
+      **Row order and default expansion, decided rather than raised.** The order
+      stays chronological with the selected row marked in place — pinning it to
+      the top would reorder the table on every season change. The selected row
+      starts expanded and every other collapsed, which is what "This Season"
+      always did.
+
+      **The expansion rule was rewritten by a measurement, not by argument.** The
+      first version was additive: open the newly selected season, close nothing,
+      so a season the user had deliberately expanded survived. In the browser, on
+      Haaland's five-season career, four ordinary season changes left **all five**
+      expanded — pane 1,986px → ~7,300px against a 920px scrollport, and season
+      totals visible at once falling **5 → 2**. The feature undoing itself in four
+      clicks. The rule is now ownership: the row the *selector* opened is the
+      selector's to close, and a row the *user* opened is theirs to keep. After
+      the fix, exactly one row is open after every change and the pane holds at
+      ~1,966px.
+
+      **A React purity bug inside that fix, worth recording because it looked
+      right.** The first implementation assigned the ref and read it back inside
+      the `setExpanded` updater. An updater does not run when it is scheduled — it
+      runs at the next render — so it always found the "previous" season already
+      equal to the new one and closed nothing: the accumulation the effect existed
+      to stop, reintroduced by its own fix. Every ref is read before the updater
+      now. Same rule the `loadSeason` comment states, arriving from the read side.
+
+      **The averages footnote names its groups instead of spanning them.** Item
+      11 printed "Averages over 23–35 appearances in 38 fixtures" on Haaland
+      2022-23 — true, and silent about which columns own the 23 or why. Now:
+
+      ```
+      Averages over 35 appearances in 38 fixtures.
+      Expected stats over 23, not measured before GW16.
+      ```
+
+      The second line renders only where the denominators diverge. The grouping
+      is **read off the column set** — a `group` tag on the four expected columns
+      in `StatsTable`'s `COLUMNS` — never a separate list of names that could fall
+      out of step with the table. Inferring it from the `x` label prefix was
+      rejected for the reason data rule 10 gives about `position`: not deriving
+      meaning from a display string. A group is named only when the divergent set
+      is **exactly** that group's rendered members, so a season holing xGI alone
+      reads "xGI over 22" rather than claiming the family.
+
+      **Two things about that sentence needed the browser to get right.**
+
+      The threshold is a claim about the *season*, so it reads the unfiltered
+      history — `StatsTable` gained `seasonHistory` for it, since `GameweekSection`
+      hands it only the filtered rows. A contiguous GW range cannot expose this
+      (a range showing both measured and unmeasured rows necessarily contains the
+      boundary), so the test uses the **venue** filter, which is not contiguous in
+      rounds.
+
+      And a row counts as measured when **any** of the group is, not all of it.
+      Haaland 2022-23 is NULL on all four columns for rounds 1-15 *and* NULL on
+      `expected_goal_involvements` again at round 29, where he has a 0-minute row
+      in item 7's holed fixture. Under `every` that is an unmeasured row above the
+      boundary, the prefix test fails, and the clause vanishes from the one season
+      it was written for. Found by looking at the page, not by a test.
+
+      **`StatsTable`'s `scroll` prop and its bounded-`Card` branch are deleted.**
+      Confirmed unreachable from the call sites first: `StatsTable` has one
+      production caller (`GameweekSection`), which has two (`PlayerDetail`), and
+      the merge removed the only one passing `true`. Its long `overflow-y`
+      explanation moved to the career `Card`, now the page's only scroll
+      container — dead code with a good explanation attached reads to the next
+      person as a description of something live. One existing assertion in
+      `TableSurface.test.tsx` would have **passed vacuously** after the deletion
+      (`closest('[class*="overflow-auto"]')` returns null when no such ancestor
+      exists anywhere), so it was rewritten against the nested render where the
+      scrollport is real.
+
+      **The filter bar is `sticky left-0 w-fit`.** It renders inside a
+      `colSpan={34}` cell, so it scrolls with the career pane: measured at
+      `scrollLeft: 700` in an 894px pane, the controls sat at **-419px** while the
+      pinned Season and GW columns held at the edge. `w-fit` is load-bearing —
+      a full-width box pinned at `left-0` does not appear to move. The averages
+      note beneath still scrolls away; that is pre-existing and it is a caption
+      rather than a control, so it is a Known Issue.
+
+      **The four empty states, all confirmed in the browser.** Three moved into
+      the expansion unchanged. "Not in the game" **could not**: a season the
+      player has no `player_seasons` row for produces no career row, so there is
+      nothing to attach it to. It is a page-level notice now, from an exported
+      `NotInGame` in `GameweekSection.tsx` so the wording still lives in one
+      place. Confirmed: Haaland at 2016-17 shows it with a name-and-photo header,
+      no season-scoped tiles, the career table intact, and **no row marked** —
+      correct, since the selected season has no row.
+
+      One more found by looking: the filter bar was gated on the season having
+      rounds, and 2026-27 has all 38 with no match played — so three controls
+      drew above "Data will appear here once the season is underway". Gated on
+      rows now. The season having rounds and the player having rows in them are
+      different questions, which is what the empty states themselves turn on.
+
+      **Verification.** `npm test`: **80 server, 149 client**, both green. `tsc
+      --noEmit` clean in both packages. HMR clean on all five changed app modules
+      — `hmr update`, no `invalidate`, no Fast Refresh warning. Browser pass on
+      Haaland 2022-23 and Onana 2025-26, console clean, both themes.
+
+      **Mutation-checked, measured:**
+
+      | Mutation | Result |
+      | --- | --- |
+      | filter state shared across seasons | **red**, 1 test |
+      | rounds derived from the player's rows (client) | **red**, 2 tests |
+      | rounds derived from the player's rows (server) | **red**, 3 tests |
+      | selected season filtered out of the career list again | **red**, 12 tests |
+      | filters not reset on player change | **red**, 1 test |
+      | selected row not seeded into `expanded` | **red**, 8 tests |
+      | threshold read from the filtered rows | **red**, 1 test — the venue one |
+      | footnote group named without the exactness check | **red**, 1 test |
+      | "before GWn" prefix guard dropped | **red**, 1 test |
+      | `Selected` marker never rendered | **red**, 1 test |
+
 ## Deferred
 
 The gate used to be "not until Phase 0 is complete". Phase 0 is complete, and
@@ -2721,6 +3024,11 @@ every hour, and needs somewhere to put them and a policy for how often.
   design, README with screenshots.
 - ~~A season selector in the UI.~~ **Done — Phase 1 item 8.** It carried the
   `detailPlayer` snapshot fix with it, as this entry said it would.
+- ~~A per-90 toggle on the averages row.~~ **Still open**, and item 12 did not
+  touch it — but note that `Normalization` in `lib/averages.ts` is still the
+  seam, and the footnote now has a model (`buildFootnote`) that would need a
+  third form of words for it. Whichever item lands it owns saying what "per 90"
+  divides by in the sentence, since "appearances" stops being the denominator.
 
 ## Design Decisions
 

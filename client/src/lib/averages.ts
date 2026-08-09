@@ -178,3 +178,186 @@ export function appearanceCount(
 ): number {
   return rows.filter(STRATEGIES[normalization].counts).length;
 }
+
+/* -------------------------------------------------------------------------- */
+/*  The footnote                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What the averages footnote says, computed rather than formatted.
+ *
+ * **Item 11 shipped a range and the range does not communicate.** On Haaland
+ * 2022-23 it read "Averages over 23–35 appearances in 38 fixtures", which is
+ * true and tells a reader nothing: it spans two groups of columns without
+ * naming either, so "23" has no owner and the gap has no explanation. The
+ * divergence has exactly one cause in exactly one season — the expected family
+ * is not measured before GW16 in 2022-23 — so the groups are named instead:
+ *
+ *     Averages over 35 appearances in 38 fixtures.
+ *     Expected stats over 23, not measured before GW16.
+ *
+ * The range survives as the fallback for a shape nothing in this database has
+ * (three or more distinct denominators), where a two-line sentence has nothing
+ * to say and an approximate one at least does not lie.
+ */
+
+/** How the main line's appearance count reads. */
+export type Appearances =
+  | { kind: 'exact'; value: number }
+  | { kind: 'range'; min: number; max: number };
+
+export interface DivergentGroup {
+  /** What to call it: the group's own name, or its columns listed. */
+  label: string;
+  /** The denominator those columns rest on. */
+  appearances: number;
+  /**
+   * The round the group starts being measured, or **null** where the unmeasured
+   * rows are not a prefix and "before" would misdescribe them.
+   */
+  from: number | null;
+}
+
+export interface FootnoteModel {
+  main: Appearances;
+  /** The second line, or null when every rendered column agrees. */
+  divergent: DivergentGroup | null;
+}
+
+/** One averaged column, as the footnote needs to see it. */
+export interface FootnoteColumn {
+  /** The header label, used when a divergent set has no shared group. */
+  label: string;
+  /**
+   * The group this column belongs to, declared on the column itself.
+   *
+   * **Read off the column set rather than held as a list of names somewhere
+   * else.** A separate list of "the expected columns" is a second description of
+   * the same fact, free to fall out of step with the table it describes — which
+   * is the objection this codebase applies to duplicated constants everywhere.
+   * Inferring the group from the label instead (every expected column starts
+   * with `x`) was the other option and is what data rule 10 forbids for
+   * `position`: deriving meaning from a display string.
+   */
+  group?: string;
+  /** The average's denominator over the rows shown. 0 means it rendered `—`. */
+  denominator: number;
+  /** Whether this column carries a value on a given row (rule 6). */
+  measured: (gw: GameweekHistory) => boolean;
+}
+
+/**
+ * Build the footnote.
+ *
+ * `shown` are the rows the table is displaying, which is what the appearance
+ * counts describe. `seasonHistory` is **every** row of the player-season,
+ * before filtering, and only the measurement threshold reads it.
+ *
+ * **That split is the whole reason `seasonHistory` is a parameter.** "Not
+ * measured before GW16" is a claim about the season, and reading it off the
+ * filtered rows makes it a claim about the filter — a venue filter on a season
+ * whose round 16 was away would report the first measured *home* round instead,
+ * and say it about the season. A contiguous GW range cannot reach that, because
+ * a range showing both measured and unmeasured rows necessarily contains the
+ * boundary round; the venue filter is not contiguous and does.
+ */
+export function buildFootnote(
+  columns: readonly FootnoteColumn[],
+  seasonHistory: readonly GameweekHistory[]
+): FootnoteModel {
+  // Only columns that render a number own a denominator. A wholly unmeasured
+  // column shows the placeholder, and letting its 0 in would put a floor of zero
+  // on every season that has one — which is all of them.
+  const rendered = columns.filter((c) => c.denominator > 0);
+  if (rendered.length === 0) return { main: { kind: 'exact', value: 0 }, divergent: null };
+
+  const distinct = [...new Set(rendered.map((c) => c.denominator))].sort((a, b) => a - b);
+  if (distinct.length === 1) {
+    return { main: { kind: 'exact', value: distinct[0] }, divergent: null };
+  }
+  if (distinct.length > 2) {
+    // Nothing in this database produces three, and a two-line sentence has no
+    // honest form for it. The range is item 11's wording, kept as the fallback.
+    return {
+      main: { kind: 'range', min: distinct[0], max: distinct[distinct.length - 1] },
+      divergent: null,
+    };
+  }
+
+  // Two groups. The larger denominator is always the main one, and that is
+  // structural rather than a tie-break: a denominator counts rows that were both
+  // played and measured, so no column can exceed the fully measured count. The
+  // divergent group is the one with a deficit, which is the only group the
+  // second line's "not measured" wording describes.
+  const [minority, majority] = distinct;
+  const divergentColumns = rendered.filter((c) => c.denominator === minority);
+
+  return {
+    main: { kind: 'exact', value: majority },
+    divergent: {
+      label: groupLabel(divergentColumns, rendered),
+      appearances: minority,
+      from: measurementStart(divergentColumns, seasonHistory),
+    },
+  };
+}
+
+/**
+ * Name the divergent set — its group, or failing that its columns.
+ *
+ * **The exactness check is what stops the name being a lie.** Naming the group
+ * whenever the divergent columns merely belong to one would claim "Expected
+ * stats" about a season that holed xG alone — which 2022-23 nearly is, since
+ * round 29 holes `expected_goal_involvements` and nothing else. So the group is
+ * named only when the divergent set is exactly the group's rendered members; a
+ * strict subset gets its columns listed and reads "xGI over 22".
+ */
+function groupLabel(divergent: readonly FootnoteColumn[], rendered: readonly FootnoteColumn[]): string {
+  const groups = new Set(divergent.map((c) => c.group));
+  const only = [...groups][0];
+
+  if (groups.size === 1 && only !== undefined) {
+    const membersRendered = rendered.filter((c) => c.group === only);
+    if (membersRendered.length === divergent.length) return only;
+  }
+  return divergent.map((c) => c.label).join(', ');
+}
+
+/**
+ * The round the divergent columns start being measured, or null.
+ *
+ * **A row counts as measured when ANY of the group's columns carries a value,
+ * not when all of them do**, and the distinction is load-bearing rather than
+ * pedantic. The clause this feeds reads "not measured before GW16", which is a
+ * claim about what happens *before* the boundary — that nothing in the group was
+ * measured there. It is not a completeness claim about everything after it, and
+ * writing it as `every` would quietly turn it into one.
+ *
+ * Haaland 2022-23 is the case that settles it, from the data rather than from
+ * argument. The expected family is NULL on all four columns for rounds 1-15, and
+ * `expected_goal_involvements` is *additionally* NULL at round 29 — item 7 holed
+ * that one fixture on that one column, and he has a 0-minute row in it. Under
+ * `every`, round 29 is an unmeasured row above the boundary, the prefix test
+ * fails, and the clause is dropped from the one season it exists to describe.
+ * Under `some` the sentence renders and is true: nothing was measured before
+ * GW16, and the later hole is a separate fact the sentence never claimed on.
+ *
+ * Still null where the unmeasured rows are not a prefix at all — a column that
+ * stops being measured at the end of a season, or a group holed as a block in
+ * the middle. "Before" does not describe those, and printing a round number
+ * would assert a boundary that is not where it says it is. The caller drops the
+ * clause and keeps the rest of the sentence, which is still true.
+ */
+function measurementStart(
+  divergent: readonly FootnoteColumn[],
+  seasonHistory: readonly GameweekHistory[]
+): number | null {
+  const anyMeasured = (gw: GameweekHistory) => divergent.some((c) => c.measured(gw));
+
+  const measured = seasonHistory.filter(anyMeasured).map((gw) => gw.round);
+  const unmeasured = seasonHistory.filter((gw) => !anyMeasured(gw)).map((gw) => gw.round);
+  if (measured.length === 0 || unmeasured.length === 0) return null;
+
+  const from = Math.min(...measured);
+  return unmeasured.every((round) => round < from) ? from : null;
+}

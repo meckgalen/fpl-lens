@@ -1,15 +1,53 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PlayerHeader from '../components/PlayerHeader';
 import GameweekFilters from '../components/GameweekFilters';
-import GameweekSection from '../components/GameweekSection';
+import GameweekSection, { NotInGame } from '../components/GameweekSection';
 import CareerTable from '../components/CareerTable';
 import { FDRBadge } from '../components/PosBadge';
-import type { Player, PlayerCareerSeason, PlayerDetailData, PlayerIdentity } from '../types/fpl';
+import type {
+  GameweekHistory,
+  Player,
+  PlayerCareerSeason,
+  PlayerDetailData,
+  PlayerIdentity,
+} from '../types/fpl';
 import { fetchPlayerCareer, fetchPlayerDetail } from '../services/api';
 import { useBootstrap } from '../lib/bootstrap';
 
 /** How many of the remaining fixtures to show. Enough to plan a transfer on. */
 const UPCOMING_SHOWN = 5;
+
+type Venue = 'all' | 'home' | 'away';
+
+/** One season's filter state. See `filters` in the component for why null. */
+interface SeasonFilter {
+  /** null = the whole season, resolved at render against that season's rounds. */
+  gwRange: [number, number] | null;
+  venue: Venue;
+}
+
+/** What an unfiltered season looks like. An absent key means this. */
+const NO_FILTER: SeasonFilter = { gwRange: null, venue: 'all' };
+
+/**
+ * Apply one season's filters to its rows.
+ *
+ * The range defaults to the season's own first and last round, so "unset" and
+ * "the whole season" are the same thing and neither needs to be stored.
+ */
+function applyFilters(
+  history: GameweekHistory[],
+  filter: SeasonFilter,
+  rounds: number[]
+): GameweekHistory[] {
+  const [lo, hi] = filter.gwRange ?? [rounds[0] ?? 1, rounds[rounds.length - 1] ?? 1];
+  return history.filter((gw) => {
+    if (gw.round < lo || gw.round > hi) return false;
+    if (filter.venue === 'home' && !gw.was_home) return false;
+    if (filter.venue === 'away' && gw.was_home) return false;
+    return true;
+  });
+}
 
 /**
  * What the player has left to play.
@@ -104,27 +142,6 @@ export default function PlayerDetail({
   const team = player ? b.teams.find((t) => t.id === player.team) : undefined;
 
   /**
-   * The rounds that exist, taken from the events themselves.
-   *
-   * This used to be `events.filter(e => e.finished).length` — a count used as a
-   * maximum, which is only correct when the rounds run 1..n with none missing.
-   * Two seasons break that, in opposite directions: 2019-20 has 38 rounds whose
-   * highest is 47 (the Covid restart replayed rounds 30-38 as 39-47), so the
-   * filter capped nine rounds below the end of the season; 2022-23 has 37
-   * rounds whose highest is 38 (no round 7, postponed after the Queen's death),
-   * so the filter cut off the final day.
-   *
-   * Listing the real round numbers fixes both and additionally stops the
-   * dropdown offering rounds that never happened.
-   *
-   * These are the CURRENT season's rounds, which is why they filter only the
-   * "This Season" table. An expanded 2019-20 is shown whole.
-   */
-  const rounds = useMemo(() => b.events.map((e) => e.id), [b.events]);
-  const firstRound = rounds[0] ?? 1;
-  const lastRound = rounds[rounds.length - 1] ?? 1;
-
-  /**
    * One entry per season fetched, so collapsing and re-expanding costs nothing.
    *
    * Keyed by season and reset when the player changes — a cache that outlived
@@ -151,25 +168,47 @@ export default function PlayerDetail({
    * all. Nothing renders from it, so it does not want to be state.
    */
   const inFlight = useRef<Set<string>>(new Set());
+  /**
+   * Which rows are the selector's to close, and which are the user's to keep.
+   *
+   * Refs rather than state because nothing renders from either — they only decide
+   * what a season change is allowed to collapse. See the season effect below for
+   * why the distinction has to exist at all.
+   */
+  const lastSelected = useRef<string | null>(null);
+  /** Seasons the user has opened or closed by hand. Their state is not ours. */
+  const userToggled = useRef<Set<string>>(new Set());
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [gwRange, setGwRange] = useState<[number, number]>([firstRound, lastRound]);
-  const [homeAway, setHomeAway] = useState<'all' | 'home' | 'away'>('all');
 
-  // The range follows the season rather than freezing at whatever it was
-  // initialised with. useState's argument is read once, so without this a
-  // season change would leave the filter on the previous season's rounds.
-  //
-  // Keyed on the season and NOT on the two round numbers, which is what it used
-  // to be: those are numbers, and the eight ordinary seasons all run 1 to 38, so
-  // the effect did not fire on the common case. 2019-20 runs to 47 and 2022-23
-  // has no round 7, so a carried-over range is not merely stale but can name
-  // rounds the new season never played.
-  useEffect(() => {
-    setGwRange([firstRound, lastRound]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [b.season]);
+  /**
+   * The filters, **per season**, because every expanded season has its own now.
+   *
+   * One shared pair used to be enough because one season had filters. It is not
+   * enough for eleven: the GW options are season-specific — 2019-20 runs to 47
+   * because of the Covid restart, 2022-23 has 37 rounds ending at 38 — so a
+   * shared range would carry a round 47 into a season that never played one.
+   *
+   * **`gwRange: null` means "the whole season", rather than a seeded pair**, and
+   * that is the load-bearing part. A season's rounds are not known until its
+   * career row is in hand, so seeding would need an effect per season firing when
+   * data arrives — which is precisely the effect item 8 had to key on `b.season`
+   * rather than on `[firstRound, lastRound]`, because eight of the eleven seasons
+   * run 1 to 38 and a numeric dependency does not fire on the common case.
+   * Storing "unset" deletes that effect instead of reproducing it eleven times:
+   * the default is resolved at render, against the rounds that season actually
+   * played.
+   *
+   * It also deletes the reset that used to run on every season change. Keys make
+   * that unnecessary by construction — 2019-20's round 47 cannot reach 2022-23,
+   * because it is not stored under 2022-23's key.
+   */
+  const [filters, setFilters] = useState<Record<string, SeasonFilter>>({});
+
+  const setFilter = useCallback((season: string, patch: Partial<SeasonFilter>) => {
+    setFilters((f) => ({ ...f, [season]: { ...(f[season] ?? NO_FILTER), ...patch } }));
+  }, []);
 
   const loadSeason = useCallback(
     async (season: string) => {
@@ -207,7 +246,19 @@ export default function PlayerDetail({
     setDetailBySeason({});
     setCareer(null);
     setIdentity(null);
-    setExpanded(new Set());
+    // Seeded with the selected season rather than empty: it is the row that was
+    // the "This Season" section before item 12, and that section was always open.
+    // Recorded as the selector's row, so the next season change may close it,
+    // and the previous player's hand-opened rows are forgotten with everything
+    // else about him.
+    setExpanded(new Set([b.season]));
+    lastSelected.current = b.season;
+    userToggled.current = new Set();
+    // Per player, like everything else here. This was a real gap before item 12
+    // and not one the merge introduced: `homeAway` reset on nothing at all, and
+    // `gwRange` only on a season change, so opening a second player inherited the
+    // first one's filters.
+    setFilters({});
     setLoading(true);
     setError(null);
 
@@ -218,7 +269,65 @@ export default function PlayerDetail({
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
+    // `b.season` is READ here and deliberately not a dependency. This effect is
+    // "start again on a new player", and it seeds the open row with whatever
+    // season is selected at that moment. Adding the dep would refetch the career
+    // on every season change — the exact waste item 8 split these two effects to
+    // remove, the career being season-independent. Keeping the selected row open
+    // ACROSS a season change is the next effect's job, not this one's.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
+
+  /**
+   * Keep the selected season's row open as the selection moves — and close the
+   * one the selector opened last time, which is the part that took measuring.
+   *
+   * **A purely additive version was tried first and is wrong.** It opened the new
+   * season and closed nothing, on the reasoning that a user who expanded a season
+   * to compare against should keep it. That reasoning is right and the rule built
+   * on it is not, because it does not distinguish rows the user opened from rows
+   * that opened themselves. Measured in the browser on Haaland, whose career is
+   * five seasons, changing season four times:
+   *
+   *     start        1 open   pane 1,986px   5 of 5 season totals in view
+   *     -> 2023-24   2 open   pane 3,708px   4
+   *     -> 2024-25   3 open   pane 5,429px   3
+   *     -> 2025-26   4 open   pane 7,151px   2
+   *     -> 2026-27   5 open   pane ~7,300px  — every season expanded
+   *
+   * Against a 920px scrollport. Four ordinary interactions and the totals are no
+   * longer in line with each other, which is the entire point of merging them
+   * into one table.
+   *
+   * So the row the *selector* opened is the selector's to close, and every row the
+   * *user* opened is theirs to keep. `autoOpened` is which season this effect last
+   * opened; `toggleSeason` clears it the moment the user touches that row, because
+   * from then on its state is a choice rather than a side effect.
+   *
+   * Idempotent, so StrictMode's double invocation and this firing alongside the
+   * mount effect are both harmless: the second pass finds `autoOpened` already
+   * equal to `b.season` and does nothing.
+   */
+  useEffect(() => {
+    // Every ref is read HERE and none inside the updater, and that is not a
+    // style choice. An updater does not run when it is scheduled — it runs during
+    // the next render — so a ref read inside it sees whatever the ref holds by
+    // then, which is after the assignment below. The first attempt did exactly
+    // that and closed nothing at all, because the updater always found the
+    // "previous" season already equal to the new one. The same purity rule the
+    // `loadSeason` comment below states, arriving from the read side.
+    const previous = lastSelected.current;
+    const keepPrevious =
+      previous === null || previous === b.season || userToggled.current.has(previous);
+    lastSelected.current = b.season;
+
+    setExpanded((open) => {
+      const next = new Set(open);
+      if (!keepPrevious) next.delete(previous);
+      next.add(b.season);
+      return next;
+    });
+  }, [b.season]);
 
   /**
    * The selected season's gameweeks. Adds to the cache rather than replacing
@@ -251,6 +360,12 @@ export default function PlayerDetail({
   const toggleSeason = (season: string) => {
     const isOpen = expanded.has(season);
 
+    // The user now has an opinion about this row, so a later season change must
+    // not collapse it on the grounds that the selector opened it. Recorded
+    // whichever way the toggle went: opening it makes it theirs, and so does
+    // closing it.
+    userToggled.current.add(season);
+
     setExpanded((open) => {
       const next = new Set(open);
       // Collapse keeps the cached response, which is the whole point: reopening
@@ -274,20 +389,22 @@ export default function PlayerDetail({
   };
 
   const current = detailBySeason[b.season];
-  const history = current?.history ?? [];
-  const filtered = history.filter((gw) => {
-    if (gw.round < gwRange[0] || gw.round > gwRange[1]) return false;
-    if (homeAway === 'home' && !gw.was_home) return false;
-    if (homeAway === 'away' && gw.was_home) return false;
-    return true;
-  });
+
+  const seasons = career ?? [];
+  /** The career row for a season, which is where its `rounds` live. */
+  const careerBySeason = useMemo(
+    () => new Map(seasons.map((s) => [s.season, s])),
+    [seasons]
+  );
 
   // Whether the career says he was in the game that season at all. Distinct
   // from having no gameweeks in it — see GameweekSection.
+  //
+  // Its only caller now is the page-level notice below. Inside the table the
+  // question cannot arise: a row exists there precisely because the career has
+  // that season.
   const registeredIn = (season: string) =>
     career === null || career.some((s) => s.season === season);
-
-  const previousSeasons = (career ?? []).filter((s) => s.season !== b.season);
 
   // The player's name, from the season if he is in it and from his identity
   // otherwise. Both are the same string on every ordinary render; the identity
@@ -334,68 +451,76 @@ export default function PlayerDetail({
             </>
           )}
 
-          <SectionHeading title="This Season" note={b.season} />
-          <GameweekFilters
-            gwRange={gwRange}
-            rounds={rounds}
-            homeAway={homeAway}
-            onGwRangeChange={setGwRange}
-            onHomeAwayChange={setHomeAway}
-          />
-          {/* "Not fetched yet" is not "fetched, and there is nothing in it",
-              and GameweekSection cannot tell them apart — it sees a history
-              array, and an empty one looks exactly like an absent one. Handing
-              it the absent case prints "Data will appear here once the 2025-26
-              season is underway" for as long as the request takes, about a
-              season that finished in May. The window is created by keeping the
-              cache across a season change, which is still the right thing to
-              do; this is the other half of it. */}
-          {current ? (
-            <GameweekSection
-              history={history}
-              filtered={filtered}
-              teams={current.teams}
-              season={current.season}
-              playerName={name}
-              registered={registeredIn(b.season)}
-            />
-          ) : (
-            <SeasonLoading season={b.season} />
-          )}
+          {/* The one absence with no row to sit in. A season the player has no
+              player_seasons row for produces no career row either, so the table
+              below simply does not contain it and there is nowhere in it to say
+              why. It goes here instead, under the header card that has already
+              degraded to a name and a photograph for the same reason. */}
+          {!registeredIn(b.season) && <NotInGame playerName={name} season={b.season} />}
 
-          <SectionHeading
-            title="Previous Seasons"
-            note={
-              previousSeasons.length === 0
-                ? undefined
-                : `${previousSeasons.length} ${
-                    previousSeasons.length === 1 ? 'season' : 'seasons'
-                  } — open one for its gameweeks`
-            }
-          />
-          {previousSeasons.length === 0 ? (
-            <p className="text-center text-sm text-muted-foreground py-6">
-              {b.season} is {name}’s first season in the game.
-            </p>
-          ) : (
+          {/* One table, one header, and the selected season is a row in it.
+              There is no "This Season" section any more and no "Previous
+              Seasons" heading: the first was wrong whenever the selector was not
+              on the season being played, and the second was wrong on any season
+              with later ones above it — on Haaland at 2022-23 it filed four
+              later seasons under "previous". Removing the sections removes both
+              claims rather than rewording them. */}
+          {seasons.length > 0 && (
             <CareerTable
-              seasons={previousSeasons}
+              seasons={seasons}
+              selected={b.season}
               expanded={expanded}
               onToggle={toggleSeason}
               renderExpanded={(season) => {
+                // "Not fetched yet" is not "fetched, and there is nothing in
+                // it", and GameweekSection cannot tell them apart — it sees a
+                // history array, and an empty one looks exactly like an absent
+                // one. Handing it the absent case prints "Data will appear here
+                // once the 2025-26 season is underway" for as long as the
+                // request takes, about a season that finished in May.
                 const d = detailBySeason[season];
                 if (!d) return <SeasonLoading season={season} />;
+
+                // The season's own rounds, off its career row. Not derived from
+                // this player's rows: a gap there could mean the season skipped
+                // the round OR that he was not in the squad, and the two are
+                // indistinguishable once they are in one dropdown.
+                const rounds = careerBySeason.get(season)?.rounds ?? [];
+                const filter = filters[season] ?? NO_FILTER;
+
                 return (
-                  <GameweekSection
-                    history={d.history}
-                    teams={d.teams}
-                    season={d.season}
-                    playerName={name}
-                    // A row only exists in this table because the career has
-                    // that season, so registration is not in question here.
-                    registered
-                    scroll={false}
-                  />
+                  <>
+                    {/* Gated on there being ROWS, not on there being rounds.
+                        `rounds` comes from the season's fixtures, so 2026-27 has
+                        all 38 of them and no match played — and an earlier draft
+                        of this gate drew a full GW range above "Data will appear
+                        here once the 2026-27 season is underway", which is three
+                        controls that can only filter nothing. Found in the
+                        browser. The season having rounds and the player having
+                        rows in them are different questions, which is the same
+                        distinction the empty states themselves turn on. */}
+                    {d.history.length > 0 && rounds.length > 0 && (
+                      <GameweekFilters
+                        gwRange={
+                          filter.gwRange ?? [rounds[0], rounds[rounds.length - 1]]
+                        }
+                        rounds={rounds}
+                        homeAway={filter.venue}
+                        onGwRangeChange={(gwRange) => setFilter(season, { gwRange })}
+                        onHomeAwayChange={(venue) => setFilter(season, { venue })}
+                      />
+                    )}
+                    <GameweekSection
+                      history={d.history}
+                      filtered={applyFilters(d.history, filter, rounds)}
+                      teams={d.teams}
+                      season={d.season}
+                      playerName={name}
+                      // A row only exists in this table because the career has
+                      // that season, so registration is not in question here.
+                      registered
+                    />
+                  </>
                 );
               }}
             />

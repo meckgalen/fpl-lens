@@ -139,6 +139,9 @@ export function aCareerSeason(
 ): PlayerCareerSeason {
   return {
     season: '2024-25',
+    // An ordinary 38-round season. Override with the real list where a test is
+    // about the two seasons that are not 1..n — see `career.test.ts`.
+    rounds: Array.from({ length: 38 }, (_, i) => i + 1),
 
     team: 3,
     team_name: 'Arsenal',
