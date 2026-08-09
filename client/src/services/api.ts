@@ -1,5 +1,6 @@
 import type {
   BootstrapData,
+  ColumnHistoryData,
   PlayerCareerData,
   PlayerDetailData,
   FixturesData,
@@ -105,6 +106,55 @@ export async function fetchPlayerDetail(
  */
 export async function fetchPlayerCareer(playerCode: number): Promise<PlayerCareerData> {
   return request<PlayerCareerData>(`${BASE}/player/${playerCode}/career`, 'player career');
+}
+
+/**
+ * The column availability matrix, fetched at most **once per page load**.
+ *
+ * The memo is a module-scope promise, which is the whole mechanism: the second
+ * caller gets the first caller's promise rather than a second request, and
+ * unmounting the Players page does not discard it. Same shape as
+ * `lib/shirtCache.ts`'s module state and for the same reason — state with a
+ * lifetime of its own is not a rendering concern.
+ *
+ * **Once per page load, not once per mount.** Navigating away from Players and
+ * back must not refetch: nothing about the matrix changes while the tab is open.
+ *
+ * **On mount, not on picker open.** It is async and nothing blocks on it —
+ * `bootstrap.columns` covers first paint, and every disabled picker entry
+ * already carries a complete, true sentence without this. The matrix only
+ * appends the "· recorded from 2022-23" pointer clause, so nothing on screen
+ * changes meaning when it lands. Measured at 57ms, paid off the critical path.
+ *
+ * **Not a server cache**, so "a cache is a second source of truth" does not
+ * apply: the server recomputes on every request and the client simply does not
+ * ask twice. The lifetime is one page load, so an ingest followed by a reload
+ * picks up the new matrix; an ingest without a reload leaves an open tab stale,
+ * which is already true of the bootstrap.
+ *
+ * A failed fetch is **not** retried and not surfaced as an error. It rejects
+ * once, the caller falls back to bootstrap-only reasons, and the picker keeps
+ * working with every sentence still true. Retrying would mean a failed load
+ * could fire a request per mount for the rest of the session.
+ */
+let columnHistoryPromise: Promise<ColumnHistoryData> | null = null;
+
+export function fetchColumnHistory(): Promise<ColumnHistoryData> {
+  columnHistoryPromise ??= request<ColumnHistoryData>(`${BASE}/columns`, 'column availability');
+  return columnHistoryPromise;
+}
+
+/**
+ * Drop the memo. **Tests only** — there is no product reason to refetch.
+ *
+ * Exported because the memo is module state shared across a test file, and
+ * without clearing it between tests the suite silently becomes order-dependent:
+ * whichever test ran first would own the only request, and a later test
+ * asserting a request count would pass or fail on file order. That is exactly
+ * the coupling `resetShirtCache` exists for in `lib/shirtCache.ts`.
+ */
+export function resetColumnHistory(): void {
+  columnHistoryPromise = null;
 }
 
 /**

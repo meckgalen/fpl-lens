@@ -15,12 +15,14 @@
  */
 
 import type {
+  ColumnHistoryRow,
   Fixture,
   Gameweek,
   PlayerCareerSeason,
   PlayerGameweek,
   PlayerIdentity,
   PlayerSeasonTotals,
+  SeasonColumnAvailability,
   Team,
   UpcomingFixture,
 } from './domain.js';
@@ -84,10 +86,47 @@ export interface BootstrapResponse {
    * eventually disagree about something neither of them states.
    */
   seasons: string[];
+  /**
+   * Which stat columns this season can answer for — what the Players list is
+   * allowed to render (item 13).
+   *
+   * **Top-level, because this response is one season throughout** (API identity
+   * rule 7's single-season form). It is the same argument as `seasons` above:
+   * nothing else in this payload states per-season availability, so there is
+   * nothing here to duplicate or contradict. The cross-season matrix, which
+   * genuinely spans seasons, is `GET /api/columns` and carries a `season` on
+   * every row instead.
+   *
+   * Derived from rows this response already computes, so it costs no query on
+   * ten of the eleven seasons — see `deriveSeasonAvailability`.
+   *
+   * It covers the nine nullable columns only. Every other stat column is NOT
+   * NULL in the schema and is available wherever the season has rows at all, so
+   * listing it here would be nine facts and eleven non-facts.
+   */
+  columns: SeasonColumnAvailability;
   players: ApiPlayer[];
   teams: Team[];
   events: ApiEvent[];
   positions: { id: number; name: string }[];
+}
+
+/**
+ * `GET /api/columns` — the availability matrix across every season.
+ *
+ * Rows carrying their own `season`, which is API identity rule 7's many-seasons
+ * form and the same shape `PlayerCareerResponse` uses. A `Record<season, …>` map
+ * was the obvious alternative and is the manifest that rule refuses: two
+ * statements of one fact, free to disagree.
+ *
+ * This exists for the picker's *reasons* rather than for what renders now.
+ * "Not recorded in 2016-17 · recorded from 2022-23" needs to know about seasons
+ * other than the one on screen, and `bootstrap.columns` by construction cannot.
+ * Nothing blocks on it: every disabled entry already carries a complete, true
+ * sentence from the bootstrap alone, and this only appends the pointer clause.
+ */
+export interface ColumnHistoryResponse {
+  columns: ColumnHistoryRow[];
 }
 
 export interface PlayerDetailResponse {

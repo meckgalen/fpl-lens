@@ -47,6 +47,12 @@ vi.mock('./services/api', async () => {
     fetchPlayerDetail: vi.fn(),
     fetchPlayerCareer: vi.fn(),
     fetchFixtures: vi.fn(),
+    // The Players page fires this on mount. It is mocked to a never-resolving
+    // promise rather than to data, because nothing in this file is about the
+    // column matrix and every picker reason is a complete sentence without it —
+    // so this exercises the unresolved-matrix path for free.
+    fetchColumnHistory: vi.fn(() => new Promise<never>(() => {})),
+    resetColumnHistory: vi.fn(),
   };
 });
 

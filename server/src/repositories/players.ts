@@ -115,6 +115,16 @@ const SEASON_AGGREGATE = `COALESCE(sum(pg.total_points), 0)::int AS total_points
             COALESCE(sum(pg.bonus), 0)::int        AS bonus,
             COALESCE(sum(pg.bps), 0)::int          AS bps,
 
+            -- saves and defensive_contribution moved up from
+            -- CAREER_EXTRA_AGGREGATE in item 13, so the Players list can offer
+            -- them as selectable columns. They are here rather than in both
+            -- places because getPlayerCareer embeds this block AND that one:
+            -- two SELECT items with one alias is legal SQL and the driver keeps
+            -- whichever arrives last, which is a silent way to have one column
+            -- computed by two expressions.
+            COALESCE(sum(pg.saves), 0)::int        AS saves,
+            ${measuredSum('defensive_contribution')} AS defensive_contribution,
+
             -- The ICT quartet keeps COALESCE and does NOT go through
             -- measuredSum, which is a deliberate exception rather than an
             -- oversight. It is holed too — 26 fixtures across 2019-20, 2021-22
@@ -169,13 +179,11 @@ const CAREER_EXTRA_AGGREGATE = `COALESCE(sum(pg.goals_conceded), 0)::int    AS g
             COALESCE(sum(pg.penalties_missed), 0)::int  AS penalties_missed,
             COALESCE(sum(pg.yellow_cards), 0)::int      AS yellow_cards,
             COALESCE(sum(pg.red_cards), 0)::int         AS red_cards,
-            COALESCE(sum(pg.saves), 0)::int             AS saves,
 
             ${measuredSum('expected_goals_conceded')}         AS expected_goals_conceded,
             ${measuredSum('tackles')}                         AS tackles,
             ${measuredSum('clearances_blocks_interceptions')} AS clearances_blocks_interceptions,
-            ${measuredSum('recoveries')}                      AS recoveries,
-            ${measuredSum('defensive_contribution')}          AS defensive_contribution`;
+            ${measuredSum('recoveries')}                      AS recoveries`;
 
 interface PlayerTotalsDbRow {
   id: number;
@@ -185,6 +193,9 @@ interface PlayerTotalsDbRow {
   team: number;
   element_type: number;
   now_cost: number | null;
+  start_cost: number | null;
+  /** count(pg.fixture_id) — 0 for a registered player with no match rows. */
+  matches: number;
   total_points: number;
   minutes: number;
   goals_scored: number;
@@ -192,6 +203,7 @@ interface PlayerTotalsDbRow {
   clean_sheets: number;
   bonus: number;
   bps: number;
+  saves: number;
   appearances: number;
   /** numeric -> string. */
   influence: DbNumeric;
@@ -204,6 +216,7 @@ interface PlayerTotalsDbRow {
   expected_goals: DbNumeric | null;
   expected_assists: DbNumeric | null;
   expected_goal_involvements: DbNumeric | null;
+  defensive_contribution: DbNumeric | null;
   photo: string;
 }
 
@@ -216,6 +229,8 @@ function toPlayerSeasonTotals(r: PlayerTotalsDbRow): PlayerSeasonTotals {
     team: r.team,
     element_type: r.element_type,
     now_cost: r.now_cost,
+    start_cost: r.start_cost,
+    matches: r.matches,
 
     total_points: r.total_points,
     minutes: r.minutes,
@@ -224,6 +239,7 @@ function toPlayerSeasonTotals(r: PlayerTotalsDbRow): PlayerSeasonTotals {
     clean_sheets: r.clean_sheets,
     bonus: r.bonus,
     bps: r.bps,
+    saves: r.saves,
 
     influence: num(r.influence, 'influence'),
     creativity: num(r.creativity, 'creativity'),
@@ -237,6 +253,7 @@ function toPlayerSeasonTotals(r: PlayerTotalsDbRow): PlayerSeasonTotals {
       r.expected_goal_involvements,
       'expected_goal_involvements'
     ),
+    defensive_contribution: numOrNull(r.defensive_contribution, 'defensive_contribution'),
 
     appearances: r.appearances,
     points_per_game: num(r.points_per_game, 'points_per_game'),
@@ -288,6 +305,20 @@ export async function listPlayerTotals(
             -- without anyone having to know which season they are looking at.
             COALESCE(ps.now_cost, ps.end_cost) AS now_cost,
 
+            -- The price the season OPENED at, which no COALESCE touches: it is
+            -- written once and is complete on all eleven seasons (683/683
+            -- through 564/564, range 40-155). It is a different fact from the
+            -- one above, which is why the Pts/£ and Pts/£s columns can differ.
+            ps.start_cost,
+
+            -- count(pg.fixture_id), never count(*): both sides of this LEFT
+            -- JOIN matter here. A registered player with no match rows
+            -- null-extends to one row, where count(*) reports 1 match that was
+            -- never played -- exactly the value that would make a season with
+            -- no matches indistinguishable from one with a single match, which
+            -- is the distinction the season-level availability flag turns on.
+            count(pg.fixture_id)::int AS matches,
+
             ${SEASON_AGGREGATE},
 
             p.fpl_code || '.jpg' AS photo
@@ -298,7 +329,8 @@ export async function listPlayerTotals(
               ON pg.player_id = ps.player_id AND pg.season = ps.season
       WHERE ps.season = $1
       GROUP BY p.fpl_code, p.first_name, p.second_name, p.web_name,
-               t.fpl_team_code, ps.position, ps.now_cost, ps.end_cost
+               t.fpl_team_code, ps.position, ps.now_cost, ps.end_cost,
+               ps.start_cost
       ORDER BY p.fpl_code`,
     [season]
   );

@@ -11,13 +11,16 @@
   },
   "include": ["src"],
   /*
-   * The one file outside this program, and the reason is a deliberate trade rather
+   * The files outside this program, and the reason is a deliberate trade rather
    * than an oversight.
    *
-   * `verify/ppg-check.ts` imports `client/src/lib/averages.ts` so that it runs the
-   * SHIPPED averaging module over the real 253,509 rows. A verification that
-   * reimplements the arithmetic it is checking proves nothing — that is the failure
-   * the Working Agreement names — so importing the real module is the point of it.
+   * Two files now, for one reason. `verify/ppg-check.ts` imports
+   * `client/src/lib/averages.ts` so that it runs the SHIPPED averaging module over
+   * the real 253,509 rows; `verify/columns-check.ts` imports
+   * `client/src/lib/playerColumns.ts` so that it asks the SHIPPED picker what it
+   * would offer. A verification that reimplements the rule it is checking proves
+   * nothing — that is the failure the Working Agreement names — so importing the
+   * real module is the point of both.
    *
    * `rootDir` is `./src`, so pulling a file from `../client` into the program raises
    * TS6059 on it and on everything it imports. Removing `rootDir` would re-root the
@@ -25,9 +28,10 @@
    * breaking `npm start`; project references would be a bigger change than the
    * script is worth.
    *
-   * Cost, stated because it is real: **this one file is not typechecked**. It is a
-   * read-only script, it is run by hand, and `tsx` executes it correctly — verified.
-   * If it grows, the right fix is a shared package rather than a wider `rootDir`.
+   * Cost, stated because it is real: **these two files are not typechecked**. Both
+   * are read-only scripts, run by hand, and `tsx` executes them correctly —
+   * verified. Two is the point at which this stops being a one-off; if a third
+   * arrives, the right fix is a shared package rather than a wider `rootDir`.
    */
-  "exclude": ["src/verify/ppg-check.ts"]
+  "exclude": ["src/verify/ppg-check.ts", "src/verify/columns-check.ts"]
 }

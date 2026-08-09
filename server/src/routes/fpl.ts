@@ -37,8 +37,10 @@ import {
   playerExists,
 } from '../repositories/players.js';
 import { listEvents, listFixtures } from '../repositories/fixtures.js';
+import { listColumnHistory, seasonAvailability } from '../repositories/columns.js';
 import type {
   BootstrapResponse,
+  ColumnHistoryResponse,
   ErrorResponse,
   FixturesResponse,
   PlayerCareerResponse,
@@ -104,6 +106,9 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
     const body: BootstrapResponse = {
       season,
       seasons,
+      // Built from the `players` rows above rather than queried. See
+      // seasonAvailability: ten of the eleven seasons pay no extra query.
+      columns: await seasonAvailability(pool, season, players),
       players: players.map((p) => ({
         ...p,
         // Live-only fields. They describe the state of the game right now —
@@ -132,6 +137,37 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Bootstrap query failed:', err);
     res.status(500).json({ error: 'Failed to load FPL data' } satisfies ErrorResponse);
+  }
+});
+
+/**
+ * GET /api/columns — column availability across every season.
+ *
+ * **Takes no `?season=` and rejects the idea of one.** It is the second response
+ * in this API that spans seasons, `/player/:code/career` being the first, so it
+ * follows the same rule: no top-level `season`, and every row carries its own
+ * (API identity rule 7). Asking it for one season would be asking the bootstrap.
+ *
+ * It exists for the picker's reason strings rather than for what renders now —
+ * "Not recorded in 2016-17 · recorded from 2022-23" is a claim about seasons
+ * other than the one on screen, and no single-season payload can make it.
+ * Nothing blocks on this: `bootstrap.columns` covers first paint and every
+ * disabled entry already reads as a complete sentence without it.
+ *
+ * Measured at 57ms, which is why the client fetches it once per page load
+ * off the critical path rather than on every picker open.
+ *
+ * No cache here, for the reason the bootstrap gives: a cache is a second source
+ * of truth. The client not asking twice is a different thing from the server
+ * remembering an answer.
+ */
+router.get('/columns', async (_req: Request, res: Response) => {
+  try {
+    const columns = await listColumnHistory(pool);
+    res.json({ columns } satisfies ColumnHistoryResponse);
+  } catch (err) {
+    console.error('Column history query failed:', err);
+    res.status(500).json({ error: 'Failed to load column availability' } satisfies ErrorResponse);
   }
 });
 

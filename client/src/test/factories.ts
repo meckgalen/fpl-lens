@@ -19,6 +19,8 @@
 
 import type {
   BootstrapData,
+  ColumnState,
+  SeasonColumnAvailability,
   GameweekEvent,
   GameweekHistory,
   Player,
@@ -54,6 +56,8 @@ export function aPlayer(overrides: Partial<Player> = {}): Player {
     team: 3,
     element_type: 3,
     now_cost: 100,
+    start_cost: 95,
+    matches: 31,
 
     total_points: 157,
     minutes: 2218,
@@ -62,6 +66,7 @@ export function aPlayer(overrides: Partial<Player> = {}): Player {
     clean_sheets: 12,
     bonus: 18,
     bps: 570,
+    saves: 0,
 
     influence: 700.2,
     creativity: 900.5,
@@ -72,6 +77,7 @@ export function aPlayer(overrides: Partial<Player> = {}): Player {
     expected_goals: 7.57,
     expected_assists: 8.12,
     expected_goal_involvements: 15.69,
+    defensive_contribution: 22,
 
     appearances: 31,
     points_per_game: 5.1,
@@ -220,6 +226,38 @@ export function anEvent(overrides: Partial<GameweekEvent> = {}): GameweekEvent {
   };
 }
 
+/**
+ * The five nullable columns the bootstrap speaks for, all `full` by default.
+ *
+ * Only these five: `expected_goals_conceded`, `tackles`,
+ * `clearances_blocks_interceptions` and `recoveries` are on the career
+ * aggregate and not the bootstrap, so the server makes no claim about them and
+ * neither does this. A factory listing all nine would describe a payload the
+ * server never sends.
+ */
+export function availability(
+  states: Partial<Record<string, ColumnState>> = {},
+  overrides: Partial<SeasonColumnAvailability> = {}
+): SeasonColumnAvailability {
+  const keys = [
+    'starts',
+    'expected_goals',
+    'expected_assists',
+    'expected_goal_involvements',
+    'defensive_contribution',
+  ];
+  return {
+    season: '2025-26',
+    measured: true,
+    columns: keys.map((key) => ({
+      key,
+      state: states[key] ?? 'full',
+      measured_from: null,
+    })),
+    ...overrides,
+  };
+}
+
 export function aBootstrap(overrides: Partial<BootstrapData> = {}): BootstrapData {
   return {
     season: '2025-26',
@@ -227,6 +265,10 @@ export function aBootstrap(overrides: Partial<BootstrapData> = {}): BootstrapDat
     // sends them — a test that sorted them would be asserting against its own
     // ordering rather than the one the app renders.
     seasons: ['2026-27', '2025-26'],
+    // A fully measured season, which is 2025-26's real shape and the one that
+    // keeps every column offerable — so a test that cares about availability
+    // has to say so, rather than inheriting a restriction it did not ask for.
+    columns: availability(),
     players: [aPlayer()],
     teams: [aTeam(), aTeam({ id: 43, name: 'Man City', short_name: 'MCI' })],
     // Rounds are listed, not counted: 2019-20 runs 1-29 then 39-47. Three is

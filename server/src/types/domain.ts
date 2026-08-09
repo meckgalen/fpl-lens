@@ -66,6 +66,19 @@ export interface PlayerSeasonTotals {
   element_type: number;
   /** £0.1m units, raw. Divide at the presentation layer only (rule 9). */
   now_cost: number | null;
+  /**
+   * What the season opened at, £0.1m units — a different fact from `now_cost`,
+   * written once and never revised. Complete on all eleven seasons, so the
+   * points-per-start-cost column needs no guard.
+   */
+  start_cost: number | null;
+  /**
+   * Match rows this player has in the season, which is NOT `appearances`: a
+   * benched player has a row and no minutes. It is here so a caller can tell a
+   * player with nothing measured from a player measured at zero — the season
+   * with no match rows at all is the case that matters (rule 6, one layer up).
+   */
+  matches: number;
 
   total_points: number;
   minutes: number;
@@ -74,6 +87,7 @@ export interface PlayerSeasonTotals {
   clean_sheets: number;
   bonus: number;
   bps: number;
+  saves: number;
 
   influence: number;
   creativity: number;
@@ -85,6 +99,8 @@ export interface PlayerSeasonTotals {
   expected_goals: number | null;
   expected_assists: number | null;
   expected_goal_involvements: number | null;
+  /** NULL before 2025-26. FPL retro-computed 2024-25 without the components. */
+  defensive_contribution: number | null;
 
   /**
    * Matches the player actually appeared in (minutes > 0), not rounds in the
@@ -343,4 +359,58 @@ export interface Gameweek {
    */
   is_current: boolean;
   is_next: boolean;
+}
+
+/**
+ * Whether a stat column can be shown for a season (item 13).
+ *
+ *   - `full`    every row that season carries a value: safe to render and sort
+ *   - `partial` some rows are NULL, so no honest season total exists
+ *   - `none`    no row carries a value
+ *
+ * `partial` and `none` both mean "do not offer this column", and they are two
+ * states rather than one because they need two different sentences: `partial`
+ * can name the round it starts at, `none` can name the seasons that do have it.
+ */
+export type ColumnState = 'full' | 'partial' | 'none';
+
+export interface ColumnAvailability {
+  /** A `player_gameweeks` column name — see NULLABLE_COLUMNS. */
+  key: string;
+  state: ColumnState;
+  /**
+   * The first round with a value, for a `partial` column only. Null on `full`
+   * (it starts at round one by definition) and on `none` (there is no first
+   * round), so a number here always means something.
+   *
+   * **Not a promise that every later round is measured.** 2022-23's
+   * `expected_goal_involvements` is 16 and is holed again at round 29.
+   */
+  measured_from: number | null;
+}
+
+/**
+ * One season's answer, with the empty case lifted to the season.
+ *
+ * `measured: false` means the season has no match rows at all — one fact, so it
+ * is stated once rather than repeated as nine identical column entries, and
+ * `columns` is empty. It is what stops the availability predicate reading TRUE
+ * vacuously on 2026-27: over zero rows `count(col) = count(*) = 0` for every
+ * column, so the season the app defaults to would otherwise claim to measure
+ * everything it holds no data for.
+ */
+export interface SeasonColumnAvailability {
+  season: string;
+  measured: boolean;
+  columns: ColumnAvailability[];
+}
+
+/**
+ * One (season, column) cell of the cross-season matrix.
+ *
+ * Carries its own `season` rather than arriving under a season key, which is API
+ * identity rule 7's many-seasons form — the same reason career rows carry theirs.
+ */
+export interface ColumnHistoryRow extends ColumnAvailability {
+  season: string;
 }

@@ -12,10 +12,25 @@
  * `StatsTable`. Both call the same `TableHead`.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Players from './Players';
+
+/**
+ * The page fires `fetchColumnHistory` on mount, and without this the suite makes
+ * a real `fetch` that jsdom rejects — swallowed by the page's deliberate catch,
+ * so it would be invisible rather than absent. Mocked to a promise that never
+ * settles: nothing here is about the matrix, and the picker's reasons are
+ * complete without it.
+ */
+vi.mock('../services/api', async () => {
+  const actual = await vi.importActual<typeof import('../services/api')>('../services/api');
+  return {
+    ...actual,
+    fetchColumnHistory: vi.fn(() => new Promise<never>(() => {})),
+  };
+});
 import { BootstrapContext } from '../lib/bootstrap';
 import { ROW_STRIPE, Z_HEADER, Z_PINNED, Z_PINNED_HEADER } from '../lib/rowSurface';
 import { aBootstrap, aPlayer, aTeam } from '../test/factories';
@@ -103,7 +118,9 @@ describe('Players: sorting is reachable without a mouse', () => {
     const user = userEvent.setup();
     renderPlayers();
 
-    const pts = screen.getByRole('button', { name: /^Pts/ });
+    // Anchored at both ends, like `/^G$/` below. Item 13's picker adds `Pts/£`
+    // and `Pts/£s`, so an unanchored /^Pts/ matches three headers.
+    const pts = screen.getByRole('button', { name: /^Pts$/ });
     const header = pts.closest('th');
     expect(header).not.toBeNull();
 

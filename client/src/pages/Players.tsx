@@ -2,13 +2,25 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { DisclosureButton } from '../components/ui/DisclosureButton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table';
-import { PosBadge, StatusDot } from '../components/PosBadge';
+import { PosBadge } from '../components/PosBadge';
 import { PlayerShirt } from '../components/PlayerShirt';
-import { POSITION_MAP, fmtNum, fmtPrice, statusBucket } from '../types/fpl';
+import { POSITION_MAP, fmtNum } from '../types/fpl';
 import type { Player } from '../types/fpl';
 import { useBootstrap } from '../lib/bootstrap';
 import { EDGE_PINNED, Z_HEADER, Z_PINNED, Z_PINNED_HEADER, striped } from '../lib/rowSurface';
-import { fmtPpg } from '../lib/averages';
+import ColumnPicker from '../components/ColumnPicker';
+import { fetchColumnHistory } from '../services/api';
+import type { ColumnHistoryRow } from '../types/fpl';
+import {
+  DEFAULT_SORT_KEY,
+  PLAYER_COLUMNS,
+  columnByKey,
+  compareBy,
+  loadSelectedColumns,
+  resolveColumn,
+  saveSelectedColumns,
+  type PlayerColumn,
+} from '../lib/playerColumns';
 
 /**
  * `form` and `selected_by_percent` were columns here and were sortable. Both
@@ -18,8 +30,12 @@ import { fmtPpg } from '../lib/averages';
  * with no values is still meaningless, and an always-empty column is noise.
  * They come back with the live bootstrap sync. `ppm` replaces them with a real
  * aggregate.
+ *
+ * **`Status` left the rendered columns in item 13 and is reclassified the same
+ * way**, one step short: it is a live-game field with no source, so it read
+ * "Unknown" on every row of every season. It becomes a picker entry rather than
+ * a column, and it becomes real when the live field sync lands.
  */
-type SortKey = 'pts' | 'ppm' | 'price' | 'goals' | 'assists';
 const POSITIONS = ['ALL', 'GKP', 'DEF', 'MID', 'FWD'] as const;
 
 /** The row a player's toggle points `aria-controls` at while it is open. */
@@ -47,33 +63,52 @@ const expandedRowId = (playerCode: number) => `player-summary-${playerCode}`;
  */
 const PINNED_PLAYER = `sticky left-0 w-44 max-w-[11rem] ${EDGE_PINNED}`;
 
-const numForKey = (p: Player, k: SortKey): number => {
-  switch (k) {
-    case 'pts':
-      return p.total_points;
-    case 'ppm':
-      return p.points_per_game;
-    case 'price':
-      // now_cost is null only for a player with no season row, which cannot
-      // reach this list. Sorting them last is still better than NaN, which
-      // would strand the whole comparator.
-      return p.now_cost ?? 0;
-    case 'goals':
-      return p.goals_scored;
-    case 'assists':
-      return p.assists;
-  }
-};
-
 export default function Players({ onOpenDetail }: { onOpenDetail: (player: Player) => void }) {
   const b = useBootstrap();
   const teamMap = useMemo(() => Object.fromEntries(b.teams.map((t) => [t.id, t.short_name])), [b.teams]);
 
   const [search, setSearch] = useState('');
   const [pos, setPos] = useState<(typeof POSITIONS)[number]>('ALL');
-  const [sort, setSort] = useState<SortKey>('pts');
+  const [sort, setSort] = useState<string>(DEFAULT_SORT_KEY);
   const [sortDir, setSortDir] = useState<-1 | 1>(-1);
   const [expanded, setExpanded] = useState<number | null>(null);
+
+  /**
+   * The FULL selection, including columns unavailable on the selected season.
+   *
+   * Lazy initializer + effect, the same mechanism `App.tsx` uses for the theme,
+   * page and season. Not the same round trip: there is no server to validate a
+   * column list against, so an unknown key is filtered against this build's own
+   * definitions at read instead.
+   */
+  const [selected, setSelected] = useState<string[]>(loadSelectedColumns);
+  useEffect(() => {
+    saveSelectedColumns(selected);
+  }, [selected]);
+
+  /**
+   * The cross-season matrix, for the picker's "· recorded from 2022-23" clause.
+   *
+   * Fired on mount and memoized at module scope in `services/api.ts`, so this
+   * costs one request per page load however many times the page is mounted.
+   * Nothing blocks on it and a failure is not surfaced: every reason string is
+   * already a complete sentence without it, so the picker degrades to those and
+   * keeps working.
+   */
+  const [history, setHistory] = useState<ColumnHistoryRow[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchColumnHistory()
+      .then((d) => {
+        if (live) setHistory(d.columns);
+      })
+      .catch(() => {
+        // Deliberately silent. See above.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   /**
    * The open row closes when the season changes; the search, filter and sort do
@@ -91,15 +126,44 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
     setExpanded(null);
   }, [b.season]);
 
-  const cols: { v: SortKey; l: string }[] = [
-    { v: 'pts', l: 'Pts' },
-    { v: 'ppm', l: 'PPM' },
-    { v: 'price', l: 'Price' },
-    { v: 'goals', l: 'G' },
-    { v: 'assists', l: 'A' },
-  ];
+  /**
+   * What actually renders: the selection, minus whatever this season cannot
+   * answer for. `selected` is left untouched, which is what makes a column come
+   * back when the user returns to a season that has it.
+   */
+  const cols: PlayerColumn[] = useMemo(
+    () =>
+      selected
+        .map(columnByKey)
+        .filter((c): c is PlayerColumn => c !== undefined)
+        .filter((c) => resolveColumn(c, b.columns, history, b.seasons).available),
+    [selected, b.columns, history, b.seasons]
+  );
 
-  const handleSort = (k: SortKey) => {
+  /**
+   * The sorted column, falling back when the sort key is not on screen.
+   *
+   * A season change can take the sorted column away — sort by xG on 2025-26,
+   * switch to 2016-17, and the table would go on sorting by a column nobody can
+   * see, in an order nothing on screen explains. The fallback is the default
+   * key, and only if *that* is missing does it take the first rendered column,
+   * which is what an empty selection needs.
+   */
+  const sortCol: PlayerColumn | undefined =
+    cols.find((c) => c.key === sort) ??
+    cols.find((c) => c.key === DEFAULT_SORT_KEY) ??
+    cols[0];
+
+  // Order is the definition order, not click order, so the table's column order
+  // is stable and does not depend on the sequence a user happened to tick in.
+  const toggleColumn = (key: string) =>
+    setSelected((prev) =>
+      prev.includes(key)
+        ? prev.filter((k) => k !== key)
+        : PLAYER_COLUMNS.map((c) => c.key).filter((k) => k === key || prev.includes(k))
+    );
+
+  const handleSort = (k: string) => {
     if (sort === k) setSortDir((d) => (d * -1) as -1 | 1);
     else {
       setSort(k);
@@ -122,25 +186,13 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
       // lowest-scoring players under a descending arrow. The old default sort
       // key was `form`, which is null, so the comparator returned NaN, sort left
       // the array in the order the API sent it, and the inversion never showed.
-      .sort((a, c) => sortDir * (numForKey(a, sort) - numForKey(c, sort)));
-  }, [b.players, search, pos, sort, sortDir]);
+      // No sorted column only when nothing is selected, in which case the
+      // rows carry no metrics to order by and the API's order stands.
+      .sort(sortCol ? compareBy(sortCol, sortDir) : () => 0);
+  }, [b.players, search, pos, sortCol, sortDir]);
 
-  const colWidth = 4 + cols.length;
-
-  const renderCell = (p: Player, v: SortKey) => {
-    switch (v) {
-      case 'price':
-        return fmtPrice(p.now_cost);
-      case 'ppm':
-        return fmtPpg(p.points_per_game);
-      case 'pts':
-        return p.total_points;
-      case 'goals':
-        return p.goals_scored;
-      case 'assists':
-        return p.assists;
-    }
-  };
+  // Three, not four: shirt + Player + Pos. Status left the table in item 13.
+  const colWidth = 3 + cols.length;
 
   return (
     <div>
@@ -196,6 +248,14 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
           ))}
         </div>
 
+        <ColumnPicker
+          selected={selected}
+          availability={b.columns}
+          history={history}
+          allSeasons={b.seasons}
+          onToggle={toggleColumn}
+        />
+
         <span className="ml-auto text-xs text-muted-foreground">{list.length} players</span>
       </div>
 
@@ -222,21 +282,21 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
               <TableHead className={`w-10 pl-4 sticky top-0 ${Z_HEADER}`}> </TableHead>
               <TableHead className={`${PINNED_PLAYER} top-0 ${Z_PINNED_HEADER}`}>Player</TableHead>
               <TableHead className={`sticky top-0 ${Z_HEADER}`}>Pos</TableHead>
-              <TableHead className={`sticky top-0 ${Z_HEADER}`}>Status</TableHead>
               {cols.map((c) => (
                 <TableHead
-                  key={c.v}
+                  key={c.key}
+                  title={c.title}
                   className={`text-right sticky top-0 ${Z_HEADER} ${
-                    sort === c.v ? 'text-foreground' : ''
+                    sortCol?.key === c.key ? 'text-foreground' : ''
                   }`}
-                  onClick={() => handleSort(c.v)}
+                  onClick={() => handleSort(c.key)}
                   // -1 is descending here, which is what the ▾ draws for it.
                   sortDirection={
-                    sort === c.v ? (sortDir < 0 ? 'descending' : 'ascending') : 'none'
+                    sortCol?.key === c.key ? (sortDir < 0 ? 'descending' : 'ascending') : 'none'
                   }
                 >
-                  {c.l}
-                  {sort === c.v && (
+                  {c.label}
+                  {sortCol?.key === c.key && (
                     <span aria-hidden="true" className="ml-0.5 opacity-50 text-[9px]">
                       {sortDir < 0 ? '▾' : '▴'}
                     </span>
@@ -247,7 +307,6 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
           </TableHeader>
           <TableBody>
             {list.slice(0, 200).map((p, i) => {
-              const bucket = statusBucket(p.status);
               // From the map index, not `nth-child`. An open row inserts a sibling
               // <tr> into this same <tbody>, which flips the parity of every row
               // below it — only one row can be open at a time, but one is enough.
@@ -285,20 +344,16 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
                     <TableCell>
                       <PosBadge pos={POSITION_MAP[p.element_type]} />
                     </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5">
-                        <StatusDot status={bucket} />
-                        <span className="text-xs text-muted-foreground capitalize">{bucket}</span>
-                      </div>
-                    </TableCell>
                     {cols.map((c) => (
                       <TableCell
-                        key={c.v}
+                        key={c.key}
                         className={`text-right font-display text-[13px] tabular-nums ${
-                          sort === c.v ? 'font-semibold text-foreground' : 'font-normal text-muted-foreground'
+                          sortCol?.key === c.key
+                            ? 'font-semibold text-foreground'
+                            : 'font-normal text-muted-foreground'
                         }`}
                       >
-                        {renderCell(p, c.v)}
+                        {c.render(p)}
                       </TableCell>
                     ))}
                   </TableRow>
