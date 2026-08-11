@@ -263,8 +263,8 @@ August, which cannot arise on a full 38-event payload and costs one comparison
 to be right about if it ever does.
 
 **A pre-season bootstrap serves LAST season's totals on every element.** At the
-time of writing Saka's element carries minutes 2218, points 157 and starts 25 —
-his 2025-26 figures exactly — and 400 of the 564 elements carry nonzero stats
+time of writing Saka's element carries his 2025-26 figures exactly, and 400 of
+the 564 elements carry nonzero stats
 the same way. This is the single biggest hazard in the live path: ingesting them
 produces a new season that looks completely plausible and is a copy of the old
 one. `ingest:live` reads structural fields only, and both the ingest's own
@@ -285,7 +285,7 @@ badge   https://resources.premierleague.com/premierleague/badges/{25|50|70|100}/
 is Arsenal's red short-sleeved outfield shirt and `shirt_3_1-110` a white
 long-sleeved keeper shirt. `_2`/`_3` 404, so it is one variant and not a kit
 series. **The photo directory name is the CSS size, not the pixel size** — the
-file served is 2x, so `250x250` is really 500x500 and 346 KB. Sizes outside those
+file served is 2x, so `250x250` is really 500x500. Sizes outside those
 lists 404 or 403; so do the `premierleague25`/`premierleague26` path prefixes
 some seasons used.
 
@@ -455,32 +455,26 @@ is silently wrong.
    in the column itself, and is only detectable by reading the column's own
    components. Never collapse the third into the second.
 
-   The one case of the third state, measured on 2025-26:
-   **`defensive_contribution` is 0 on all 3,427 goalkeeper rows and positive on
-   none, while its own components are not** — keepers recorded 24 tackles, 934 CBI
-   and 6,195 recoveries in those same rows, and **765 goalkeeper rows read DC 0
-   with at least one component positive**. FPL computes no DC for goalkeepers at
-   all. Store the 0 as it arrives, and let no aggregate read it as "this keeper
-   made no defensive contribution". Item 14's threshold rule is the model: it
-   applies no threshold to a goalkeeper rather than comparing his 0 to one.
-   (115 outfield rows read DC 0 with a component positive, and that is the second
-   state rather than the third: DEF composition is CBIT, which excludes
-   recoveries, so a defender with recoveries alone correctly scores 0.)
+   The one case of it: **`defensive_contribution` is 0 on every goalkeeper row
+   while its own components are not** — keepers record tackles, CBI and recoveries
+   in those same rows. FPL computes no DC for goalkeepers at all. Store the 0 as
+   it arrives, and let no aggregate read it as "this keeper made no defensive
+   contribution". Item 14's threshold rule is the model: it applies no threshold
+   to a goalkeeper rather than comparing his 0 to one. Beware the near-miss —
+   **a defender with recoveries alone also reads 0, and that is the second state,
+   correctly**, because DEF composition is CBIT and excludes recoveries. The two
+   are identical in the column. Counts:
+   `docs/items/item-14-starts-and-defcon-hits.md` and
+   `docs/items/item-15-documentation-split.md`.
 
    **Which columns exist in which seasons is not monotonic, so do not reason from
-   "first appearance".** Measured over all eleven seasons:
-
-   | Column family | Seasons with values |
-   | --- | --- |
-   | `tackles`, `clearances_blocks_interceptions`, `recoveries` | **2016-17 to 2018-19**, then NULL for six seasons, then **2025-26** |
-   | `defensive_contribution` | 2025-26 only |
-   | `starts`, the expected family | 2022-23 onward, and 2022-23 only from round 16 |
-
-   The defensive trio is **recorded, dropped, and recorded again** — real values
-   from the old Opta feed in the three earliest seasons, up to 8 tackles in a
-   match, then nothing until FPL began publishing them for 2025-26. Anything that
-   assumes a column, once absent, stays absent until it arrives for good is wrong
-   about three columns and six seasons.
+   "first appearance".** `tackles`, `clearances_blocks_interceptions` and
+   `recoveries` are **recorded 2016-17 to 2018-19** from the old Opta feed,
+   **absent for the six seasons after**, and **recorded again from 2025-26**.
+   `defensive_contribution` is 2025-26 only. `starts` and the expected family are
+   2022-23 onward, and 2022-23 only from round 16. Anything that assumes a column,
+   once absent, stays absent until it arrives for good is wrong about three
+   columns and six seasons.
 
    `docs/data-profile.md` has the per-column detail, with two limits worth knowing
    before trusting it: it profiles the **CSVs**, so it covers the ten backfilled
@@ -680,7 +674,7 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
    It used to be rounded in SQL by `to_char(round((x * 10)::float8)…)`, which made
    it the **only value in the API arriving pre-formatted**, against rule 8. Worse,
    it put the same rounding rule in two languages: SQL here and `toFixed` in the
-   averages row, free to disagree, which they did on 111 player-seasons. Rounding
+   averages row, free to disagree, which they did. Rounding
    now happens in `roundHalfEven` (`client/src/lib/averages.ts`), in the one
    formatter that renders both this number and the averages row beneath it.
 
@@ -746,8 +740,7 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
    this rule refused for `season` itself, for the same reason: a map and the
    rows it describes are two statements of one fact that can disagree. On the
    row, the season naming itself and the rounds it played arrive together and
-   cannot come apart. Measured cost of carrying it per row on an eleven-season
-   career: +1,274 bytes, +0.77 ms.
+   cannot come apart.
 
    A top-level `season: null` on a career response was considered and rejected.
    Null already means "not measured" everywhere in this codebase (rule 6), and a
@@ -830,7 +823,7 @@ is already there.
 data can answer: it asks the **shipped** code what it would offer and compares
 against a truth query written for the check alone, which counts NULLs directly
 rather than reusing the availability predicate. **Read-only.** **275 cells**
-across eleven seasons (up from 253 with item 14's two derived columns); exits
+across eleven seasons; exits
 non-zero on any mismatch, which it does not today.
 
 Its `DB_COLUMNS` maps a picker key to the **list** of database columns it reads,
@@ -1133,9 +1126,7 @@ around it.
 
 - **We hold NULL for `defensive_contribution` in 2024-25 where FPL reports a
   real number, on 290 player-seasons — every reachable player in the season.**
-  Item 5 measured it on 44 of a 60-player sample; item 6 ran the check over all
-  348 reachable 2024-25 players and the figure is 290, up to 455 for one player
-  with a median of 116. FPL retro-computed that aggregate for 2024-25 without
+  FPL retro-computed that aggregate for 2024-25 without
   publishing its components — `tackles`, `clearances_blocks_interceptions` and
   `recoveries` are all 0 there — and the CSVs carry no such column before
   2025-26. **It cannot be backfilled**: `history_past` gives season totals and
@@ -1166,8 +1157,8 @@ around it.
 
   **The consequence on screen.** A 2022-23 ever-present shows the no-value marker
   rather than 24 starts against a real 38, on the career table and the header
-  card alike — 661 of 778 players lose the total and 117 keep a real one. The
-  per-match rows show `—` rather than `0.00` for xG, xA, xGI and xGC on rounds
+  card alike, and it degrades per player rather than per season. The per-match
+  rows show `—` rather than `0.00` for xG, xA, xGI and xGC on rounds
   1-15, switching to `0.00` at round 16, which is the source's own boundary made
   visible. `verify:history-past` reports exactly the drift it did before: `sum()`
   skips NULLs either way, so nothing it compares moved.
@@ -1183,8 +1174,7 @@ around it.
   `Starts`, xG, xGI and xA appear in the picker **disabled**, reading *"Only
   recorded from GW16 in 2022-23."* Verified in the browser: the checkbox is inert,
   the column does not render, and the choice is still remembered for seasons where
-  it is available. `verify:columns` agrees from its own derivation — 275 cells,
-  275 agreed, 2022-23 withholding 9 of 25.
+  it is available. `verify:columns` agrees from its own derivation.
 
   So this is a live hazard held off by one rule, not a defect and not a
   hypothetical. **What it costs: any future surface that reads these aggregates
@@ -1629,8 +1619,8 @@ unnecessary once this line exists.
       been consumed by one item. One file per item under `docs/items/`, the test
       catalogue to `docs/testing.md`, Deferred to `docs/roadmap.md`: **147k → 111k**.
       The content test — "would a reader need this to avoid writing wrong code
-      tomorrow?" — moved 33,866 characters that a pure record-dissolution would
-      have left, three quarters of it from sections nominated to stay. Also
+      tomorrow?" — moved out what a pure record-dissolution would have left,
+      three quarters of it from sections nominated to stay. Also
       resolved five flagged invariants and made the budget a failing test.
 
 ## Deferred
@@ -1712,6 +1702,21 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
   - **Test suite documentation lives in `docs/testing.md`, not here.** What each
     file pins is a map of the suite; only the conventions it is written to are
     rules.
+  - **A number stays here only if code compares against it.** One question: if
+    this number changed after the next ingest, would any code have to change? If
+    yes it is a rule and it stays. If no it is **evidence for a claim**, and it
+    belongs in the item file with a pointer.
+
+    *Stays:* the DC thresholds 10 and 12, the GW16 boundary in 2022-23, the 1,200
+    minute floor, 120,000 characters, the round numbers defining 2019-20 (38
+    rounds reaching 47) and 2022-23 (37 reaching 38), the ten-CSV-season ingest
+    preconditions. *Goes:* counts that evidence a claim — how many goalkeeper
+    rows, how many positive tackle rows, how many characters an item moved.
+
+    This file reached 195k, then 147k, **one individually justified measurement
+    at a time**. Every one of them was worth writing down; none of them was worth
+    keeping here. `docs:size` holds the line at a number and this holds it at the
+    principle, which is what stops the number being argued with.
   - **`npm run docs:size` runs in the test suite and fails above 120,000
     characters for this file. Do not raise the threshold to make it pass** — the
     threshold is below the 150k read limit precisely so one item's record can land
@@ -1747,8 +1752,8 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
   neither**, and the failure is invisible, because the number it produces looks
   perfectly reasonable — there is no error, no outlier and nothing to notice.
 
-  Item 9 briefly tabled a 706 ms cold sample against 394/399 ms ones as rival
-  estimates of a single quantity. They differed in the preconnect links **and**
+  Item 9 briefly tabled a cold sample against two warm ones as rival estimates
+  of a single quantity. They differed in the preconnect links **and**
   in the asset size, so no subtraction between them meant anything. **Two
   readers checked that table carefully; both caught the first difference and
   both missed the second.** That is the argument for making it a rule rather
@@ -1822,9 +1827,8 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
 - End each session by updating the Current State section above so the next
   session starts from truth rather than a stale description, and by writing the
   item's record — **in `docs/items/item-NN-<slug>.md`**, with a stub here. Items
-  10 and 11 skipped their record entirely and the client test count drifted from
-  82 to 134 unnoticed across two items, because there was nowhere the number was
-  being restated. The record is where a measurement survives; the stub is only a
+  10 and 11 skipped their record entirely and the client test count drifted
+  unnoticed across two items, because there was nowhere it was being restated. The record is where a measurement survives; the stub is only a
   pointer to it.
 
 ## Agent skills

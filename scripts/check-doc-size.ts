@@ -44,10 +44,49 @@ const BUDGETS: ReadonlyArray<{ file: string; max: number }> = [
   { file: 'CLAUDE.md', max: 120_000 },
 ];
 
+/**
+ * Split text into blocks at headings matching `marker` (e.g. /^## /), returning
+ * each block's title and character count, largest first.
+ *
+ * Reported on every run, and deliberately WITHOUT a threshold of its own. The
+ * total is the only thing that can fail. The reason for printing this at all:
+ * the total goes red once, at the end, after the damage — a section creeping
+ * from 25k to 28k is the thing you want to see while it is happening, and it is
+ * invisible in a single number. Both times this file hit a wall it did so by one
+ * section quietly absorbing measurements nobody was watching accumulate.
+ */
+function sections(text: string, marker: RegExp): Array<{ title: string; chars: number }> {
+  const lines = text.split('\n');
+  const out: Array<{ title: string; chars: number }> = [];
+  let title: string | null = null;
+  let buf: string[] = [];
+
+  const flush = () => {
+    if (title !== null) out.push({ title, chars: buf.join('\n').length });
+  };
+
+  for (const line of lines) {
+    if (marker.test(line)) {
+      flush();
+      title = line.replace(marker, '').trim();
+      buf = [line];
+    } else if (title !== null) {
+      buf.push(line);
+    }
+  }
+  flush();
+
+  return out.sort((a, b) => b.chars - a.chars);
+}
+
+/** Truncate a heading so the report stays in one column. */
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
 let failed = false;
 
 for (const { file, max } of BUDGETS) {
-  const chars = readFileSync(join(repoRoot, file), 'utf8').length;
+  const text = readFileSync(join(repoRoot, file), 'utf8');
+  const chars = text.length;
   const pct = Math.round((chars / max) * 100);
   const headroom = max - chars;
 
@@ -71,6 +110,37 @@ for (const { file, max } of BUDGETS) {
       `ok   ${file}: ${chars.toLocaleString()} characters, ` +
         `${headroom.toLocaleString()} to spare against ${max.toLocaleString()} (${pct}%).`,
     );
+  }
+
+  // Where the weight sits. Informational: nothing below can fail the run.
+  const top = sections(text, /^## /).slice(0, 5);
+  if (top.length > 0) {
+    console.log(`     largest sections:`);
+    for (const s of top) {
+      const share = Math.round((s.chars / chars) * 100);
+      console.log(
+        `       ${String(s.chars).padStart(6)}  ${String(share).padStart(2)}%  ${clip(s.title, 52)}`,
+      );
+    }
+  }
+
+  // The two numbered rule lists are where a single rule can quietly become an
+  // essay, which no per-section figure shows.
+  for (const [label, heading] of [
+    ['Data Layer Rules', '## Data Layer Rules'],
+    ['API Identity Rules', '## API Identity Rules'],
+  ] as const) {
+    const start = text.indexOf(heading);
+    if (start === -1) continue;
+    const next = text.indexOf('\n## ', start + heading.length);
+    const body = text.slice(start, next === -1 ? undefined : next);
+    const [biggest] = sections(body, /^\d+\. /);
+    if (biggest) {
+      console.log(
+        `     largest ${label.padEnd(18)} rule ${String(biggest.chars).padStart(5)}  ` +
+          `${clip(biggest.title, 46)}`,
+      );
+    }
   }
 }
 
