@@ -331,7 +331,7 @@ not started. Every verification in item 5 is shaped by that fact.
 fpl-lens/
 ├── data/raw/                  # gitignored, downloaded CSVs by season
 ├── docs/
-│   ├── data-profile.md        # column presence matrix, generated in Phase 0
+│   ├── data-profile.md        # CSV column presence, 2016-17 to 2025-26 only
 │   ├── testing.md             # what every test file pins: the suite's map
 │   └── items/                 # item-NN-<slug>.md: one full record per item
 ├── scripts/
@@ -447,17 +447,53 @@ is silently wrong.
 5. **`opponent_team` in gameweek files is a season-scoped team id and MUST be mapped
    to an internal team id before storage.** Storing it raw means "Saka against team
    14" refers to a different club in every season.
-6. **Columns absent in older seasons are NULL, never 0.** xG does not exist before
-   2022-23 and defensive stats only from 2025-26. Zero means "generated no chances".
-   NULL means "not measured". Check `docs/data-profile.md` for exact first-appearance
-   seasons.
+6. **A stat column has three states, not two, and only two of them are ours.**
+   **NULL means "not measured"** — the column did not exist that season, or the
+   source holed it. **Zero means "measured, and nothing happened"** — generated no
+   chances, made no tackles. **And zero sometimes means "FPL declined to compute
+   this for this player"**, which is neither, is indistinguishable from the second
+   in the column itself, and is only detectable by reading the column's own
+   components. Never collapse the third into the second.
+
+   The one case of the third state, measured on 2025-26:
+   **`defensive_contribution` is 0 on all 3,427 goalkeeper rows and positive on
+   none, while its own components are not** — keepers recorded 24 tackles, 934 CBI
+   and 6,195 recoveries in those same rows, and **765 goalkeeper rows read DC 0
+   with at least one component positive**. FPL computes no DC for goalkeepers at
+   all. Store the 0 as it arrives, and let no aggregate read it as "this keeper
+   made no defensive contribution". Item 14's threshold rule is the model: it
+   applies no threshold to a goalkeeper rather than comparing his 0 to one.
+   (115 outfield rows read DC 0 with a component positive, and that is the second
+   state rather than the third: DEF composition is CBIT, which excludes
+   recoveries, so a defender with recoveries alone correctly scores 0.)
+
+   **Which columns exist in which seasons is not monotonic, so do not reason from
+   "first appearance".** Measured over all eleven seasons:
+
+   | Column family | Seasons with values |
+   | --- | --- |
+   | `tackles`, `clearances_blocks_interceptions`, `recoveries` | **2016-17 to 2018-19**, then NULL for six seasons, then **2025-26** |
+   | `defensive_contribution` | 2025-26 only |
+   | `starts`, the expected family | 2022-23 onward, and 2022-23 only from round 16 |
+
+   The defensive trio is **recorded, dropped, and recorded again** — real values
+   from the old Opta feed in the three earliest seasons, up to 8 tackles in a
+   match, then nothing until FPL began publishing them for 2025-26. Anything that
+   assumes a column, once absent, stays absent until it arrives for good is wrong
+   about three columns and six seasons.
+
+   `docs/data-profile.md` has the per-column detail, with two limits worth knowing
+   before trusting it: it profiles the **CSVs**, so it covers the ten backfilled
+   seasons and has no row for 2026-27, which came from the live API and has no
+   CSV to profile; and it reports column **presence**, not column **content**, so
+   a column that is present and empty looks identical to one that is populated —
+   see rule 16 on `ea_index`, and the round-16 boundary below.
 
    **The boundary is not always a season, and one case proves it.** 2022-23
    carries `starts` and the expected family in its header from round 1 and its
    _values_ from **round 16**; the scraper wrote `0` for the fourteen rounds
-   before. `docs/data-profile.md` is right and unhelpful here, because it reports
-   column presence rather than column content — the same caveat rule 16 records
-   for `ea_index`. So the rule is applied per **fixture** as well as per season:
+   before, which is this rule violated at source. So it is applied per **fixture**
+   as well as per season:
    `server/src/ingest/holes.ts` finds fixtures where a column totals zero across
    all 22 players who took the field, which is impossible for `starts` by the
    laws of the game, and stores NULL. Both gameweek writers apply it.
@@ -1136,26 +1172,26 @@ around it.
   visible. `verify:history-past` reports exactly the drift it did before: `sum()`
   skips NULLs either way, so nothing it compares moved.
 
-- **A sort on 2022-23 `starts` or the expected family would rank backwards. No
-  such sort exists today, which is the only reason this costs nothing.** The
-  players who lose their total are exactly the ones who played through rounds
-  1-15 — the regulars — so they get NULL while the fringe players who arrived in
-  January keep a real number. The column looks populated and orders the season's
-  most-started players last or nowhere. Predicted in the Deferred entry before
-  item 7 and now a real property of the data rather than a hypothetical.
+- **A sort on 2022-23 `starts` or the expected family would rank backwards, and
+  the column picker is what stops it happening.** The players who lose their total
+  are exactly the ones who played through rounds 1-15 — the regulars — so they get
+  NULL while the fringe players who arrived in January keep a real number. A
+  column sorted on that ranks the season's most-started players last or nowhere.
 
-  Traced rather than assumed, and re-traced in items 8 and 9 because the line
-  numbers moved both times: the Dashboard ranks on total points
-  (`Dashboard.tsx:83`), points per match with an appearance floor (`:93`) and
-  ICT index (`:100`) — none affected,
-  ICT being the quartet item 7 left alone. The Players list has no `starts`
-  column and `CareerTable` has no sorting at all. It becomes real the day a
-  per-90 toggle or a `starts` column lands, both of which are on the Deferred
-  list, and whichever lands first owns deciding how a NULL sorts.
+  **It is withheld rather than sorted.** Item 13's availability rule offers a
+  column only where every row of that season carries a value, so on 2022-23
+  `Starts`, xG, xGI and xA appear in the picker **disabled**, reading *"Only
+  recorded from GW16 in 2022-23."* Verified in the browser: the checkbox is inert,
+  the column does not render, and the choice is still remembered for seasons where
+  it is available. `verify:columns` agrees from its own derivation — 275 cells,
+  275 agreed, 2022-23 withholding 9 of 25.
 
-  **Item 8 raised the odds of someone meeting it**, without changing any of the
-  above: 2022-23 used to be reachable only by hand-editing a URL, and is now one
-  click away on every page.
+  So this is a live hazard held off by one rule, not a defect and not a
+  hypothetical. **What it costs: any future surface that reads these aggregates
+  without consulting availability re-opens it.** The Dashboard is clear — it ranks
+  on total points, points per match and ICT index, none of them affected, ICT
+  being the quartet item 7 left alone — and `CareerTable` has no sorting at all.
+  A per-90 toggle would be the next thing to have to ask.
 
 - **26 fixtures still store 0 for the ICT quartet where nobody measured it, and
   this is a defect left in place with a reason rather than an open question.**
@@ -1311,52 +1347,10 @@ around it.
 
 ## Phase 0, Persistence and Backfill — complete
 
-One session per step, committed between each. Kept as the record of how the data
-layer was built and what each step decided.
-
-- [x] **1. Fetch and profile.** `scripts/fetch-raw-data.ts` downloads the three CSVs
-      per season, 2016-17 through 2025-26, into `data/raw/{season}/`.
-      `scripts/profile-raw-data.ts` writes `docs/data-profile.md` with the column
-      presence matrix per season, distinct `element_type` values, distinct position
-      strings, row and distinct-element counts per season, first-appearance season for
-      each drifting stat family, and an explicit answer to whether `code` exists in
-      `players_raw.csv` for every season. No schema design in this step.
-- [x] **2. Schema.** Postgres in docker-compose, node-pg-migrate wired with up/down
-      scripts, first migration creating the tables below. No ingestion logic.
-- [x] **3. Dimension ingest.** Populate `teams`, `team_seasons`, `players`,
-      `player_seasons` from `teams.csv` and `players_raw.csv`.
-- [x] **4. Fixture ingest.** Populate `fixtures` from `fixtures.csv` for 2018-19
-      onward and derive it from `merged_gw.csv` for 2016-17 and 2017-18 per rule 14.
-- [x] **5. Fact ingest.** `server/src/ingest/ingest-gameweeks.ts` populates
-      `player_gameweeks` with 253,509 rows from `merged_gw.csv`, resolving `element`,
-      `fixture` and `opponent_team` through the season maps. `COPY` through
-      node-postgres into a temp staging table, then one
-      `INSERT ... ON CONFLICT (player_id, fixture_id) DO UPDATE`. Exclusions are
-      pinned by count, not absorbed: 322 Assistant Manager rows in 2024-25, 59
-      postponed-fixture duplicates in 2019-20, 10 byte-identical duplicates in
-      2025-26. Nothing else is dropped — an unresolved id throws.
-- [x] **6. Repository and cutover.** `server/src/repositories/{seasons,teams,
-  players,fixtures}.ts` hold every query; the three routes read Postgres
-      through them. Response shapes are unchanged bar the identity changes in
-      "API Identity Rules" and the five null live-only fields. Verified with a
-      field-by-field diff against responses captured from the live API before
-      the swap: no unexplained differences, and on the six players where the
-      live bootstrap's carryover totals disagree with ours, FPL's own
-      `history_past` backs ours.
-- [x] **7. Types split.** `server/src/types/{wire,domain,api}.ts` separate what
-      upstreams send from what the app means from what the API returns;
-      `server/src/repositories/parse.ts` does the parsing, column by column, in
-      each repository's mapper. Decimals became numbers on the wire — the one
-      contract change — and `starts` and `appearances` joined the bootstrap
-      aggregate. Every response now names its season and every page header
-      displays it. Three commits: the visible null fallout, the sort-direction
-      and deadline bugs found in the browser, then the split itself.
-
-      The step's stated premise was false and is recorded as such: the client
-      never sent an FPL element id to `/api/player/:code`. `fetchPlayerDetail`
-      has one call site and the id round-tripped from bootstrap correctly. That
-      is now pinned by `server/src/repositories/api-identity.test.ts` rather
-      than asserted in prose.
+One session per step, committed between each. **The record of what each step
+decided is `docs/items/phase-0.md`.** What stays below is what that phase
+produced and the next session still has to reason from: the schema, the
+acceptance test, and the fact that rounds are not 1..n.
 
 ### Target schema
 
@@ -1469,8 +1463,8 @@ a maximum round from a count is wrong in both:
 | 2022-23 | 37                   | 38            | 7        |
 
 2019-20's Covid suspension emptied rounds 30-38 and replayed them as 39-47;
-2022-23 lost round 7 to the postponements after the Queen's death. The eight
-other seasons are 38 and 38. `PlayerDetail.tsx` therefore takes the round
+2022-23 lost round 7 to the postponements after the Queen's death. The nine
+other seasons stored are 38 and 38, 2026-27 included. `PlayerDetail.tsx` therefore takes the round
 numbers from the events themselves rather than counting them.
 
 ## Phase 1
@@ -1478,7 +1472,7 @@ numbers from the events themselves rather than counting them.
 Same rule as Phase 0: one item per session, committed between each.
 
 **The full record of every item lives in `docs/items/item-NN-<slug>.md`, one
-file per item, and every item from 1 to 14 has one.** What is left below is a
+file per item, and every item has one.** What is left below is a
 stub — three to six lines and nothing more. **A stub is not the record.** Before
 planning around anything an item decided, read its file; the working agreement's
 "trace a claim to the code before repeating it" applies doubly to a four-line
@@ -1629,110 +1623,57 @@ unnecessary once this line exists.
       a number to a threshold. Also new: `dependsOn` on a column definition, and
       `npm run verify:defcon`, which reports two results that are never merged.
 
+- [x] **15. One record per item, and a size check that fails.**
+
+      `CLAUDE.md` hit its read limit for the second time, item 13's split having
+      been consumed by one item. One file per item under `docs/items/`, the test
+      catalogue to `docs/testing.md`, Deferred to `docs/roadmap.md`: **147k → 111k**.
+      The content test — "would a reader need this to avoid writing wrong code
+      tomorrow?" — moved 33,866 characters that a pure record-dissolution would
+      have left, three quarters of it from sections nominated to stay. Also
+      resolved five flagged invariants and made the budget a failing test.
+
 ## Deferred
 
-The gate used to be "not until Phase 0 is complete". Phase 0 is complete, and
-Phase 1 has started, so that sentence would now read as permission to start all
-of this, which is the opposite of the intent.
+**The work list is `docs/roadmap.md`.** Each entry is picked deliberately, as the
+subject of a session, and never drifted into as a side effect of another task:
+nothing on it is a prerequisite for anything already built, so touching one while
+working on something else is scope creep rather than progress.
 
-What gates the list now: **each item is picked deliberately, as the subject of a
-session, and never drifted into as a side effect of another task.** Nothing here
-is a prerequisite for anything already built, so touching one while working on
-something else is scope creep rather than progress. Two of them have a real
-ordering constraint, marked below.
+One entry does not keep. It is repeated here rather than left in a file nothing
+reads by default, because its window opens and closes:
 
-Also still open, from Known Issues rather than from this list: the **live field
-sync**, which is what fills the five null fields and makes `form` and ownership
-real again. Not to be confused with `ingest:live`, which item 4 built: that
-loads a season's structure — roster, clubs, deadlines, fixtures — and runs to
-completion in about a second. The field sync stores values that are different
-every hour, and needs somewhere to put them and a policy for how often.
+> ### Dated: **Gameweek 1 locks 21 August 2026**
+>
+> **Run `npm run ingest:live-gameweeks` once the first round has been played, and
+> cross-check it against `event/{gw}/live` while the data is fresh.** The sync was
+> written in item 5 and has never been run; the cross-check could not be written
+> before a round existed. Both are only doable in a window that opens at GW1.
+>
+> **Why it has to be then**, and not eventually: `element-summary` is one request
+> per player (564 a run) while `event/{gw}/live` is one request per round, and
+> whether the cheap endpoint is usable turns on whether the two agree about a
+> double gameweek — which is exactly the thing rule 13 exists for and exactly the
+> thing that is unobservable outside a played round.
+>
+> **Watch the run output for a hole.** The sync applies the same NULL-for-a-hole
+> rule the CSV ingest does and prints a loud block when it fires. On the live path
+> that means FPL served a *settled* round with a column unpublished — an outage
+> rather than a scraper gap — so **re-run the sync** once FPL has published, and
+> the upsert overwrites the NULL. Nothing in the database distinguishes a
+> transient hole from a permanent one, so that block is the only trace that a
+> re-run is worth doing.
+>
+> First run also flips `SEASONS_WITH_GAMEWEEKS` to eleven and turns
+> `career.test.ts` red, which is the intended announcement.
+>
+> The related observation, whose window is the same and whose home is the schema
+> notes above: **hit `/api/fixtures/` during a live match** and record `finished`
+> and `finished_provisional` for a match in play and one that has just ended.
+> Which flips first cannot be established from any season now stored.
 
-- **Run the gameweek sync, and cross-check it against `event/{gw}/live`.**
-  The script exists (item 5); what is left is running it once a round has been
-  played, and building the check that could not be written before then.
-
-  **What the cross-check compares:** element-summary's per-fixture rows, summed
-  per player per round, against `event/{gw}/live`'s per-round `stats`. **What it
-  catches, which is the reason to build it:** if those disagree, one of the two
-  endpoints is aggregating a double gameweek — and our per-fixture rows are
-  wrong in exactly the rounds rule 13 exists for. Without that sentence the next
-  reader sees a redundant assertion and deletes it.
-
-  **And the reason to do it on 22 August rather than eventually:**
-  element-summary is **one request per player** (564 a run) and `event/live` is
-  **one request per round**. If the shapes agree, the cheap endpoint becomes
-  viable for routine syncing with the expensive one kept for verification. That
-  is a real saving, and it is only measurable while a round's data is fresh.
-
-  First run also flips `SEASONS_WITH_GAMEWEEKS` to eleven and turns
-  `career.test.ts` red, which is the intended announcement.
-
-  **Watch the run output for a hole.** Item 7 made the sync apply the same
-  NULL-for-a-hole rule the CSV ingest does, and print a loud block when it
-  fires. On the live path it means FPL served a _settled_ round with a column
-  unpublished, which is an outage rather than a scraper gap — so **re-run the
-  sync** once FPL has published and the upsert overwrites the NULL. Nothing in
-  the database distinguishes a transient hole from a permanent one, so that
-  block is the only trace that a re-run is worth doing.
-
-  **When scheduling lands, that block has to become a signal rather than a log
-  line.** Nobody reads the output of a cron job, and a hole that self-heals only
-  if somebody notices does not self-heal. Belongs with the scheduling work, not
-  before it.
-
-- **A season total that says a round is missing, rather than blanking or
-  lying.** The instrument item 7 wanted and did not have. `measuredSum` has two
-  settings — a number, or the no-value marker — so a column measured for 37 of
-  38 rounds has to pick between overstating completeness and destroying the
-  figure entirely. For the five columns item 7 fixed that trade was easy: they
-  are short by fourteen rounds and ~38%, so the marker is right. For the ICT
-  quartet it is wrong, which is why those 26 fixtures still store 0 (see Known
-  Issues): blanking 1,515 player-season totals to flag a ~3-7% gap costs more
-  than it repairs.
-
-  **What it needs is a third state**: the total, kept and rendered, carrying a
-  visible mark that N of its rounds were never measured — with the count
-  reachable on hover or in the cell's title. That is a wire-shape change (the
-  denominator has to travel with the number) and a UI affordance, not an
-  aggregate rule, which is why it is not a variation on item 7 and does not
-  belong in an ingest session.
-
-  Once it exists, the ICT quartet can be represented honestly without the
-  migration that dropping `NOT NULL` on four columns would require, and the
-  `starts` case gets better too: "24, and 14 rounds unmeasured" beats both "24"
-  and "—". **Blocks nothing; blocked on nothing.**
-
-- **The pre-season player list: this season's price and ownership beside the
-  last completed season's totals, each labelled which it is.** Deliberately not
-  FPL's approach of showing carryover totals under a "this season" heading. Left
-  out of item 4 because it is two features rather than an ingest: ownership is a
-  live-snapshot field with nowhere to be stored (see the live field sync above),
-  and the totals need a second season's aggregate on the bootstrap query. Until
-  it lands the list shows the new roster with zeros, which is recorded in Known
-  Issues rather than left to look like a bug.
-- **Data view improvements:** fixture difficulty colouring, totals row, per-90 toggle,
-  rolling form, multi-player comparison, styling polish.
-- **Expected points prediction:** transparent weighted formula, not black-box ML,
-  because explainability matters for FPL managers. Requires a backtest harness fitted
-  on earlier seasons and evaluated on a held-out one, benchmarked against a trailing
-  five-gameweek average and against FPL's own `ep_next`. The historical data it
-  needs now exists. **Blocked on nothing; blocks the captaincy model.**
-- **A real captaincy model.** The Dashboard ranks by points per match with an
-  appearance floor, which is honest but is not a captain pick. A real one needs
-  fixture difficulty, minutes risk, form and ownership. **Blocked on the
-  expected points work above** — without it there is no per-fixture projection
-  to captain on, and the live sync, for form and ownership.
-- **LLM scouting reports.**
-- **Deploy on karpuz-prod** alongside TechRelative (Docker Compose, Nginx), responsive
-  design, README with screenshots.
-- ~~A season selector in the UI.~~ **Done — Phase 1 item 8.** It carried the
-  `detailPlayer` snapshot fix with it, as this entry said it would.
-- ~~A per-90 toggle on the averages row.~~ **Still open**, and item 12 did not
-  touch it — but note that `Normalization` in `lib/averages.ts` is still the
-  seam, and the footnote now has a model (`buildFootnote`) that would need a
-  third form of words for it. Whichever item lands it owns saying what "per 90"
-  divides by in the sentence, since "appearances" stops being the denominator.
+The rest — the third-state total, the pre-season player list, expected points,
+the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
 
 ## Design Decisions
 
@@ -1744,7 +1685,9 @@ every hour, and needs somewhere to put them and a policy for how often.
 
 ## Working Agreement
 
-- Read this file and `docs/data-profile.md` before starting any task.
+- Read this file before starting any task, and `docs/data-profile.md` before
+  touching an ingest. Note what the profile covers: the ten backfilled seasons'
+  **CSVs**, not 2026-27 and not the database — see rule 6.
 - **This file is one of three, and the split is load-bearing rather than tidy.**
   `docs/items/item-NN-<slug>.md` holds the full record of each Phase 1 item;
   `docs/testing.md` holds the map of the test suite; this file holds what the next

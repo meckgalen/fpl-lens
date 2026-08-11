@@ -10,6 +10,22 @@
  * split them again — and both times the overflow was discovered by reasoning
  * from a stale claim rather than by anything failing.
  *
+ * WHICH UNIT THE BUDGET IS IN, because the two available answers differ and
+ * nobody should have to rediscover this. The budget is counted in **characters**:
+ * `readFileSync(...).length` returns UTF-16 code units, which is one per
+ * character for everything in this file. `wc -c` returns **bytes** and reads
+ * about 1,500 higher — the gap is multi-byte UTF-8 punctuation (em dashes, `×`,
+ * `→`, `…`) and accented names (Fernández, Ødegaard, Højbjerg, Guéhi). So the two
+ * disagree by roughly 1.3%, and a check written against the wrong one is wrong in
+ * the permissive direction.
+ *
+ * Characters is the right unit for a context budget, which is why it is the one
+ * used here. **If Claude Code's read limit turns out to be measured in bytes,
+ * the byte figure is the one that governs** and this script should switch to
+ * `Buffer.byteLength(text, 'utf8')` rather than having its threshold lowered to
+ * compensate — a threshold that encodes a unit conversion is a threshold nobody
+ * can reason about later.
+ *
  * The threshold is 120,000, not 150,000. The margin is deliberate: an item's
  * record now lands in docs/items/ rather than here, but the stub, the Current
  * State edits and any new rule still land here, and they have to fit at the END
