@@ -20,7 +20,8 @@
     "docs:size": "tsx scripts/check-doc-size.ts",
     "verify:history-past": "cd server && npm run verify:history-past --",
     "verify:columns": "cd server && npm run verify:columns --",
-    "verify:defcon": "cd server && npm run verify:defcon --"
+    "verify:defcon": "cd server && npm run verify:defcon --",
+    "verify:thresholds": "cd server && npm run verify:thresholds --"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

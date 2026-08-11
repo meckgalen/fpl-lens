@@ -38,9 +38,11 @@ import {
 } from '../repositories/players.js';
 import { listEvents, listFixtures } from '../repositories/fixtures.js';
 import { listColumnHistory, seasonAvailability } from '../repositories/columns.js';
+import { COMPARISON_THRESHOLDS } from '../comparison/thresholds.js';
 import type {
   BootstrapResponse,
   ColumnHistoryResponse,
+  ComparisonThresholdsResponse,
   ErrorResponse,
   FixturesResponse,
   PlayerCareerResponse,
@@ -169,6 +171,37 @@ router.get('/columns', async (_req: Request, res: Response) => {
     console.error('Column history query failed:', err);
     res.status(500).json({ error: 'Failed to load column availability' } satisfies ErrorResponse);
   }
+});
+
+/**
+ * GET /api/comparison-thresholds — the frozen axis scales, per position.
+ *
+ * Static data, served rather than compiled into the client, and the reasons are
+ * on `ComparisonThresholdsResponse` and on `comparison/thresholds.ts`. The short
+ * version: re-derivation has to be a server-only change, and keeping these on
+ * the server is what lets `verify:thresholds` import them with type checking
+ * instead of reaching across packages.
+ *
+ * **No query, no season, and `?season=` is rejected rather than ignored.** A
+ * threshold is derived from a *set* of seasons which it carries itself; asking
+ * this route for one season is asking a question it has no form of. Rejecting
+ * follows `/career`: accepting a parameter and silently doing something else
+ * with it is how a caller ends up certain it filtered when it did not.
+ *
+ * No database access at all, so no try/catch and no 500 path — there is nothing
+ * here that can fail at runtime that would not have failed at import.
+ */
+router.get('/comparison-thresholds', async (req: Request, res: Response) => {
+  if (req.query.season !== undefined) {
+    res.status(400).json({
+      error:
+        'Thresholds are frozen across seasons; ?season= is not accepted here. Each axis carries the seasons it was derived from.',
+      available: await listSeasons(pool),
+    } satisfies ErrorResponse);
+    return;
+  }
+
+  res.json({ thresholds: COMPARISON_THRESHOLDS } satisfies ComparisonThresholdsResponse);
 });
 
 /**

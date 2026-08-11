@@ -26,6 +26,7 @@ import type {
   Team,
   UpcomingFixture,
 } from './domain.js';
+import type { AxisThreshold, ComparisonPosition } from '../comparison/thresholds.js';
 
 /**
  * The five fields that describe the live game: who is injured, what the market
@@ -176,6 +177,41 @@ export interface PlayerCareerResponse {
 export interface FixturesResponse {
   season: string;
   fixtures: ApiFixture[];
+}
+
+/**
+ * `GET /api/comparison-thresholds` — the frozen axis scales, per position.
+ *
+ * **The third response that spans seasons**, after `/player/:code/career` and
+ * `/columns`, and it follows their rule: no top-level `season`, and every datum
+ * carrying the seasons it came from (API identity rule 7). Here the label is
+ * `derivedFrom.seasons` rather than a single `season` string, because a
+ * threshold is not drawn from one season — it is drawn from ten, or from the
+ * three that measure xGI, or from the one that measures DC. That set *is* the
+ * label, and a consumer showing an axis is showing a claim about exactly those
+ * seasons.
+ *
+ * **Not on the bootstrap, and the payload size is not the argument.** These are
+ * ~5 KB against a bootstrap that is ~1 MB, so the bandwidth would genuinely be
+ * free. Three other things are not:
+ *
+ *   1. **A bootstrap response is one season throughout** — that is the premise
+ *      `season`, `seasons` and `columns` all rest on. A block derived from ten
+ *      seasons at once has no honest place on it, and putting it there would
+ *      make rule 7's single-season form false of its own carrier. This is the
+ *      argument that put `/api/columns` on its own route.
+ *   2. **The bootstrap is refetched on every season change.** These constants
+ *      do not vary by season, so riding along would re-send them on every
+ *      switch, forever, to answer a question that has the same answer.
+ *   3. **Every page blocks on the bootstrap at mount; one page needs these.**
+ *      The bootstrap already runs 23-121 ms depending on season.
+ *
+ * The cost, stated because it is real: the client has no axis configuration
+ * until this lands, so the comparison page needs a loading state rather than
+ * rendering axes from a compiled-in constant.
+ */
+export interface ComparisonThresholdsResponse {
+  thresholds: Record<ComparisonPosition, AxisThreshold[]>;
 }
 
 export interface ErrorResponse {

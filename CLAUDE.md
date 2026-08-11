@@ -147,9 +147,15 @@ saying so; the left join yields a NULL position, falls through the `ELSE`-less
 `CASE` to NULL, and renders the no-value marker. Pinned by a test that inserts
 an orphan and goes red under an inner join.
 
-**All five routes read Postgres.** `GET /api/bootstrap`, `GET /api/columns`,
-`GET /api/player/:code`, `GET /api/player/:code/career` and `GET /api/fixtures`
-go through `server/src/repositories/`, and no SQL exists outside that directory.
+**Five of the six routes read Postgres, and the sixth reads nothing.**
+`GET /api/bootstrap`, `GET /api/columns`, `GET /api/player/:code`,
+`GET /api/player/:code/career` and `GET /api/fixtures` go through
+`server/src/repositories/`, and no SQL exists outside that directory.
+`GET /api/comparison-thresholds` serves item 16's frozen constants from
+`server/src/comparison/thresholds.ts` and touches no database at all — it is on
+the server so that re-deriving a threshold is a server-only change, and so that
+`verify:thresholds` can import the constants without a third cross-package
+import.
 `server/src/services/fplApi.ts` and its 5-minute cache are still there and still
 unused by the routes — it is the ingestion source for the live season, not dead
 code.
@@ -349,19 +355,25 @@ fpl-lens/
 │   │   │   ├── live-season.test.ts    # offline, in a rolled-back transaction
 │   │   │   ├── ingest-live-gameweeks.ts  # match rows: ingest:live-gameweeks
 │   │   │   └── live-gameweeks.test.ts # the 2025-26 replay + the gate
+│   │   ├── comparison/        # the frozen chart thresholds; NO SQL, no DB
+│   │   │   ├── thresholds.ts  # 35 floors/ceilings + the re-derivation rule
+│   │   │   └── thresholds.test.ts # shape only: values are verify:thresholds'
 │   │   ├── repositories/      # DB query layer — the ONLY place SQL may live
 │   │   │   ├── defcon.ts      # the DC threshold: the one place the rule lives
 │   │   │   └── defcon.test.ts # boundaries, GK, clause order, the orphan row
 │   │   ├── test/
 │   │   │   └── synthetic-seasons.ts  # one reserved season per suite; two
 │   │   │                      # suites sharing one deadlocked on 40P01
-│   │   ├── routes/fpl.ts      # /api/bootstrap, /api/columns,
-│   │   │                      # /api/player/:code[/career], /api/fixtures
+│   │   ├── routes/fpl.ts      # /api/bootstrap, /api/columns, /api/fixtures,
+│   │   │                      # /api/player/:code[/career],
+│   │   │                      # /api/comparison-thresholds
 │   │   ├── services/fplApi.ts # live FPL API client, cache; ingest source only
 │   │   ├── verify/            # read-only cross-checks against other pipelines
 │   │   │   ├── history-past-check.ts  # npm run verify:history-past
 │   │   │   ├── columns-check.ts       # npm run verify:columns
-│   │   │   └── defcon-check.ts        # npm run verify:defcon — TWO results
+│   │   │   ├── defcon-check.ts        # npm run verify:defcon — TWO results
+│   │   │   └── thresholds-check.ts    # verify:thresholds — TWO results, one
+│   │   │                              # of which never fails, on purpose
 │   │   └── types/
 │   │       ├── wire.ts        # what upstreams send: strings, season-scoped ids
 │   │       ├── domain.ts      # what the app means: numbers, codes, real nulls
@@ -732,6 +744,13 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
      `GET /api/player/:code/career` is the first such response. Its body is
      `{ seasons: [...] }` and each element carries its own `season`, which is
      what a consumer must render against.
+   - **Where a datum is derived from a SET of seasons, the set is the label.**
+     `GET /api/comparison-thresholds` is the case: a threshold is drawn from ten
+     seasons, or the three that measure xGI, or the one that measures DC, so each
+     carries `derivedFrom.seasons` rather than a `season`. A consumer showing an
+     axis is showing a claim about exactly those seasons, and a single label
+     could not say which. It is the same rule — the label rides on the datum —
+     with the label being a set because the provenance is.
 
    **A season-scoped fact that is not a stat belongs on the row too, and item 12
    is the first case.** Career rows carry `rounds: number[]` — every round that
@@ -845,6 +864,19 @@ distribution, computed in SQL before `defcon.ts` existed and frozen as literals:
 **compared** rather than printed, because a printed number nobody diffs is not a
 check. Exits non-zero on either. Full output:
 `docs/items/item-14-starts-and-defcon-hits.md`.
+
+`npm run verify:thresholds` checks the 35 frozen comparison thresholds and also
+prints **two results that are never merged**, for a different reason than
+`verify:defcon`'s. **Read-only.** Part 1 re-derives over exactly the seasons each
+threshold **records** — cohort size, `ceiling >= p99`, floor as the rule states —
+and fails on disagreement; scoping it to the recorded seasons is what keeps it
+green as seasons are added. Part 2 prints what a re-derivation **today** would
+pick, and **never fails**: a frozen threshold drifting from a fresh derivation is
+the expected state, and a check that went red for doing its job would get its
+threshold raised. Part 1 asserts `ceiling >= p99` rather than re-running the
+rounding ladder, because re-running it would reproduce the constant and prove
+only that one function was called twice. Full output:
+`docs/items/item-16-comparison-thresholds.md`.
 
 `npm run verify:history-past` diffs every player-season we hold against FPL's
 `history_past` totals and prints where the two disagree, what the disagreement
@@ -1625,6 +1657,19 @@ unnecessary once this line exists.
       sections. Also resolved five flagged invariants and made the budget a
       failing test.
 
+- [x] **16. The comparison chart's frozen thresholds.**
+
+      Thresholds before any chart, because freezing them is what makes two
+      seasons comparable and every other decision on the page rests on them. 35
+      floors and ceilings, per position, served by
+      `GET /api/comparison-thresholds` — **on the server so that re-deriving one
+      is a server-only change**, and so the check can import them without a third
+      cross-package import. **The ceilings pool ten seasons and the average band
+      must not**: defensive contribution points broke the defender distribution
+      at 2025-26, so a pooled band would render the typical modern defender
+      permanently above it. Also killed a rule of its own: the clipping trigger
+      fired on 18 of 36 axes as arithmetic rather than as data.
+
 ## Deferred
 
 **The work list is `docs/roadmap.md`.** Each entry is picked deliberately, as the
@@ -1741,6 +1786,22 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
   competition format, `SUM(minutes)` against 380 × 2 × 11 × 90, acceptance
   values from `history_past` rather than the CSVs — and report an approximate
   quantity as a band, not a number.
+- **A frozen constant records the seasons and cohort it was derived from, as
+  data rather than as a comment, and fewer than five seasons means it gets
+  re-derived when a season is added.** Five or more is frozen and re-derived only
+  deliberately. Provenance has to be data because that is what a check can read;
+  a rule nothing enforces has already drifted. Today it binds on item 16's
+  comparison thresholds — `DCH/St` has one season behind it and `xGI` three.
+
+  **A re-derived threshold records the old value beside the new one and the
+  season that triggered it.** Re-deriving breaks cross-season comparability on
+  that axis, which is the single thing a frozen threshold exists to protect, so
+  the change must be visible in the data rather than inferable from a git log.
+  A change to `DEFCON_THRESHOLDS` invalidates every `DCH/St` threshold outright,
+  not at the next season boundary.
+
+  Five is a defensible line rather than a derived one: it is the point at which a
+  statistic's per-season spread stops being one season wide.
 - **Trace a claim to the code before repeating it.** Two entries in Known Issues
   were false when audited in step 7, one of them written by the previous session
   and planned around by the next. An issue list that is not re-checked is worse

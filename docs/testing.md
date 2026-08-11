@@ -17,15 +17,31 @@ restated as rules here. What follows is the catalogue.
 
 ## The counts
 
-`npm test` runs **two suites on two runners**: **110 server tests** and **187
+`npm test` runs **two suites on two runners**: **123 server tests** and **187
 client tests**, all passing. They are counted separately on purpose — two
 runners print two summaries, and a combined figure would be maintained by hand
 against neither of them.
 
 ---
 
-**Server — `node --import tsx --test`, against the populated database.** Eight
-files:
+**Server — `node --import tsx --test`, against the populated database.** Nine
+files, one of which touches no database — see `comparison/thresholds.test.ts`:
+
+- `server/src/comparison/thresholds.test.ts` — the comparison chart's frozen
+  axis thresholds, **shape only, and the split from the values is the point**.
+  Pinning a ceiling here would restate the constant next to itself, where the two
+  copies agree by construction; the values are checked by
+  `npm run verify:thresholds`, which re-derives them from the database and is not
+  in the suite because it needs the ten complete seasons ingested. What is left
+  is what a test can hold and what survives any re-derivation: the canonical axis
+  order preserved in all four pruned sets, the 7/10/10/8 memberships, saves
+  belonging to the keeper alone, forwards having neither CS nor DCH/St, every
+  threshold being drawable (floor strictly below ceiling) and carrying a
+  non-empty ascending derivation set, and the re-derivation rule marking exactly
+  DCH/St and xGI.
+
+  **The only server file that touches no database**, so it needs no synthetic
+  season and takes no part in the 40P01 reservation scheme.
 
 - `server/src/repositories/defcon.test.ts` — the defensive contribution hit
   rule, on its own, for the reason `holes.test.ts` exists: it is the
