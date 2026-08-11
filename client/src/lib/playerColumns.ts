@@ -17,11 +17,12 @@
 
 import { fmtNum, fmtPrice } from '../types/fpl';
 import type {
+  ColumnAvailability,
   ColumnHistoryRow,
   Player,
   SeasonColumnAvailability,
 } from '../types/fpl';
-import { fmtPpg } from './averages';
+import { fmtPpg, fmtQuotient } from './averages';
 
 export interface PlayerColumn {
   /** Stable across versions: it is what persistence stores. */
@@ -40,6 +41,25 @@ export interface PlayerColumn {
    * `start_cost` is complete on all eleven seasons.
    */
   nullable: boolean;
+  /**
+   * The database columns this column's value is derived from, for a column that
+   * has **no matrix cell of its own**. Availability is the most restrictive
+   * state across them; ties break by declaration order, so the most informative
+   * dependency goes first.
+   *
+   * Defaults to `[key]`, which is what every column before item 14 was: a
+   * nullable column named for the database column it renders. So a
+   * single-dependency column takes an identical path through `resolveColumn`
+   * and this is one rule rather than a second branch.
+   *
+   * Item 14's two entries are the first that need it — `defcon_hits` is derived
+   * from `defensive_contribution`, and `defcon_hits_per_start` from that AND
+   * `starts`. Both dependencies are already in the bootstrap's five, so no
+   * server-side change was required to answer for them. `Pts/£` fits the same
+   * concept retroactively as a derived column whose inputs happen to be
+   * non-nullable, which is why it needs no entry here.
+   */
+  dependsOn?: string[];
   /**
    * A permanent reason this column can never be shown, whatever the season.
    *
@@ -82,6 +102,32 @@ const perMillion = (points: number, cost: number | null): number | null =>
 
 /** `fmtNum` for the nullable ones, so an absent value renders `—` and not `0`. */
 const int = (v: number | null) => fmtNum(v, 0);
+
+/**
+ * Defensive contribution hits per start, or null where the question has no
+ * answer.
+ *
+ * **All three null tests are required, and `hits === null` is the one that is
+ * easy to drop.** `null / 5` is `0` in JavaScript, not `NaN`, so omitting it
+ * renders a confident `0.00` for a player whose hit count was never measured —
+ * rule 6 defeated by a coercion, in a cell indistinguishable from a real zero.
+ *
+ * It is probably unreachable today, because the availability layer withholds
+ * this column on every season where `defcon_hits` can be null. That is not a
+ * reason to leave it out: the server's guard exists precisely so the value
+ * *can* be null, this is the only place the client divides by it, and a column
+ * whose correctness rests on a different module's filter is one refactor from
+ * being wrong.
+ *
+ * **A zero denominator returns null rather than 0.00**, so "he made no starts"
+ * and "he hit none of his starts" stay distinguishable. 367 of 2025-26's 841
+ * players have no starts at all, so this is the common case rather than the
+ * edge one.
+ */
+const hitsPerStart = (p: Player): number | null =>
+  p.defcon_hits === null || p.starts === null || p.starts === 0
+    ? null
+    : p.defcon_hits / p.starts;
 
 /**
  * Every column the payload can answer, in the order they render.
@@ -218,6 +264,48 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     nullable: true,
     value: (p) => p.starts,
     render: (p) => int(p.starts),
+  },
+  {
+    // How many gameweeks cleared the defensive contribution threshold.
+    //
+    // **The number a DC total cannot give you.** Gabriel's 2025-26 is 277 over
+    // 30 starts — 9.2 a start against a defender's 10 — and that average cannot
+    // distinguish a player who hits most weeks from one who almost never does.
+    // He hits 11 times in 38.
+    //
+    // Derived server-side and merely rendered here; nothing on the client
+    // compares a number to a threshold. Its matrix cell is
+    // `defensive_contribution`'s, via `dependsOn`.
+    key: 'defcon_hits',
+    label: 'DCH',
+    title: 'Defensive contribution hits',
+    nullable: true,
+    dependsOn: ['defensive_contribution'],
+    value: (p) => p.defcon_hits,
+    render: (p) => int(p.defcon_hits),
+  },
+  {
+    // Hits per START, and named for it rather than called a rate or a
+    // percentage, because **it can exceed 1**: a substitute who racks up twelve
+    // recoveries in half an hour has cleared the threshold without starting, so
+    // the numerator counts all games and the denominator counts starts. Rare —
+    // 8 such hits in all of 2025-26, and no player's total actually exceeds his
+    // starts — but above 1 reads as "hits more often than he starts", which is
+    // informative. Not clamped, the denominator not switched to appearances,
+    // and the numerator not restricted to started games: the count column above
+    // and this one must share one numerator.
+    //
+    // Availability takes the more restrictive of its two inputs.
+    // `defensive_contribution` is declared first so a season that records
+    // neither reports DC's sentence, which names 2025-26, rather than `starts`'
+    // which would name 2022-23 and describe the wrong column.
+    key: 'defcon_hits_per_start',
+    label: 'DCH/St',
+    title: 'Defensive contribution hits per start',
+    nullable: true,
+    dependsOn: ['defensive_contribution', 'starts'],
+    value: (p) => hitsPerStart(p),
+    render: (p) => fmtQuotient(hitsPerStart(p), 2),
   },
   {
     key: 'saves',
@@ -450,7 +538,39 @@ export function resolveColumn(
 
   if (!col.nullable) return { available: true };
 
-  const cell = availability.columns.find((c) => c.key === col.key);
+  /**
+   * The dependency that decides it — the most restrictive, ties by declaration
+   * order.
+   *
+   * A column with no `dependsOn` is a column named for the one database column
+   * it renders, which is every nullable column before item 14. So this reduces
+   * to the single-cell lookup it used to be rather than adding a branch beside
+   * it, and a derived column is the general case rather than the exception.
+   *
+   * Severity ranks `undefined` above `none` above `partial`: an absent cell
+   * means the server never spoke for the column, which is a stronger reason to
+   * withhold than a measured "no player has a value". Neither of item 14's two
+   * columns can reach that today — both dependencies are in the bootstrap's
+   * five — but the ordering has to be stated rather than left to `find`.
+   */
+  const severity = (c: ColumnAvailability | undefined): number =>
+    c === undefined ? 3 : c.state === 'none' ? 2 : c.state === 'partial' ? 1 : 0;
+
+  const deps = col.dependsOn ?? [col.key];
+  let depKey = deps[0];
+  let cell = availability.columns.find((c) => c.key === depKey);
+  for (const key of deps.slice(1)) {
+    const candidate = availability.columns.find((c) => c.key === key);
+    // Strictly greater, so a tie keeps the earlier declaration — which is why
+    // `defensive_contribution` is declared first on both of item 14's columns:
+    // on 2016-17 both dependencies are `none`, and DC's sentence names 2025-26
+    // where `starts`' would name 2022-23 and describe the wrong column.
+    if (severity(candidate) > severity(cell)) {
+      cell = candidate;
+      depKey = key;
+    }
+  }
+
   // A nullable column the bootstrap does not speak for. It cannot be rendered,
   // because the payload carries no value for it — but "the server did not
   // measure this" is not the same claim as "no player has a value", so the
@@ -482,8 +602,11 @@ export function resolveColumn(
   const base = `Not recorded in ${season}`;
   if (history === null) return { available: false, reason: `${base}.` };
 
+  // `depKey`, not `col.key`. For a derived column the matrix has no row of its
+  // own, and the seasons worth pointing at are the ones that record the
+  // dependency this branch was chosen for.
   const recorded = history
-    .filter((r) => r.key === col.key && r.state !== 'none')
+    .filter((r) => r.key === depKey && r.state !== 'none')
     .map((r) => r.season);
 
   // The newest season recording ANY column, which is how far our data reaches.

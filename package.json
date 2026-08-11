@@ -18,7 +18,8 @@
     "test:server": "cd server && npm test",
     "test:client": "cd client && npm test",
     "verify:history-past": "cd server && npm run verify:history-past --",
-    "verify:columns": "cd server && npm run verify:columns --"
+    "verify:columns": "cd server && npm run verify:columns --",
+    "verify:defcon": "cd server && npm run verify:defcon --"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

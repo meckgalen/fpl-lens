@@ -61,6 +61,16 @@ export interface Player {
   expected_goal_involvements: number | null;
   /** null before 2025-26. FPL retro-computed 2024-25 without the components. */
   defensive_contribution: number | null;
+  /**
+   * How many gameweeks cleared the defensive contribution threshold — the count
+   * of `GameweekHistory.defcon_hit`, computed by the server from one rule.
+   *
+   * null wherever a count would be a lie: DC unmeasured, DC measured on only
+   * part of the season, or no match played (every player of 2026-27). The
+   * column picker withholds the two columns that read it on exactly those
+   * seasons, but the null is still handled where it is divided by.
+   */
+  defcon_hits: number | null;
 
   /** Matches with minutes > 0. Not rounds — a double gameweek is two matches. */
   appearances: number;
@@ -173,6 +183,26 @@ export interface GameweekHistory extends MatchStats {
   selected: number;
   transfers_in: number;
   transfers_out: number;
+
+  /**
+   * Both are here rather than on `MatchStats`, for the reason `starts` has
+   * always been: the per-row meaning is not the season meaning. `starts` is 0
+   * or 1 here and a count on `Player`/`PlayerCareerSeason`; `defcon_hit` is 0
+   * or 1 here and `defcon_hits` is a count. One name over two quantities is
+   * exactly what the shared interface exists to prevent.
+   */
+
+  /** Started this match: 0 or 1. null before 2022-23 and before its round 16. */
+  starts: number | null;
+  /**
+   * This match cleared the defensive contribution threshold: 0 or 1. null
+   * before 2025-26, where DC was never measured. 0 for a goalkeeper, who has no
+   * threshold.
+   *
+   * The **server** decides this. Nothing on the client compares a number to a
+   * threshold, so the per-row flag and the season count cannot drift apart.
+   */
+  defcon_hit: number | null;
 }
 
 /**

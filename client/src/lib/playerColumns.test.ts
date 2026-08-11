@@ -20,7 +20,9 @@
 
 import { describe, expect, it } from 'vitest';
 import { columnByKey, describeRecordedIn, resolveColumn } from './playerColumns';
-import type { ColumnHistoryRow, SeasonColumnAvailability } from '../types/fpl';
+import { NO_VALUE } from '../types/fpl';
+import type { ColumnHistoryRow, Player, SeasonColumnAvailability } from '../types/fpl';
+import { aPlayer } from '../test/factories';
 
 /** Eleven seasons, newest first, exactly as the bootstrap sends them. */
 const ALL_SEASONS = [
@@ -161,6 +163,176 @@ describe('a column recorded, dropped, and recorded again', () => {
     expect(
       describeRecordedIn(['2016-17', '2019-20', '2022-23'], ALL_SEASONS, '2025-26')
     ).toBe('recorded 2016-17, 2019-20, and 2022-23');
+  });
+});
+
+describe('a derived column, whose availability is its dependencies\'', () => {
+  /**
+   * Item 14's two columns have **no matrix cell of their own**: `defcon_hits` is
+   * counted from `defensive_contribution` and `defcon_hits_per_start` divides
+   * that by `starts`. Availability folds over `dependsOn` instead, taking the
+   * most restrictive and breaking ties by declaration order.
+   *
+   * The failure this catches is not a crash. Without the fold, `find` looks for
+   * a cell keyed `defcon_hits`, finds none, and the picker says "Not available
+   * for 2025-26" — on the one season where the column works perfectly.
+   */
+  const availability = (
+    cells: Record<string, 'full' | 'partial' | 'none'>,
+    measuredFrom: Record<string, number> = {},
+    season = '2016-17'
+  ): SeasonColumnAvailability => ({
+    season,
+    measured: true,
+    columns: Object.entries(cells).map(([key, state]) => ({
+      key,
+      state,
+      measured_from: measuredFrom[key] ?? null,
+    })),
+  });
+
+  const status = (key: string, a: SeasonColumnAvailability, matrix: ColumnHistoryRow[] | null) =>
+    resolveColumn(columnByKey(key)!, a, matrix, ALL_SEASONS);
+
+  it('offers both columns where every dependency is fully measured', () => {
+    const a = availability(
+      { defensive_contribution: 'full', starts: 'full' },
+      {},
+      '2025-26'
+    );
+
+    expect(status('defcon_hits', a, null).available).toBe(true);
+    expect(status('defcon_hits_per_start', a, null).available).toBe(true);
+  });
+
+  it('withholds both where the dependency is not recorded, naming where it is', () => {
+    // 2016-17: DC does not exist. Both columns are gone and both point at
+    // 2025-26 — the season DC is actually recorded in, not the season either
+    // column is named for.
+    const matrix = matrixFor('defensive_contribution', ['2025-26']);
+    const a = availability({ defensive_contribution: 'none', starts: 'none' });
+
+    expect(reasonFrom(status('defcon_hits', a, matrix))).toBe(
+      'Not recorded in 2016-17 · recorded from 2025-26.'
+    );
+    expect(reasonFrom(status('defcon_hits_per_start', a, matrix))).toBe(
+      'Not recorded in 2016-17 · recorded from 2025-26.'
+    );
+  });
+
+  it('takes the more restrictive of two dependencies rather than the first', () => {
+    // 2022-23's real shape once DC exists nowhere: `starts` is measured from
+    // GW16 and DC is not recorded at all. `none` beats `partial`, so the
+    // sentence is DC's — the stronger statement, and the one that explains why
+    // the column is missing rather than merely incomplete.
+    const matrix = matrixFor('defensive_contribution', ['2025-26']);
+    const a = availability(
+      { defensive_contribution: 'none', starts: 'partial' },
+      { starts: 16 },
+      '2022-23'
+    );
+
+    expect(reasonFrom(status('defcon_hits_per_start', a, matrix))).toBe(
+      'Not recorded in 2022-23 · recorded from 2025-26.'
+    );
+  });
+
+  it('reports the partial dependency when it is the only thing blocking', () => {
+    // The mirror case, and the one that proves the fold is not just "always use
+    // the first dependency": DC is fine, `starts` is the problem, and the
+    // reason has to name `starts`' boundary rather than DC's absence.
+    const a = availability(
+      { defensive_contribution: 'full', starts: 'partial' },
+      { starts: 16 },
+      '2022-23'
+    );
+
+    expect(reasonFrom(status('defcon_hits_per_start', a, null))).toBe(
+      'Only recorded from GW16 in 2022-23.'
+    );
+    // And the count column, which does not depend on `starts`, is unaffected.
+    expect(status('defcon_hits', a, null).available).toBe(true);
+  });
+
+  it('breaks a tie by declaration order, which is why DC is declared first', () => {
+    // Both dependencies `none`. DC is declared first, so its matrix run is the
+    // one described. Declaring `starts` first would print "recorded from
+    // 2022-23" on a column that has never existed before 2025-26 — true of
+    // `starts` and a lie about this column.
+    const matrix = [
+      ...matrixFor('defensive_contribution', ['2025-26']),
+      ...matrixFor('starts', ['2022-23', '2023-24', '2024-25', '2025-26']),
+    ];
+    const a = availability({ defensive_contribution: 'none', starts: 'none' });
+
+    expect(reasonFrom(status('defcon_hits_per_start', a, matrix))).toBe(
+      'Not recorded in 2016-17 · recorded from 2025-26.'
+    );
+  });
+
+  it('leaves every pre-existing column resolving through its own key', () => {
+    // The fold defaults `dependsOn` to `[key]`, so a column without one takes
+    // an identical path. If that default broke, every nullable column would
+    // resolve no cell and the whole picker would read "Not available".
+    const a = availability({ expected_goals: 'full', starts: 'full' }, {}, '2025-26');
+
+    expect(status('expected_goals', a, null).available).toBe(true);
+    expect(status('starts', a, null).available).toBe(true);
+  });
+});
+
+/** The reason off a status, refusing to guess when the column was available. */
+function reasonFrom(status: ReturnType<typeof resolveColumn>): string {
+  if (status.available) throw new Error('expected the column to be unavailable');
+  return status.reason;
+}
+
+describe('hits per start', () => {
+  /**
+   * The quotient itself, and the three nulls that keep it honest.
+   *
+   * `null / 5` is **0** in JavaScript, not NaN — so a missing hit count renders
+   * a confident `0.00` unless it is tested for. That is rule 6 defeated by a
+   * coercion, in a cell indistinguishable from a real zero, and it is the only
+   * place in the client that divides by `defcon_hits`.
+   */
+  const col = columnByKey('defcon_hits_per_start')!;
+  const player = (defcon_hits: number | null, starts: number | null) =>
+    ({ ...aPlayer(), defcon_hits, starts }) as Player;
+
+  it('divides hits by starts, at two places, rounded half to even', () => {
+    expect(col.render(player(10, 14))).toBe('0.71');
+    expect(col.render(player(11, 30))).toBe('0.37');
+  });
+
+  it('renders the placeholder rather than 0.00 when the player never started', () => {
+    // 367 of 2025-26's 841 players have no starts, so this is the common case.
+    // "He made no starts" and "he hit none of his starts" must not collapse.
+    expect(col.render(player(0, 0))).toBe(NO_VALUE);
+    expect(col.value(player(0, 0))).toBeNull();
+  });
+
+  it('renders the placeholder rather than 0.00 when the hit count is unmeasured', () => {
+    // The coercion. Guarded here rather than left to the availability layer:
+    // the server's guard exists precisely so this value CAN be null, and a
+    // column whose correctness rests on another module's filter is one refactor
+    // from being wrong.
+    expect(col.render(player(null, 5))).toBe(NO_VALUE);
+    expect(col.value(player(null, 5))).toBeNull();
+  });
+
+  it('keeps a real zero, which is a different statement', () => {
+    // He started five and cleared the threshold in none of them. That is a
+    // measurement, and it renders.
+    expect(col.render(player(0, 5))).toBe('0.00');
+  });
+
+  it('does not clamp above 1', () => {
+    // A substitute can clear the threshold without starting, so the numerator
+    // counts all games and the denominator counts starts. No player in 2025-26
+    // actually exceeds 1 — the maximum is exactly 1.00 — but 8 hits did come
+    // off the bench, so the shape is reachable and must read as itself.
+    expect(col.render(player(3, 2))).toBe('1.50');
   });
 });
 

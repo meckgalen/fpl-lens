@@ -16,7 +16,8 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "verify:history-past": "tsx src/verify/history-past-check.ts",
     "verify:ppg": "tsx src/verify/ppg-check.ts",
-    "verify:columns": "tsx src/verify/columns-check.ts"
+    "verify:columns": "tsx src/verify/columns-check.ts",
+    "verify:defcon": "tsx src/verify/defcon-check.ts"
   },
   "dependencies": {
     "@types/pg-copy-streams": "^1.2.5",

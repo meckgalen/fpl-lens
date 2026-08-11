@@ -101,6 +101,19 @@ export interface PlayerSeasonTotals {
   expected_goal_involvements: number | null;
   /** NULL before 2025-26. FPL retro-computed 2024-25 without the components. */
   defensive_contribution: number | null;
+  /**
+   * How many of this season's gameweeks cleared the defensive contribution
+   * threshold — the count of `PlayerGameweek.defcon_hit`, computed server-side
+   * from one rule (see `repositories/defcon.ts`).
+   *
+   * NULL wherever the count would be a lie: DC unmeasured for the season, DC
+   * measured on only part of it, or no match played at all. That last case is
+   * not hypothetical — it is every player of 2026-27, the season the app
+   * defaults to.
+   *
+   * It is deliberately **not** on `PlayerCareerSeason`. See the query.
+   */
+  defcon_hits: number | null;
 
   /**
    * Matches the player actually appeared in (minutes > 0), not rounds in the
@@ -197,6 +210,32 @@ export interface PlayerGameweek extends MatchStats {
   selected: number;
   transfers_in: number;
   transfers_out: number;
+
+  /**
+   * These two are on this interface rather than on `MatchStats`, and that is
+   * the same distinction `starts` has always drawn: their per-row meaning is
+   * not their season meaning. Here `starts` is 0 or 1 — did he start this
+   * match — while `PlayerSeasonTotals.starts` is a count of them, and
+   * `defcon_hit` is 0 or 1 where `defcon_hits` is a count. Sharing them through
+   * `MatchStats` would put one name on two quantities.
+   */
+
+  /**
+   * Whether he started. 0 or 1, NULL before 2022-23 and before round 16 of it.
+   *
+   * The one thing the gameweek table could not otherwise say: 45 minutes is
+   * either a start hooked at half time or a substitute brought on at half time.
+   */
+  starts: number | null;
+  /**
+   * Whether this gameweek cleared the defensive contribution threshold. 0 or 1,
+   * NULL where DC was never measured — which is every season before 2025-26.
+   *
+   * 0 for a goalkeeper, who has no threshold and scores no such point.
+   * Computed by the server from one rule; see `repositories/defcon.ts` for why
+   * the client is never allowed to derive it.
+   */
+  defcon_hit: number | null;
 }
 
 /**

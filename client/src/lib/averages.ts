@@ -59,8 +59,27 @@ export function fmtAverage(value: number, digits = 1): string {
  * averages row used to do and is not a convention (see `roundHalfEven`).
  */
 export function fmtPpg(value: number | null | undefined): string {
+  return fmtQuotient(value, 1);
+}
+
+/**
+ * A nullable quotient at `digits` places, rounded the one way this app rounds.
+ *
+ * `fmtPpg` is this at one digit and delegates to it, so nothing about PPG moved
+ * — the generalisation exists because item 14's hits-per-start wants two places
+ * and **must not reach for `fmtNum`**. `fmtNum` ends in `toFixed`, which is not
+ * an implementation of any rounding convention but whatever the binary
+ * representation gives; item 11 measured it disagreeing with `roundHalfEven` on
+ * 111 of 226 tied player-seasons. Every quotient in this app goes through here.
+ *
+ * `Number.isFinite` catches the division-by-zero the callers are supposed to
+ * have handled themselves. It is a backstop and not the policy: a caller with a
+ * zero denominator should return null and say why, so that "no starts" and
+ * "hit none of his starts" stay distinguishable.
+ */
+export function fmtQuotient(value: number | null | undefined, digits: number): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return NO_VALUE;
-  return fmtAverage(value);
+  return fmtAverage(value, digits);
 }
 
 /**

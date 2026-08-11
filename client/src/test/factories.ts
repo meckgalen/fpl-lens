@@ -78,6 +78,10 @@ export function aPlayer(overrides: Partial<Player> = {}): Player {
     expected_assists: 8.12,
     expected_goal_involvements: 15.69,
     defensive_contribution: 22,
+    // Deliberately not equal to `starts`: a hit count and a start count are
+    // different quantities, and a fixture where they matched would let a
+    // hits-per-start bug read as 1.00 and look plausible.
+    defcon_hits: 9,
 
     appearances: 31,
     points_per_game: 5.1,
@@ -136,6 +140,12 @@ export function aGameweek(overrides: Partial<GameweekHistory> = {}): GameweekHis
     selected: 1_500_000,
     transfers_in: 40_000,
     transfers_out: 12_000,
+
+    starts: 1,
+    // 0 rather than 1, so a row that renders the hit reads as a deliberate
+    // override. `defensive_contribution: 1` above is nowhere near any
+    // threshold, so 0 is also the value the rule would actually produce here.
+    defcon_hit: 0,
     ...overrides,
   };
 }

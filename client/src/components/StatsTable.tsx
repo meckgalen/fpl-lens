@@ -80,6 +80,29 @@ const COLUMNS: Column[] = [
   { key: 'was_home', label: 'H/A', render: (g) => (g.was_home ? 'H' : 'A'), averaged: false },
   { key: 'total_points', label: 'Pts', render: (g) => num(g.total_points), averaged: true },
   { key: 'minutes', label: 'Min', render: (g) => num(g.minutes), averaged: true },
+  {
+    // Immediately after Min, because it is what makes Min readable: 45 minutes
+    // is either a start hooked at half time or a substitute brought on at half
+    // time, and nothing else in this table distinguishes them.
+    //
+    // `St`, not `S` — `S` is already saves. Same collision `Tck` avoids.
+    //
+    // **Not averaged, and that is a decision rather than an omission.** On
+    // 2022-23 `starts` is measured from GW16, exactly like the expected family,
+    // so an averaged St would join the divergent denominator group and
+    // `groupLabel`'s exactness check would fail — the divergent set would be
+    // the expected group PLUS this column, which is not a group. Item 12's
+    // "Expected stats over 23" would degrade to "xG, xA, xGI, xGC, St over 23".
+    //
+    // Note what is NOT the reason: starts per appearance is a meaningful
+    // proportion, the share of a player's appearances that he started. The
+    // average is worth having; the footnote is worth more. Both halves recorded
+    // so a future reversal is informed rather than a rediscovery.
+    key: 'starts',
+    label: 'St',
+    render: (g) => fmtNum(g.starts, 0),
+    averaged: false,
+  },
   { key: 'goals_scored', label: 'G', render: (g) => num(g.goals_scored), averaged: true },
   { key: 'assists', label: 'A', render: (g) => num(g.assists), averaged: true },
   { key: 'clean_sheets', label: 'CS', render: (g) => num(g.clean_sheets), averaged: true },
@@ -130,6 +153,27 @@ const COLUMNS: Column[] = [
     key: 'defensive_contribution',
     label: 'DC',
     render: (g) => fmtNum(g.defensive_contribution, 0),
+    averaged: true,
+  },
+  {
+    // Whether the round cleared the threshold — 10 for a defender, 12 for a
+    // midfielder or forward, none for a goalkeeper. Modelled on clean sheets: a
+    // per-gameweek fact rendered as a number rather than a tick, whose season
+    // figure is the count of them.
+    //
+    // The value arrives decided. **Nothing here compares DC to a threshold**,
+    // because the Players list needs a season count that only the server can
+    // compute, and one rule in two languages is free to drift — see
+    // `server/src/repositories/defcon.ts`.
+    //
+    // Averaged, unlike St above: DC exists in 2025-26 alone, where every column
+    // shares one denominator, so nothing diverges and the footnote is
+    // unaffected. The average is the hit rate per APPEARANCE, while the Players
+    // list's DCH/St divides by starts — two labelled numbers answering two
+    // questions. See CLAUDE.md, Known Issues.
+    key: 'defcon_hit',
+    label: 'DCH',
+    render: (g) => fmtNum(g.defcon_hit, 0),
     averaged: true,
   },
   { key: 'ict_index', label: 'ICT', render: (g) => fmtNum(g.ict_index, 1), averaged: true },

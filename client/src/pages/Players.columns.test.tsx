@@ -103,6 +103,26 @@ const openPicker = async (user: ReturnType<typeof userEvent.setup>) => {
 /** The picker's checkbox for a column, by its long title. */
 const entry = (title: string) => screen.getByRole('checkbox', { name: new RegExp(title) });
 
+/**
+ * The same, for a title that is a prefix of another one.
+ *
+ * "Defensive contribution hits" is a prefix of "Defensive contribution hits per
+ * start", so a substring regex matches two checkboxes and `getByRole` throws.
+ * The accessible name is `title` then `label`, so naming both disambiguates —
+ * and the label is the thing actually rendered in the header, so pinning it
+ * here is not redundant.
+ */
+const entryExact = (title: string, label: string) =>
+  screen.getByRole('checkbox', {
+    // The two spans are adjacent with no whitespace between them, so the
+    // accessible name is "Defensive contribution hitsDCH" — concatenated, not
+    // spaced. Asserted here rather than assumed: it was assumed first, and the
+    // matcher found nothing.
+    // No trailing anchor: a DISABLED entry appends its reason sentence to the
+    // same label, so `$` matches only while the column is available.
+    name: new RegExp(`^${title}${label.replace('/', '\\/')}`),
+  });
+
 beforeEach(() => {
   localStorage.clear();
   // Module state with a lifetime of its own: without clearing it the suite
@@ -167,6 +187,98 @@ describe('availability decides what renders', () => {
     // assertion: 2022-23 holes exactly the expected family plus `starts`.
     expect(screen.getAllByText('Only recorded from GW16 in 2022-23.')).toHaveLength(4);
     expect(headers()).not.toContain('xG');
+  });
+
+  it('offers the two derived columns where their dependencies are measured', async () => {
+    // Item 14's columns have no matrix cell of their own — `defcon_hits` is
+    // counted from `defensive_contribution` and `defcon_hits_per_start` divides
+    // it by `starts`. Without the `dependsOn` fold the picker finds no cell for
+    // either key and disables both on the one season where they work.
+    const user = userEvent.setup();
+    renderAt(bootstrapFor('2025-26'));
+    await openPicker(user);
+
+    expect(entryExact('Defensive contribution hits', 'DCH')).not.toBeDisabled();
+    expect(entry('Defensive contribution hits per start')).not.toBeDisabled();
+  });
+
+  it('withholds both derived columns on a season with no DC, naming where DC is', async () => {
+    const user = userEvent.setup();
+    renderAt(
+      aBootstrap({
+        season: '2016-17',
+        seasons: SEASONS,
+        players: [SAKA, HAALAND],
+        teams,
+        columns: {
+          season: '2016-17',
+          measured: true,
+          columns: [
+            { key: 'expected_goals', state: 'none', measured_from: null },
+            { key: 'starts', state: 'none', measured_from: null },
+            { key: 'defensive_contribution', state: 'none', measured_from: null },
+          ],
+        },
+      })
+    );
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        columns: [
+          ...MATRIX,
+          { season: '2025-26', key: 'defensive_contribution', state: 'full', measured_from: null },
+          { season: '2022-23', key: 'defensive_contribution', state: 'none', measured_from: null },
+          { season: '2016-17', key: 'defensive_contribution', state: 'none', measured_from: null },
+          { season: '2026-27', key: 'defensive_contribution', state: 'none', measured_from: null },
+        ],
+      }),
+    });
+    await openPicker(user);
+
+    expect(entryExact('Defensive contribution hits', 'DCH')).toBeDisabled();
+    expect(entry('Defensive contribution hits per start')).toBeDisabled();
+  });
+
+  it('does not render either derived column by default', async () => {
+    // Item 13 measured the thirteen-column width at 1440 with 290px of headroom
+    // and a 921px min-content table. Adding to DEFAULT_KEYS would invalidate
+    // that measurement, so both new columns are offered rather than shown.
+    renderAt(bootstrapFor('2025-26'));
+
+    expect(headers()).not.toContain('DCH');
+    expect(headers()).not.toContain('DCH/St');
+    // And they really are on offer, so this is not passing because the entries
+    // are missing altogether.
+    const user = userEvent.setup();
+    await openPicker(user);
+    expect(entryExact('Defensive contribution hits', 'DCH')).toBeInTheDocument();
+  });
+
+  it('renders the hit columns once selected, with the placeholder for no starts', async () => {
+    const user = userEvent.setup();
+    renderAt(
+      aBootstrap({
+        season: '2025-26',
+        seasons: SEASONS,
+        // Two players whose hits-per-start must read differently: one with
+        // starts, one with none at all. 367 of 2025-26's 841 players have no
+        // starts, so the placeholder is the common case rather than the edge.
+        players: [
+          aPlayer({ id: 1, web_name: 'Regular', team: 3, defcon_hits: 11, starts: 30 }),
+          aPlayer({ id: 2, web_name: 'Benchwarmer', team: 3, defcon_hits: 0, starts: 0 }),
+        ],
+        teams,
+        columns: availability({}, { season: '2025-26' }),
+      })
+    );
+    await openPicker(user);
+    await user.click(entry('Defensive contribution hits per start'));
+
+    expect(headers()).toContain('DCH/St');
+    // 11/30 = 0.3666… → 0.37, and no starts is a placeholder rather than 0.00,
+    // because "made no starts" and "hit none of his starts" are different.
+    expect(screen.getByText('0.37')).toBeInTheDocument();
+    expect(screen.queryByText('0.00')).not.toBeInTheDocument();
   });
 
   it('states an unplayed season once, in the season’s own words', async () => {

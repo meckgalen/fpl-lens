@@ -6,8 +6,20 @@
  * opens a transaction, writes a synthetic season through the real SQL, asserts,
  * and rolls back — so these exercise the actual upsert clauses rather than a
  * reimplementation of them, without touching the eleven real seasons. The
- * season used is '2099-00', which cannot collide with anything, and the payload
- * is hand-built rather than fetched, so no network is involved.
+ * payload is hand-built rather than fetched, so no network is involved.
+ *
+ * **This suite owns '2099-00', claimed from `test/synthetic-seasons.ts`, and it
+ * is not free for another suite to reuse.** This comment used to say the season
+ * "cannot collide with anything", which was true of the real data and false of
+ * the other test files: item 14 added a second suite writing the same season,
+ * and because `node --test` runs files in parallel, two open transactions
+ * inserting `fixtures (season, fpl_fixture_id) = ('2099-00', 1)` deadlocked on
+ * the unique index (Postgres 40P01).
+ *
+ * Renaming the other suite's season would have been the one-sided fix — nothing
+ * here would still say this season was taken, so the suite after that would copy
+ * the constant and hit it again. The registry is what makes the reservation
+ * visible from both ends.
  *
  * The four properties, and why each needs a test rather than a comment:
  *
@@ -30,12 +42,13 @@ import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { PoolClient } from 'pg';
 import { pool, closePool } from '../db/pool.js';
+import { syntheticSeason } from '../test/synthetic-seasons.js';
 import { buildLiveSeason, deriveSeason, snapshot, writeLiveSeason } from './ingest-live-season.js';
 import type { WireBootstrap, WireElement, WireEvent, WireFixture, WireTeam } from '../types/wire.js';
 
 after(closePool);
 
-const SEASON = '2099-00';
+const SEASON = syntheticSeason('ingest/live-season.test.ts');
 
 /** A club that is already in the database, by permanent code: Arsenal. */
 const EXISTING_TEAM_CODE = 3;

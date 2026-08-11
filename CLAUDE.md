@@ -113,7 +113,7 @@ fixed the `detailPlayer` snapshot that had been in Known Issues since item 1,
 made `currentGameweek`/`nextGameweek` return null instead of a plausible wrong
 answer, and made the last of the four empty states reachable.
 
-`npm test` runs **two suites on two runners**: **98 server tests** and **169
+`npm test` runs **two suites on two runners**: **110 server tests** and **187
 client tests**, all passing. They are counted separately on purpose — two
 runners print two summaries, and a combined figure would be maintained by hand
 against neither of them.
@@ -133,8 +133,26 @@ alone. Not `&&`, which would hide the client result behind a database problem,
 and not `;`, which reports only the last command's exit code and would let a red
 server suite pass silently.
 
-**Server — `node --import tsx --test`, against the populated database.** Seven
+**Server — `node --import tsx --test`, against the populated database.** Eight
 files:
+
+- `server/src/repositories/defcon.test.ts` — the defensive contribution hit
+  rule, on its own, for the reason `holes.test.ts` exists: it is the
+  load-bearing rule in two queries and it is the **first scoring rule the app
+  computes for itself**, so nothing upstream can be diffed against to catch a
+  mistake. Two halves that cannot do each other's job. Synthetic rows in a
+  rolled-back transaction are the only way to put a value *on* a boundary — real
+  2025-26 has 9s and 10s but nothing guarantees it keeps them — and cover both
+  thresholds either side, the goalkeeper case, the clause-order trap (a NULL-DC
+  keeper row must be NULL, not 0), and the orphan row that pins the `LEFT JOIN`.
+  Anchors against the real database are the only way to catch a rule that is
+  self-consistently wrong: Gabriel 11, Senesi 26, Anderson 26, plus 2026-27 and
+  2016-17 returning null for every player.
+
+  **Its synthetic season is `'2098-99'`, not `'2099-00'`, and the reason is on
+  the constant**: `live-season.test.ts` owns the latter, `node --test` runs files
+  in parallel, and two transactions inserting the same
+  `(season, fpl_fixture_id)` deadlocked on the unique index (Postgres 40P01).
 
 - `server/src/ingest/holes.test.ts` — the hole detector, on its own, because it
   is the load-bearing rule in two ingests and a regression in it would otherwise
@@ -233,7 +251,13 @@ files:
   like a broken ingest. They are named for what they mean rather than for how
   many they hold, so the next August does not repeat it.
 
-**Client — Vitest in jsdom, no database.** Components are rendered and the API
+**Client — Vitest in jsdom, no database.** `playerColumns.test.ts` gained item
+14's derived-column fold (the most-restrictive dependency, the tie-break that
+makes `DCH/St` name DC's seasons rather than `starts`', and the three nulls in
+hits-per-start including the `null / 5 === 0` coercion);
+`Players.columns.test.tsx` gained the two picker entries; `StatsTable.test.tsx`
+gained `St`/`DCH` and the assertion that `St` is **not** averaged. Components
+are rendered and the API
 is mocked at `services/api.ts`, not at `fetch`: mocking the transport would
 additionally pin URL shapes and `res.ok` handling, which the server suite
 already covers. `@testing-library/user-event` drives anything involving a
@@ -398,6 +422,34 @@ marked "Selected" in place, and starts expanded. There is no "This Season"
 section and no "Previous Seasons" heading: both named something that stopped
 being true when item 8 added a selector — the first whenever the selector is off
 the live season, the second on any season with later ones listed above it.
+
+**Item 14 added the first scoring rule the app computes for itself.** Everything
+else on screen is FPL's number or arithmetic over FPL's numbers; a defensive
+contribution "hit" is a comparison we make. `server/src/repositories/defcon.ts`
+holds `DEFCON_THRESHOLDS` (DEF 10, MID 12, FWD 12, no goalkeeper threshold) and
+`defconHitSql(pg, ps)`, and **nothing else states the rule**: `getPlayerHistory`
+gets the per-row 0/1 and `listPlayerTotals` gets the season count from the same
+function. The client never compares a number to a threshold, because the Players
+list needs a count only the server can compute and one rule in two languages is
+free to drift.
+
+**Goalkeepers are 0 rather than null, and FPL computing no DC for them was
+measured rather than assumed.** DC is 0 on all 3,427 GK rows of 2025-26 *while
+the components are not* — keepers recorded 24 tackles, 934 CBI and 6,195
+recoveries in those same rows. The 0 is FPL declining to compute the stat.
+`defensive_contribution` itself is a raw action count, not points: 5,117 of
+29,747 rows carry an odd value, and the composition is position-dependent
+(DEF = CBIT, MID/FWD = CBIRT) on 26,320 of 26,320 outfield rows.
+
+**`getPlayerHistory` LEFT JOINs `player_seasons`, and the choice is about the
+failure mode.** `player_gameweeks` has foreign keys to `fixtures`, `teams` and
+`players` and **none to `player_seasons`**, so an orphan match row is
+representable; but `player_seasons`' primary key `(player_id, season)` means the
+join cannot multiply. Only one half of that invariant is enforced. An inner join
+would **drop** an orphan and the gameweek would vanish with nothing on screen
+saying so; the left join yields a NULL position, falls through the `ELSE`-less
+`CASE` to NULL, and renders the no-value marker. Pinned by a test that inserts
+an orphan and goes red under an inner join.
 
 **All five routes read Postgres.** `GET /api/bootstrap`, `GET /api/columns`,
 `GET /api/player/:code`, `GET /api/player/:code/career` and `GET /api/fixtures`
@@ -649,12 +701,18 @@ fpl-lens/
 │   │   │   ├── ingest-live-gameweeks.ts  # match rows: ingest:live-gameweeks
 │   │   │   └── live-gameweeks.test.ts # the 2025-26 replay + the gate
 │   │   ├── repositories/      # DB query layer — the ONLY place SQL may live
+│   │   │   ├── defcon.ts      # the DC threshold: the one place the rule lives
+│   │   │   └── defcon.test.ts # boundaries, GK, clause order, the orphan row
+│   │   ├── test/
+│   │   │   └── synthetic-seasons.ts  # one reserved season per suite; two
+│   │   │                      # suites sharing one deadlocked on 40P01
 │   │   ├── routes/fpl.ts      # /api/bootstrap, /api/columns,
 │   │   │                      # /api/player/:code[/career], /api/fixtures
 │   │   ├── services/fplApi.ts # live FPL API client, cache; ingest source only
 │   │   ├── verify/            # read-only cross-checks against other pipelines
 │   │   │   ├── history-past-check.ts  # npm run verify:history-past
-│   │   │   └── columns-check.ts       # npm run verify:columns
+│   │   │   ├── columns-check.ts       # npm run verify:columns
+│   │   │   └── defcon-check.ts        # npm run verify:defcon — TWO results
 │   │   └── types/
 │   │       ├── wire.ts        # what upstreams send: strings, season-scoped ids
 │   │       ├── domain.ts      # what the app means: numbers, codes, real nulls
@@ -763,6 +821,16 @@ is silently wrong.
    value — distinguishing **missing rows** (a blank gameweek, a January arrival,
    a season in progress: sum them) from **missing values** (no honest total
    exists).
+
+   **And a COUNT needs a second guard that a SUM does not.** `fullyMeasured` —
+   `count(col) = count(fixture_id)`, the shared half of `measuredSum` — reads
+   TRUE **vacuously** over a player-season with no match rows, because both
+   sides are 0. `measuredSum` survives that, since `sum()` over zero rows is
+   NULL anyway. A `count(*) FILTER (…)` over zero rows is **0**, so any
+   count-based aggregate must add `count(pg.fixture_id) > 0` itself. Measured on
+   item 14's `defcon_hits`: without it, all **564** players of 2026-27 — the
+   season the app defaults to — read a confident zero. This is item 13's
+   vacuous-truth hole arriving in a second place.
 
 7. **Drop the `xP` column at ingest.** It is scraped from FPL's `ep_this` field after
    the gameweek ends, so it can carry post-match information. Any model trained on it
@@ -1122,8 +1190,34 @@ is already there.
 `npm run verify:columns` checks that the column picker offers exactly what the
 data can answer: it asks the **shipped** code what it would offer and compares
 against a truth query written for the check alone, which counts NULLs directly
-rather than reusing the availability predicate. **Read-only.** 253 cells across
-eleven seasons; exits non-zero on any mismatch, which it does not today.
+rather than reusing the availability predicate. **Read-only.** **275 cells**
+across eleven seasons (up from 253 with item 14's two derived columns); exits
+non-zero on any mismatch, which it does not today.
+
+Its `DB_COLUMNS` maps a picker key to the **list** of database columns it reads,
+so a derived column's truth is the AND over its inputs. Those lists are
+**declared in the check rather than read off the shipped `dependsOn`** — the
+file imports the shipped *logic* precisely so it tests what runs, and restates
+the *data* precisely so it cannot agree with itself. Import the logic, restate
+the data; that is not a reversal of item 13's move of `seasonAvailability` into
+`columns.ts`.
+
+`npm run verify:defcon` checks the defensive contribution hit count and prints
+**two results that are deliberately never merged**, because FPL publishes no hit
+count and there is nothing external to diff against. **Read-only.**
+
+1. **Cross-derivation — plumbing, not the rule.** The season count from
+   `listPlayerTotals` against the summed per-row flags from `getPlayerHistory`,
+   every player-season in 2025-26: **841 of 841**. Both sides call
+   `defconHitSql`, so **a wrong threshold agrees with itself and this part exits
+   0**. It catches a guard applied on one side only, the join multiplying rows,
+   or the two queries filtering differently.
+2. **The audit's distribution, frozen as literals — this is the rule check.**
+   Computed in SQL before `defcon.ts` existed and **compared** rather than
+   printed, because a printed number nobody diffs is not a check. Swapping DEF's
+   10 with MID's 12 moves it and nothing else in the codebase notices.
+
+Exits non-zero on either. Same discipline as item 5's replay-plus-cross-check.
 
 `npm run verify:history-past` diffs every player-season we hold against FPL's
 `history_past` totals and prints where the two disagree, what the disagreement
@@ -1204,12 +1298,24 @@ can be run alone with `npm run test:client`.
       grey placeholder behind that
 - [x] The header card's photograph at a third of its former weight, falling back
       to the club shirt; and `preconnect` to both image origins
-- [x] Selectable columns on the Players list — thirteen by default, twenty-three
-      offered, persisted across sessions and season changes. A column is offered
+- [x] Selectable columns on the Players list — thirteen by default, **twenty-five
+      offered** since item 14 added two, persisted across sessions and season
+      changes. A column is offered
       only where **every row of that season carries a value**, so 2022-23's
       expected family is withheld rather than shown as a fourteen-round-short
       total; an unavailable column is **disabled with the reason on screen**
       rather than hidden, and the reason names where the column *is* recorded
+- [x] Games started per gameweek — the one thing the gameweek table could not
+      say, since a row reading 45 minutes is either a start hooked at half time
+      or a substitute brought on at half time
+- [x] Defensive contribution **hits**: a per-gameweek 0/1 beside the raw count,
+      and a season count plus hits-per-start on the Players list. The first
+      scoring rule the app computes for itself, stated once on the server;
+      goalkeepers score none, because FPL computes no DC for them at all
+- [x] Derived columns in the picker (`dependsOn`), whose availability is the
+      most restrictive of the columns they read — so both new entries are
+      withheld on the ten seasons with no DC data, each naming where it *is*
+      recorded
 
 The live FPL API proxy in `services/fplApi.ts` still exists with its 5-minute
 cache, but no route calls it: it is the ingestion source for the live season.
@@ -1388,6 +1494,20 @@ around it.
   found here by reading the entry end to end rather than by testing anything.
 
   All four remain rendered and asserted by `GameweekSection.test.tsx`.
+
+- **`DCH` means two different things one click apart, and both are labelled but
+  neither label mentions the other.** In the gameweek table the AVG row divides
+  by **appearances** — item 11's convention, stated by the footnote beneath it —
+  so `AVG DCH 0.3` is hits per appearance. On the Players list `DCH/St` divides
+  by **starts**, which its own name says. Gabriel 2025-26 is 0.3 on one screen
+  and 0.37 on the other, and nothing on either says why.
+
+  Both numbers are right and both are labelled where they render. Left as is
+  because the alternatives are worse: breaking item 11's convention for one
+  column, or naming a second denominator inside a footnote about the first. The
+  Players-list column cannot use appearances — a substitute who clears the
+  threshold without starting is exactly the case hits-per-start exists to show.
+  Recorded so the next reader knows it was seen rather than missed.
 
 - **Two elements read "Selected" on the same page, meaning different things.**
   `StatsTable` has an ownership column whose header is `Selected` (FPL's
@@ -1816,6 +1936,24 @@ planning around anything an item decided, read its entry in `CLAUDE-history.md`;
 the working agreement's "trace a claim to the code before repeating it" applies
 doubly to a four-line summary of a four-page argument.
 
+> **ITEM 15 STARTS BY TRIMMING THIS FILE. Do it first, before any other work.**
+>
+> `CLAUDE.md` is at roughly **145k characters against a 150k context budget** —
+> about 5,400 of headroom, which is **less than item 14's own entry consumed**.
+> So the next item overflows it during the write-up, which is exactly when there
+> is least appetite to do anything about it, and the overflow is silent: a fifth
+> of the file simply stops being read with nothing saying which fifth.
+>
+> Trimming last is what put it here. Item 13 split the file precisely to fix this
+> and the margin was eaten in one item, because a record written at the end of a
+> session is written when the budget is already spent.
+>
+> **What moves:** prose in Current State that restates an item record, and any
+> stub that has grown past its three or four lines. **What stays:** the data
+> rules, the API identity rules, Known Issues, the schema notes and this working
+> agreement — they are what the next session has to reason *from*, and they are
+> the part that was being dropped.
+
 **Commits go directly to `main`.** No branches, no `Co-Authored-By` trailer.
 This is a solo repository with no reviewer and no CI, so a pull request has
 nothing to serve: the working agreement above makes the session the unit of
@@ -1950,6 +2088,28 @@ unnecessary once this line exists.
       **disabled with the reason on screen**, never hidden. New: `/api/columns`,
       `bootstrap.columns`, `npm run verify:columns`, and `Status` left the table
       to become a picker entry.
+
+      Full record: `CLAUDE-history.md`.
+
+- [x] **14. Games started per gameweek, and defensive contribution hits.**
+
+      A season DC total does not say whether the player clears the threshold.
+      Gabriel's 2025-26 is 277 over 30 starts — 9.2 a start against a defender's
+      10 — and he hits **11 times in 38**. Three additions: `starts` as a
+      per-gameweek column (`St`), a per-gameweek `defcon_hit` (`DCH`), and two
+      Players-list entries — the season hit count and hits per start.
+
+      **The first scoring rule the app computes for itself**, so it gets a module
+      (`server/src/repositories/defcon.ts`) and the client never compares a number
+      to a threshold: the server ships both the per-row 0/1 and the season count
+      from one definition. Goalkeepers have no threshold — FPL computes no DC for
+      them at all, measured rather than assumed.
+
+      New: `dependsOn` on a column definition, which costs the server nothing
+      because both dependencies were already in the bootstrap's five; and
+      `npm run verify:defcon`, which reports **two** results that are never
+      merged — a cross-derivation that a wrong threshold would pass, and the
+      audit's distribution frozen as literals.
 
       Full record: `CLAUDE-history.md`.
 
@@ -2140,6 +2300,36 @@ every hour, and needs somewhere to put them and a policy for how often.
   that is the entire reason for pairing — and testing the raw arms throws the
   pairing away. Pre-committing to the wrong statistic is not a safeguard; it
   just fixes the wrong answer in advance.
+- **Never use `git checkout --` to revert a mutation in a working tree full of
+  uncommitted work.** Item 14 reverted one mutated file with
+  `git checkout -- server` and discarded every uncommitted item-14 edit to
+  tracked server files with it; only the three new files survived, because they
+  were untracked. **Copy the target file first and restore from the copy**, which
+  is what the remaining ten mutations did.
+
+  Same class as the `pkill -f` entry below: a blunt instrument whose blast radius
+  is larger than the thing it is aimed at, and whose damage is silent — a
+  reverted file type-checks perfectly.
+
+- **Confirm the tree is clean before starting an item, and understand that this
+  is what bounds the damage when something like the above happens.** It is not
+  hygiene and it is not only about git.
+
+  The item 14 restore was reconstructed **from conversation context, not from
+  disk**. The claim that it was complete rests entirely on the tree having been
+  clean at item start: everything `git checkout` could have discarded was
+  therefore item 14's own work, all of it in the session that was rebuilding it.
+  Start an item on a dirty tree and that argument disappears — some of what
+  vanishes was written before the session began, nothing knows what it was, and
+  the loss is silent.
+
+  So the general rule, which outlives git: **a destructive operation's blast
+  radius is bounded by how well you know what was in the working tree.** The
+  clean-tree check at item start is what converts "restore from context" from a
+  hope into a complete restore. Any recovery that leans on the session's own
+  memory needs that precondition to have held, and it can only have held if it
+  was checked.
+
 - **`pkill -f` matches its own command line.** It killed the shell running it
   twice during item 9, once mid-task, because the pattern appeared in the `pkill`
   invocation itself.
@@ -2148,6 +2338,12 @@ every hour, and needs somewhere to put them and a policy for how often.
   then `disown`) so they survive an unrelated kill, and match on something
   narrower than a substring that also appears in the kill command — a port, a
   full script path, or a recorded PID.
+- **Check this file's size at the START of an item, not at the end.** The budget
+  is 150k characters; item 14 ended at ~145k, and the trim it needed could only
+  be scheduled for item 15 because by the time the record was written the room
+  was already gone. A file that has to be trimmed is trimmed while there is still
+  appetite to do it properly — see the boxed note at the top of Phase 1.
+
 - End each session by updating the Current State section above so the next
   session starts from truth rather than a stale description, and by writing the
   item's record — **in `CLAUDE-history.md`**, with a stub here. Items 10 and 11

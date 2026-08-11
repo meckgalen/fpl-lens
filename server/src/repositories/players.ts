@@ -26,6 +26,7 @@ import type {
   PlayerSeasonTotals,
   UpcomingFixture,
 } from '../types/domain.js';
+import { defconHitSql } from './defcon.js';
 import { num, numArray, numOrNull, type DbNumeric } from './parse.js';
 
 /** Rule 10's mapping, run backwards for the wire format. */
@@ -104,8 +105,23 @@ const ELEMENT_TYPE_BY_POSITION = `CASE ps.position
  * the right behaviour, and it is why the column does not simply blank for the
  * whole season.
  */
+/**
+ * The guard: every row that exists carries a value for this column.
+ *
+ * **It is sufficient for a sum and insufficient for a count, and the difference
+ * is not obvious.** Over a player-season with *no* gameweek rows both sides are
+ * 0, so this reads TRUE vacuously — the same vacuous truth item 13 found in the
+ * availability predicate. `measuredSum` survives that because `sum()` over zero
+ * rows is NULL, so the guard passing changes nothing. A `count(*) FILTER (…)`
+ * over zero rows is **0**, so an aggregate built on counting must add
+ * `count(pg.fixture_id) > 0` itself. See `defcon_hits` in `listPlayerTotals`,
+ * where omitting it gave all 564 players of 2026-27 a confident zero.
+ */
+const fullyMeasured = (column: string): string =>
+  `count(pg.${column}) = count(pg.fixture_id)`;
+
 const measuredSum = (column: string): string =>
-  `CASE WHEN count(pg.${column}) = count(pg.fixture_id) THEN sum(pg.${column}) END`;
+  `CASE WHEN ${fullyMeasured(column)} THEN sum(pg.${column}) END`;
 
 const SEASON_AGGREGATE = `COALESCE(sum(pg.total_points), 0)::int AS total_points,
             COALESCE(sum(pg.minutes), 0)::int      AS minutes,
@@ -217,6 +233,12 @@ interface PlayerTotalsDbRow {
   expected_assists: DbNumeric | null;
   expected_goal_involvements: DbNumeric | null;
   defensive_contribution: DbNumeric | null;
+  /**
+   * Cast to int in the query, so this is a number and not an int8 string —
+   * unlike the sums above it. NULL where DC was unmeasured or nothing was
+   * played.
+   */
+  defcon_hits: number | null;
   photo: string;
 }
 
@@ -254,6 +276,9 @@ function toPlayerSeasonTotals(r: PlayerTotalsDbRow): PlayerSeasonTotals {
       'expected_goal_involvements'
     ),
     defensive_contribution: numOrNull(r.defensive_contribution, 'defensive_contribution'),
+    // Already a number or null: cast to int in the query. Passed through rather
+    // than sent via numOrNull, so no parse is claimed where none happened.
+    defcon_hits: r.defcon_hits,
 
     appearances: r.appearances,
     points_per_game: num(r.points_per_game, 'points_per_game'),
@@ -321,6 +346,33 @@ export async function listPlayerTotals(
 
             ${SEASON_AGGREGATE},
 
+            -- How many gameweeks cleared the defensive contribution threshold.
+            -- The season total does not answer this: Gabriel's 2025-26 is 277 DC
+            -- over 30 starts, 9.2 a start against a defender's 10, and that
+            -- average cannot distinguish a player who hits most weeks from one
+            -- who almost never does. He hits 11 times in 38.
+            --
+            -- **Here rather than in SEASON_AGGREGATE, deliberately.** That block
+            -- is shared with getPlayerCareer, and the career table has no
+            -- availability machinery: it would render this as the no-value
+            -- marker for the nine seasons that never measured DC, with nothing
+            -- on screen saying why, where the Players list withholds the column
+            -- and names the reason. Promoting it means answering availability
+            -- for the career table first.
+            --
+            -- **Both halves of the guard are required.** fullyMeasured alone is
+            -- the rule-6 half: no honest count exists over a column measured on
+            -- only some of the rows. count(pg.fixture_id) > 0 is the half that
+            -- is easy to miss -- over a player with no match rows the first
+            -- condition is 0 = 0 and passes, and count(*) FILTER over nothing
+            -- returns 0, not NULL. Without it every one of 2026-27's 564
+            -- players reads 0 hits on the season the app defaults to. Measured
+            -- before the guard was written; see the comment on fullyMeasured.
+            (CASE WHEN count(pg.fixture_id) > 0
+                   AND ${fullyMeasured('defensive_contribution')}
+                  THEN count(*) FILTER (WHERE ${defconHitSql('pg', 'ps')} = 1)
+             END)::int AS defcon_hits,
+
             p.fpl_code || '.jpg' AS photo
        FROM player_seasons ps
        JOIN players p ON p.id = ps.player_id
@@ -377,6 +429,10 @@ interface GameweekDbRow {
   selected: number;
   transfers_in: number;
   transfers_out: number;
+  /** smallint, so a number already. NULL before 2022-23 and before its GW16. */
+  starts: number | null;
+  /** The CASE casts to int, so a number. NULL where DC was never measured. */
+  defcon_hit: number | null;
 }
 
 function toPlayerGameweek(r: GameweekDbRow): PlayerGameweek {
@@ -426,6 +482,12 @@ function toPlayerGameweek(r: GameweekDbRow): PlayerGameweek {
     selected: r.selected,
     transfers_in: r.transfers_in,
     transfers_out: r.transfers_out,
+
+    // Both already numbers or null — `starts` is a smallint straight from the
+    // driver, `defcon_hit` is cast to int in the CASE. Passed through for the
+    // same reason the defensive quartet above is.
+    starts: r.starts,
+    defcon_hit: r.defcon_hit,
   };
 }
 
@@ -478,11 +540,40 @@ export async function getPlayerHistory(
             pg.value,
             pg.selected,
             pg.transfers_in,
-            pg.transfers_out
+            pg.transfers_out,
+
+            -- Whether he started, which is the one thing this table could not
+            -- say. A row reading 45 minutes is either a start hooked at half
+            -- time or a substitute brought on at half time, and those are
+            -- different players. 0/1 per row; NULL before 2022-23, and before
+            -- round 16 of it, where the source never measured it (rule 6).
+            pg.starts,
+
+            -- Whether the gameweek cleared the defensive contribution
+            -- threshold. Modelled on clean sheets: a per-gameweek fact whose
+            -- season figure is the count of them.
+            ${defconHitSql('pg', 'ps')} AS defcon_hit
        FROM player_gameweeks pg
        JOIN players p   ON p.id = pg.player_id
        JOIN teams opp   ON opp.id = pg.opponent_team_id
        JOIN fixtures f  ON f.id = pg.fixture_id
+
+       -- LEFT, not inner, and the two halves of the invariant are not equally
+       -- protected. It CANNOT multiply: player_seasons' primary key is
+       -- (player_id, season), so at most one row matches -- enforced by a
+       -- constraint rather than by luck. It CAN be orphaned: player_gameweeks
+       -- has foreign keys to fixtures, teams and players and none to
+       -- player_seasons, so a match row with no player-season row is
+       -- representable. There are zero today and nothing stops one.
+       --
+       -- So the failure mode is the whole argument. An inner join DROPS such a
+       -- row and the gameweek vanishes from the table with nothing on screen
+       -- saying so, which is the quiet-wrong-answer class this project keeps
+       -- refusing to ship. A left join yields a NULL position, which falls
+       -- through defconHitSql's ELSE-less CASE to NULL and renders the no-value
+       -- marker: visible, and rule 6's posture. Pinned by test.
+       LEFT JOIN player_seasons ps
+              ON ps.player_id = pg.player_id AND ps.season = pg.season
       WHERE p.fpl_code = $1 AND pg.season = $2
       ORDER BY pg.gw, f.kickoff_time`,
     [fplCode, season]

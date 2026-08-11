@@ -100,6 +100,74 @@ describe('StatsTable: null is not zero', () => {
     expect(rows.get('2')?.[rec]).toBe('0');
   });
 
+  it('renders the two item 14 columns as numbers, with the same null distinction', () => {
+    // `St` and `DCH` are the same rule again on two more columns, and both have
+    // a real null case: `starts` before 2022-23, `defcon_hit` before 2025-26.
+    // A 0 here means "did not start" / "did not clear the threshold" and a
+    // placeholder means nobody measured — the difference between a bench
+    // appearance and a season that predates the stat.
+    render(
+      <StatsTable
+        history={[
+          aGameweek({ fixture: 1, round: 1, starts: null, defcon_hit: null }),
+          aGameweek({ fixture: 2, round: 2, starts: 0, defcon_hit: 0 }),
+          aGameweek({ fixture: 3, round: 3, starts: 1, defcon_hit: 1 }),
+        ]}
+        teams={teams}
+      />
+    );
+
+    const st = columnIndex('St');
+    const dch = columnIndex('DCH');
+    const rows = rowsByGw();
+
+    expect(rows.get('1')?.[st]).toBe(NO_VALUE);
+    expect(rows.get('1')?.[dch]).toBe(NO_VALUE);
+    expect(rows.get('2')?.[st]).toBe('0');
+    expect(rows.get('2')?.[dch]).toBe('0');
+    expect(rows.get('3')?.[st]).toBe('1');
+    // A number like CS, not a tick. The brief is explicit about this: the
+    // column has to sum by eye down a season.
+    expect(rows.get('3')?.[dch]).toBe('1');
+  });
+
+  it('puts St beside Min and DCH beside DC, which is what makes either readable', () => {
+    // Position is the point of both columns rather than a layout preference.
+    // 45 minutes is a start hooked at half time or a substitute brought on at
+    // half time, and only the neighbouring column says which; DCH is
+    // uninterpretable without the DC count it is a threshold on.
+    render(<StatsTable history={[aGameweek()]} teams={teams} />);
+
+    expect(columnIndex('St')).toBe(columnIndex('Min') + 1);
+    expect(columnIndex('DCH')).toBe(columnIndex('DC') + 1);
+  });
+
+  it('averages DCH but not St, so the 2022-23 footnote keeps naming its group', () => {
+    // St is deliberately unaveraged: on 2022-23 `starts` is measured from GW16
+    // exactly like the expected family, so an averaged St would join the
+    // divergent denominator group and `groupLabel`'s exactness check would fail
+    // — "Expected stats over 23" degrading to a list of five column labels.
+    //
+    // Asserted through the AVG row rather than through the column definition,
+    // so it is a statement about what renders.
+    render(
+      <StatsTable
+        history={[
+          aGameweek({ fixture: 1, round: 1, starts: 1, defcon_hit: 1 }),
+          aGameweek({ fixture: 2, round: 2, starts: 1, defcon_hit: 0 }),
+        ]}
+        teams={teams}
+      />
+    );
+
+    const avg = Array.from(document.querySelectorAll('tbody tr'))
+      .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => (td.textContent ?? '').trim()))
+      .find((cells) => cells[0] === 'AVG');
+
+    expect(avg?.[columnIndex('St')]).toBe('');
+    expect(avg?.[columnIndex('DCH')]).toBe('0.5');
+  });
+
   it('keeps a measured zero distinguishable from the placeholder in the same column', () => {
     // The guard against the assertions above passing for the wrong reason: if
     // NO_VALUE were ever '0' or '0.00', both of them would still be green.

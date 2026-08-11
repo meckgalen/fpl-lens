@@ -56,13 +56,34 @@ async function truthFor(season: string, columns: string[]): Promise<Map<string, 
   return out;
 }
 
-/** The database column a picker key reads, for the nullable ones. */
-const DB_COLUMN: Record<string, string> = {
-  starts: 'starts',
-  expected_goals: 'expected_goals',
-  expected_assists: 'expected_assists',
-  expected_goal_involvements: 'expected_goal_involvements',
-  defensive_contribution: 'defensive_contribution',
+/**
+ * The database columns a picker key reads, for the nullable ones.
+ *
+ * A **list** since item 14, because a derived column reads more than one: the
+ * hit count comes from `defensive_contribution`, and hits-per-start divides it
+ * by `starts`. Truth for such a column is the AND over its inputs — it can be
+ * offered only where every column feeding it is complete.
+ *
+ * **Declared here rather than read off the shipped `dependsOn`, deliberately.**
+ * This file already imports the shipped *logic* on purpose, so that it checks
+ * what actually runs; the *data* it checks against has to be restated, or the
+ * check agrees with itself and proves nothing (working agreement: verification
+ * must not share its derivation with the thing it verifies). A dependency
+ * declared wrong on the column definition shows up here as a mismatch, which is
+ * exactly what this list is for.
+ *
+ * That split is not a reversal of item 13's decision to move `seasonAvailability`
+ * into `columns.ts` so this file could import it. Same rule, applied to two
+ * different things: import the logic, restate the data.
+ */
+const DB_COLUMNS: Record<string, string[]> = {
+  starts: ['starts'],
+  expected_goals: ['expected_goals'],
+  expected_assists: ['expected_assists'],
+  expected_goal_involvements: ['expected_goal_involvements'],
+  defensive_contribution: ['defensive_contribution'],
+  defcon_hits: ['defensive_contribution'],
+  defcon_hits_per_start: ['defensive_contribution', 'starts'],
 };
 
 async function main(): Promise<void> {
@@ -73,10 +94,12 @@ async function main(): Promise<void> {
   console.log(`${seasons.length} seasons x ${PLAYER_COLUMNS.length} columns\n`);
 
   const nullableKeys = PLAYER_COLUMNS.filter((c) => c.nullable).map((c) => c.key);
-  const dbColumns = nullableKeys.map((k) => DB_COLUMN[k]);
-  for (const [i, k] of nullableKeys.entries()) {
-    if (!dbColumns[i]) throw new Error(`No database column mapped for nullable key '${k}'`);
+  for (const k of nullableKeys) {
+    if (!DB_COLUMNS[k]?.length)
+      throw new Error(`No database column mapped for nullable key '${k}'`);
   }
+  // The distinct set to query, since two picker keys can share a source column.
+  const dbColumns = [...new Set(nullableKeys.flatMap((k) => DB_COLUMNS[k]))];
 
   let compared = 0;
   let agreed = 0;
@@ -97,12 +120,13 @@ async function main(): Promise<void> {
       // shipped predicate:
       //   - a field with no source is never available, whatever the season;
       //   - a NOT NULL column is always available;
-      //   - a nullable one is available exactly when no row of it is NULL.
+      //   - a nullable one is available exactly when no row of it is NULL, and
+      //     a DERIVED one exactly when that holds for every column it reads.
       const expected = col.unavailable
         ? false
         : !col.nullable
           ? true
-          : (truth.get(DB_COLUMN[col.key]) ?? false);
+          : DB_COLUMNS[col.key].every((c) => truth.get(c) ?? false);
 
       compared++;
       if (claim === expected) agreed++;
