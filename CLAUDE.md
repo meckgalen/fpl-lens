@@ -43,13 +43,10 @@ first: `ingest:fixtures` needs `team_seasons`, and `ingest:gameweeks` needs
 `ingest:live` has no ordering constraint — it owns its own season end to end —
 and can be run at any time, as often as you like.
 
-**Every one of those preconditions is scoped to the ten CSV seasons**, which
-item 4 had to change. They were counts over whole tables (`teams = 34`,
-`player_seasons = 7338`), and the moment an eleventh season existed, re-running
-any CSV ingest failed on a season it does not own. They were scoped rather than
-loosened to `>=`: the numbers are exact because that is what catches a dropped
-row, and a bound wide enough to admit a new season is wide enough to admit a
-missing match. The pinned figures are unchanged.
+**Every one of those preconditions is scoped to the ten CSV seasons, and must
+stay scoped rather than loosened to `>=`.** The numbers are exact because that is
+what catches a dropped row, and a bound wide enough to admit a new season is wide
+enough to admit a missing match.
 
 **The gameweek sync exists and has not been run.** `npm run ingest:live-gameweeks`
 loads match rows for the live season from the official API. Item 5 built and
@@ -61,348 +58,51 @@ matches does not clear them and ingesting them does. The first real run also
 turns `SEASONS_WITH_GAMEWEEKS` in `career.test.ts` red, on purpose: that is how
 the eleventh season announces itself.
 
-**Item 6 checked what is in those 253,509 rows against a second source, and
-found holes. Item 7 fixed five columns of them and deliberately left four.**
-`npm run verify:history-past` sums every player-season we hold and diffs it
-against FPL's `history_past` — 1,915 player-seasons, 27 columns, 51,705 cells.
-**1,524 drifts, 1,516 of them with ours lower than FPL's**, and 1,486
-attributable to **178 fixtures where a column is 0 on every row of a match that
-was played**.
+**Item 6 checked those rows against a second source and found holes; item 7
+stored NULL for five columns of them and deliberately left four.** The rule is
+Data Layer rule 6 applied per **fixture** as well as per season, and it lives in
+`server/src/ingest/holes.ts`, which both gameweek writers call. Which fixtures
+are holed, and which four columns still store `0`, is the table in Known Issues.
+The measurements are in `docs/items/item-06-history-past-cross-check.md` and
+`docs/items/item-07-null-for-holed-columns.md`.
 
-**The hole rule lives in `server/src/ingest/holes.ts` and both gameweek writers
-apply it.** A hole is a fixture where a column totals exactly zero across the
-22 players who took the field — impossible for `starts` by the laws of the game,
-and for the expected family, which accrues to everyone on the pitch from the
-first shot faced. Those cells are stored NULL: **152 fixtures, 9,704 rows, all
-in 2022-23**, where the upstream scraper began collecting from round 16 and
-wrote `0` for the fourteen rounds before. The ICT quartet's 26 fixtures are
-still stored as 0 — see Known Issues for why that is a decision rather than an
-omission.
+**The app has a season selector, and the selected season is `bootstrap.season`**
+— the one the server actually served — rather than a second piece of state that
+could disagree with the payload on screen. The list of seasons rides on the
+bootstrap response as `seasons: string[]`.
 
-**`sum()` alone was not enough, so the season aggregate changed too.** `sum()`
-skips NULLs, so NULLing the source would have left a 2022-23 ever-present still
-reading 24 starts against a true 38. `measuredSum` in
-`server/src/repositories/players.ts` returns NULL unless every contributing row
-has a value, on all nine nullable columns. The distinction it draws is
-**missing rows versus missing values**: a blank gameweek, a January arrival or a
-season still being played all produce _fewer rows_, and summing those is right;
-a column NULL on _some of the rows that exist_ has no honest total.
+`npm test` runs **two suites on two runners**, server and client, plus
+`docs:size`. The suites are counted separately on purpose: two runners print two
+summaries, and a combined figure would be maintained by hand against neither of
+them. **The counts, and what every test file pins, are in `docs/testing.md`.**
 
-**It degrades per player, not per season.** 661 of 778 2022-23 players lose
-their `starts` total and 117 keep a real one. Per column too: Enzo Fernández
-keeps `starts`, xG, xA and xGC and loses `expected_goal_involvements` alone,
-because round 29 is holed on that column only and he played it as a double
-gameweek.
+The root script is `run-s --continue-on-error docs:size test:server test:client`,
+so the client suite runs even when the server suite is red and the overall exit
+code is still non-zero. `npm run test:server` and `npm run test:client` run
+either alone. Not `&&`, which would hide the client result behind a database
+problem, and not `;`, which reports only the last command's exit code and would
+let a red server suite pass silently.
 
-**The drift against FPL is unchanged, and that is expected rather than a
-disappointment.** `verify:history-past` still reports 1,524 drifts, 1,486
-attributed, **38 unexplained** — identical before and after. Its
-`fetchOurTotals` keeps a bare `sum()` on purpose: it asks what is _in the rows_
-so it can be compared against FPL, and adopting `measuredSum` there would blank
-our side of every holed player-season and make the drift vanish without a
-stored value having changed. What item 7 buys is that the app no longer _shows_
-a part-season figure as a whole-season one.
+The conventions the suites are written to belong here rather than in
+`docs/testing.md`, because they are rules rather than a map:
 
-**Item 8 gave the app a season selector, and with it the ten completed seasons.**
-Every page is now reachable on any of the eleven: the selector is a `<select>`
-in the sidebar, its state lives in `App.tsx`, and **the selected season is
-`bootstrap.season`** — the one the server actually served — rather than a second
-piece of state that could disagree with the payload on screen. The list of
-seasons rides on the bootstrap response as `seasons: string[]`. Item 8 also
-fixed the `detailPlayer` snapshot that had been in Known Issues since item 1,
-made `currentGameweek`/`nextGameweek` return null instead of a plausible wrong
-answer, and made the last of the four empty states reachable.
-
-`npm test` runs **two suites on two runners**: **110 server tests** and **187
-client tests**, all passing. They are counted separately on purpose — two
-runners print two summaries, and a combined figure would be maintained by hand
-against neither of them.
-
-**The client figure read 82 until item 12 and had been wrong since item 9**,
-which is worth a sentence because the cause is not carelessness. Items 10 and 11
-both changed it — to 111 and then to 134 — and **neither wrote a Phase 1
-record**, so there was no place the number was being restated and nothing to
-notice it drifting. Both records are stubs below now, and the working
-agreement's "end each session by updating Current State" is what they were
-missing.
-
-The root script is `run-s --continue-on-error test:server test:client`, so the
-client suite runs even when the server suite is red and the overall exit code is
-still non-zero. `npm run test:server` and `npm run test:client` run either
-alone. Not `&&`, which would hide the client result behind a database problem,
-and not `;`, which reports only the last command's exit code and would let a red
-server suite pass silently.
-
-**Server — `node --import tsx --test`, against the populated database.** Eight
-files:
-
-- `server/src/repositories/defcon.test.ts` — the defensive contribution hit
-  rule, on its own, for the reason `holes.test.ts` exists: it is the
-  load-bearing rule in two queries and it is the **first scoring rule the app
-  computes for itself**, so nothing upstream can be diffed against to catch a
-  mistake. Two halves that cannot do each other's job. Synthetic rows in a
-  rolled-back transaction are the only way to put a value *on* a boundary — real
-  2025-26 has 9s and 10s but nothing guarantees it keeps them — and cover both
-  thresholds either side, the goalkeeper case, the clause-order trap (a NULL-DC
-  keeper row must be NULL, not 0), and the orphan row that pins the `LEFT JOIN`.
-  Anchors against the real database are the only way to catch a rule that is
-  self-consistently wrong: Gabriel 11, Senesi 26, Anderson 26, plus 2026-27 and
-  2016-17 returning null for every player.
-
-  **Its synthetic season is `'2098-99'`, not `'2099-00'`, and the reason is on
-  the constant**: `live-season.test.ts` owns the latter, `node --test` runs files
-  in parallel, and two transactions inserting the same
-  `(season, fpl_fixture_id)` deadlocked on the unique index (Postgres 40P01).
-
-- `server/src/ingest/holes.test.ts` — the hole detector, on its own, because it
-  is the load-bearing rule in two ingests and a regression in it would otherwise
-  surface as a confusing failure somewhere else. Runs against a temp table
-  created `LIKE player_gameweeks` inside a rolled-back transaction: `LIKE`
-  copies the real types and NOT NULLs so this exercises the actual SQL, and
-  copies no foreign keys so a fixture can be invented without a player, a club
-  and a match behind it. Covers the 0 shape, the NULL shape (idempotence across
-  a re-ingest), the unplayed fixture, per-column independence, season scoping,
-  and both sides of the rule-6 boundary.
-
-- `server/src/ingest/live-gameweeks.test.ts` — the gameweek sync, offline. Its
-  centrepiece is a **replay**: all 29,757 rows of 2025-26's `merged_gw.csv`
-  reshaped into the wire shape and run through the new mapper, then compared
-  field for field against what the CSV ingest stored. **29,747 of 29,747 rows
-  equivalent, no field mismatches**, with rule 12 removing exactly the ten known
-  duplicates. Plus the settled gate in both flag orderings, the partial round,
-  idempotency, the ordering trap, the round-less guard, the dedup tiebreak, and
-  that a failed request aborts the run.
-
-  **What the replay is evidence of, precisely:** it is an equivalence test
-  between two independently written mappers over the same bytes — strong about
-  the new code and **silent about the source**. It cannot show that the live
-  endpoint agrees with the CSV, because nothing can until a round is played.
-  The `history_past` cross-check in the item 5 record (`CLAUDE-history.md`) is
-  the other half, and the two are reported as two results rather than one
-  verdict.
-
-- `server/src/ingest/live-season.test.ts` — the live ingest, offline. Every test
-  writes a synthetic season (`2099-00`) inside a `BEGIN … ROLLBACK`, so it
-  exercises the real upsert SQL without touching the eleven real seasons and
-  without the network. Covers the season derivation, that no stat field crosses
-  the boundary, that a second run changes nothing, that `start_cost` is
-  write-once, that a departed player keeps his row, that a promoted club matches
-  its existing row by code, and that a fixture with no round stores as NULL.
-
-- `server/src/ingest/player-gameweeks.test.ts` — the ingest acceptance suite.
-  The nine Saka 2025-26 metrics, Salah 2017-18 and De Bruyne 2019-20 (both
-  sourced independently of the CSVs), plus the dedup, double/blank gameweek and
-  rule 6 nullability boundaries.
-- `server/src/repositories/columns.test.ts` — the column availability
-  predicate, on its own, because it decides what the Players list is *allowed to
-  show* and a wrong cell is either a column of dashes or a partly measured
-  column presented as a whole-season total. Two halves: `deriveSeasonAvailability`
-  against hand-built fixtures, one per clause of the predicate; and the real
-  database, where the **two derivations must agree** — the bootstrap's reduction
-  over player aggregates against `/api/columns`'s `count(col) = count(*)` — over
-  all eleven seasons, 90 cells plus the one unplayed season. Plus `measured_from`
-  cross-derived against a `min(round)` computed in JS over separately fetched
-  rows, 99 cells.
-
-  **The unplayed season is where the two derivations deliberately diverge**, and
-  it is asserted rather than skipped: the reduction lifts it to one
-  `measured: false`, the matrix has no season-level field and flattens it to nine
-  `none` cells. Both right, not interchangeable — which is why the client must
-  read the pair together.
-
-- `server/src/repositories/api-identity.test.ts` — `/api/player/:code` takes an
-  `fpl_code`, the id bootstrap hands out is the one that resolves, and no
-  season-scoped element id resolves as a code. The identity assertions run
-  against the **default** season, which is now the unplayed one; the round trip
-  that checks a history sums to the totals beside it runs against the latest
-  season **with matches**, because over an unplayed season it would compare zero
-  to zero and pass without reading a row.
-- `server/src/repositories/wire-types.test.ts` — decimals arrive as numbers and
-  unmeasured stats arrive as null, on the aggregate and on the gameweek rows.
-- `server/src/repositories/career.test.ts` — the career query. Season set and
-  order, the nine acceptance values, the summary cross-checked against the
-  gameweek rows it claims to sum, the nullability matrix across every season on
-  one player, and the three shapes an empty season takes.
-
-  **The `sum()` property test was replaced in item 7, not amended, and what it
-  was right about is worth keeping.** It asserted that every nullable column is
-  measured for a whole season or for none of it — the condition under which a
-  bare `sum()` was safe, and a real property that really did hold. What it could
-  not see is the shape the defect actually took: a column stored as `0` is fully
-  "measured" by `count()`, so it passed on a 2022-23 that was short by fourteen
-  rounds. The one case it existed to catch, arriving in the one form it was
-  blind to.
-
-  Item 7 made the old assertion false by design and removed the property it
-  protected in the same stroke. So the claim is now the other one: **the
-  aggregate returns NULL exactly when the column is partly measured.** Derived
-  from the fixtures rather than from `measuredSum`'s own expression — a
-  player-season is partly measured precisely when the player appeared in a holed
-  fixture — with named anchors at Maguire (null), Enzo Fernández (18) and Saka
-  2025-26 (25, unchanged).
-
-  **It holds two season lists now, `ALL_SEASONS` (eleven) and
-  `SEASONS_WITH_GAMEWEEKS` (ten), and the split was the subtlest thing in
-  item 4.** They were one constant, `ALL_TEN`, used for two different questions:
-  the seasons a career spans (`player_seasons`) and the seasons present in
-  `player_gameweeks`. Those were the same list until 2026-27 and are not any
-  more. Editing the single constant to eleven would have turned the `sum()`
-  property test red with a message about a missing season, which reads exactly
-  like a broken ingest. They are named for what they mean rather than for how
-  many they hold, so the next August does not repeat it.
-
-**Client — Vitest in jsdom, no database.** `playerColumns.test.ts` gained item
-14's derived-column fold (the most-restrictive dependency, the tie-break that
-makes `DCH/St` name DC's seasons rather than `starts`', and the three nulls in
-hits-per-start including the `null / 5 === 0` coercion);
-`Players.columns.test.tsx` gained the two picker entries; `StatsTable.test.tsx`
-gained `St`/`DCH` and the assertion that `St` is **not** averaged. Components
-are rendered and the API
-is mocked at `services/api.ts`, not at `fetch`: mocking the transport would
-additionally pin URL shapes and `res.ok` handling, which the server suite
-already covers. `@testing-library/user-event` drives anything involving a
-keyboard — `fireEvent` dispatches a synthetic click and so cannot tell a
-`<button>` from a `<div onClick>`, which is the entire distinction item 3 turns
-on. Eighteen files:
-
-- `client/src/components/PlayerShirt.test.tsx` — the club shirt and its two
-  fallbacks. URLs asserted **in full** rather than pattern-matched, for the
-  reason the photograph test gives: the transformation is not the identity and
-  every segment of it is separately capable of being wrong. Eleven tests: the
-  outfield URL, the goalkeeper `_1` variant, both sizes, the badge step, the
-  grey placeholder behind it, that a prop change clears a previous club's
-  fallback, **both directions of the module-level shirtless set**, that both
-  images are decorative, and `loading="lazy"`.
-
-  **Queried by `src`, not by role**, and that is a consequence rather than a
-  preference: the images carry `alt=""`, which keeps them out of the
-  accessibility tree, so `getByRole('img')` cannot see them. One test pins that
-  directly. It is also why `PlayerHeader.test.tsx`'s "no photo field" assertion
-  still means what it always meant — `queryByRole('img')` still finds only the
-  photograph, never the shirt behind it.
-
-  `beforeEach(resetShirtCache)` is **required, not hygiene**. The set is module
-  state shared across the file, and without clearing it the suite silently
-  becomes order-dependent. Giving each test its own team code would hide the
-  coupling rather than remove it. It is imported from `lib/shirtCache.ts` rather
-  than from the component — see the Fast Refresh note in the item 9 record
-  (`CLAUDE-history.md`) for why the cache lives there.
-
-- `client/src/lib/playerColumns.test.ts` — how the picker describes the seasons
-  a column *is* recorded in, which is prose generated from data and so is wrong
-  in ways a type checker cannot see. Two shapes have to stay distinguishable:
-  **"recorded from X"** (arrived and still being recorded) and **"recorded X to
-  Y"** (recorded, then stopped). Holds the unplayed-newest-season case that
-  shipped wrong — no handwritten fixture catches it, because a handwritten
-  fixture stops at a season with data — its opposite, and the
-  recorded/dropped/recorded-again shape that the defensive trio really has and
-  that the UI cannot currently reach.
-
-- `client/src/pages/Players.columns.test.tsx` — the picker, persistence and the
-  sort fallback. **The load-bearing assertions are the negative ones**: that an
-  unavailable column is disabled *with a reason* rather than silently missing,
-  and that a hidden column is still *remembered*. Mocks `fetch` rather than
-  `services/api`, which is this suite's one exception to its own rule and is
-  required: mocking `fetchColumnHistory` would replace the module-scope memo the
-  request-count test exists to pin.
-
-- `client/src/App.test.tsx` — the shell, and **the first test `App.tsx` has ever
-  had**. That absence is why item 3 could only pin the Dashboard's half of the
-  click-through contract, and the `detailPlayer` fix cannot be tested anywhere
-  else: it is a bug about which object the shell hands down. Twelve tests: the
-  selector's options and their order, refetching with the new season, the app
-  _not_ blanking mid-switch, persistence of the **served** season, recovery from
-  a stored season the database does not have, a network failure _not_ being
-  treated as one, the sidebar deadline block in both directions, the header and
-  gameweeks agreeing across a season change, the no-false-empty-state window,
-  and the not-in-the-game state.
-
-  It does **not** use `renderInApp`: that helper supplies a `BootstrapContext`,
-  which is precisely what is under test here. StrictMode is applied by hand for
-  the reason `render.tsx` gives.
-
-- `client/src/pages/Fixtures.test.tsx` — six tests, and the page's first. The
-  centrepiece is the **round collision**: two seasons that both end at round 38
-  produce the same derived round, so an effect keyed on it alone cannot see a
-  season change. Plus that the season is sent at all, that fixtures clear while
-  the new ones load, that the tab choice survives, and that a season with
-  nothing played still names a results round — which is a bug item 8 introduced
-  and caught in the browser, not a hypothetical.
-
-- `client/src/test/render.test.tsx` — a test for the harness, not the app. The
-  suite's helper wraps in StrictMode, and everything `PlayerDetail.test.tsx`
-  claims depends on React's double-invocation being genuinely active. This
-  counts a probe component's renders and asserts two, both on the first render
-  and after a `rerender`.
-- `client/src/components/GameweekSection.test.tsx` — the four empty states, each
-  pinned by the wording that distinguishes it, including the sentence that must
-  **not** appear when a season is registered but empty. All four are reachable
-  from the UI now, three inside an expanded season and one at page level; this
-  is still where the wording is pinned, and `NotInGame` is exported so the page
-  renders the same sentence rather than a second copy of it.
-- `client/src/pages/PlayerDetail.test.tsx` — expanding a career row issues one
-  request, reopening after a collapse issues none, and changing player clears
-  the cache. Payloads differ per (player, season) so a stale cache is visible
-  rather than merely absent.
-
-  **Item 12 added the merge and the filters.** That the selected season is a row
-  in the same table rather than a section above it — the inverse of what this
-  file used to assert — that its totals stay on screen when it is collapsed,
-  that it alone is marked, and that it starts expanded. Then the per-season
-  filters: two seasons open at once with different ranges, a range narrowed on
-  one leaving the other alone, round options taken from the season rather than
-  the selected one (the 2019-20-to-47 case), no filter bar over a season with no
-  rows, and the filters resetting on a player change.
-- `client/src/components/AveragesFootnote.test.tsx` — the footnote's three
-  shapes through `StatsTable`, which is where the decisions live: one line when
-  the denominators agree, a named group on a second line when they diverge, and
-  the column labels instead when the divergent set is only part of a group. Plus
-  the two cases the caller owns (zero appearances rather than `Infinity`, and no
-  footnote at all with no rows), and two item 12 additions — the threshold read
-  from the **unfiltered** season under a venue filter, and the boundary still
-  reported when one column is holed again later, which is Haaland 2022-23's real
-  shape and was found in the browser.
-- `client/src/components/StatsTable.test.tsx` — rule 6 on screen: a null renders
-  `—` and a zero renders `0.00`, in the same column of the same table.
-- `client/src/components/CareerTable.test.tsx` — the season disclosure. Tab
-  reaches it, Enter and Space both work, `aria-expanded` follows the state,
-  `aria-controls` is absent while collapsed and resolves through
-  `document.getElementById` while open, the accessible name is the season, and
-  one mouse click toggles exactly once.
-- `client/src/pages/Players.test.tsx` — the same disclosure assertions on the
-  second table, because a shared control that has quietly stopped being shared
-  passes one file and fails the other only if both files ask. Plus the sortable
-  header on that page, and the shirt's **wiring**: `PlayerShirt.test.tsx` proves
-  the component builds a URL from the props it is handed, and this proves the
-  list hands it the right ones. A row passing the wrong player's team code would
-  pass every test in that file, so the assertion is that two rows on two clubs
-  produce two different URLs.
-- `client/src/pages/Dashboard.test.tsx` — every ranking opens the player it
-  lists, by mouse and by keyboard, in all three. **Pins the Dashboard's half of
-  the contract and no more**: `App.tsx` has no test, so the callback firing is
-  not evidence the detail page opens. That half is a browser check.
-- `client/src/components/StatsTable.sort.test.tsx` — the sort header is a button,
-  reachable by Tab, activated by Enter and Space, `aria-sort` follows the state,
-  and the arrow stays out of the accessible name. Also a class-level tripwire on
-  the button filling its cell, which is worth having and worth knowing the limit
-  of — see the Phase 1 item 3 record in `CLAUDE-history.md`.
-- `client/src/pages/Dashboard.preseason.test.tsx` — the three rankings with
-  nothing to rank. The load-bearing assertion is the **negative** one: the
-  message must not promise Gameweek 1. See the item 4 record
-  (`CLAUDE-history.md`) for the window in which that promise is false.
-- `client/src/pages/PlayerDetail.upcoming.test.tsx` — the Upcoming strip: five
-  of the remaining fixtures, the opponent read off the correct side of
-  `is_home`, a difficulty per fixture, and **nothing at all** when the list is
-  empty, which is every completed season.
-- `client/src/components/PlayerHeader.test.tsx` — the photo URL built from
-  `photo`, and the `onError` fallback, which is the common case for a newly
-  published roster rather than an edge one. Item 9 changed both the size it
-  asserts and what it falls back **to**: the full header degrades to the club
-  shirt, and the partial header — a season the player has no `player_seasons`
-  row for — degrades to the grey placeholder and **must never render a shirt**,
-  because the only club available there is the previously selected season's.
-  That is the stale-snapshot bug the partial header exists to prevent, arriving
-  as an image; it has its own test and its own mutation.
+- **The server suite is `node --import tsx --test` against the populated
+  database.** The client suite is **Vitest in jsdom** and touches no database.
+- **The client suite mocks the API at `services/api.ts`, never at `fetch`.**
+  Mocking the transport would additionally pin URL shapes and `res.ok` handling,
+  which the server suite already covers. `Players.columns.test.tsx` is the one
+  exception and says why in the file.
+- **Anything involving a keyboard is driven by `@testing-library/user-event`.**
+  `fireEvent` dispatches a synthetic click and so cannot tell a `<button>` from a
+  `<div onClick>`, which is the entire distinction item 3 turns on.
+- **A rule that is load-bearing in more than one caller gets its own test file**,
+  rather than coverage through its callers: `holes.test.ts` and `defcon.test.ts`
+  exist for that reason, and a regression in either would otherwise surface as a
+  confusing failure somewhere else.
+- **A test that writes to the real database writes a synthetic season inside a
+  `BEGIN … ROLLBACK`, and each suite owns its own.** `node --test` runs files in
+  parallel, and two suites sharing one season deadlocked on the unique index
+  (Postgres 40P01). The reservations are in `server/src/test/synthetic-seasons.ts`.
 
 Two runners rather than one, deliberately. The server suite's defining property
 is that it talks to Postgres, and `node:test` was already there and works. The
@@ -410,18 +110,14 @@ client suite needs jsdom and a module mock, which is Vitest's job. Migrating the
 server suite to Vitest would be a tooling change wearing a testing item's
 clothes.
 
-**Phase 1 step 1 is done: the player detail page shows a career.** The FPL site
-shows a summary table of previous seasons and stops; expanding it is the app's
-reason to exist. See "Phase 1" below for what the step decided.
-
-**Item 12 then merged the selected season into that table, so the page is now
-the header card, an Upcoming strip, and one career table.** One row per season,
-newest first, every one of them expandable into that season's gameweeks with its
-own GW-range and venue filters. The selected season is a row like any other,
-marked "Selected" in place, and starts expanded. There is no "This Season"
-section and no "Previous Seasons" heading: both named something that stopped
-being true when item 8 added a selector — the first whenever the selector is off
-the live season, the second on any season with later ones listed above it.
+**The player detail page is the header card, an Upcoming strip, and one career
+table**, and that career is the app's reason to exist: the FPL site shows a
+summary of previous seasons and stops, while every row here expands. One row per
+season, newest first, each into that season's gameweeks with its own GW-range and
+venue filters. The selected season
+is a row like any other, marked "Selected" in place, and starts expanded. There
+is no "This Season" section and no "Previous Seasons" heading — both named
+something that stopped being true when the selector landed.
 
 **Item 14 added the first scoring rule the app computes for itself.** Everything
 else on screen is FPL's number or arithmetic over FPL's numbers; a defensive
@@ -433,13 +129,13 @@ function. The client never compares a number to a threshold, because the Players
 list needs a count only the server can compute and one rule in two languages is
 free to drift.
 
-**Goalkeepers are 0 rather than null, and FPL computing no DC for them was
-measured rather than assumed.** DC is 0 on all 3,427 GK rows of 2025-26 *while
-the components are not* — keepers recorded 24 tackles, 934 CBI and 6,195
-recoveries in those same rows. The 0 is FPL declining to compute the stat.
-`defensive_contribution` itself is a raw action count, not points: 5,117 of
-29,747 rows carry an odd value, and the composition is position-dependent
-(DEF = CBIT, MID/FWD = CBIRT) on 26,320 of 26,320 outfield rows.
+**Goalkeepers score no hits, because FPL computes no DC for them at all**, which
+was measured rather than assumed: DC is 0 on every goalkeeper row of 2025-26
+*while its components are not* — keepers recorded tackles, CBI and recoveries in
+those same rows. The 0 is FPL declining to compute the stat, so a keeper's DC is
+stored as it arrives and no threshold is applied.
+`defensive_contribution` is a raw action count and not points, and its
+composition is position-dependent: DEF = CBIT, MID/FWD = CBIRT.
 
 **`getPlayerHistory` LEFT JOINs `player_seasons`, and the choice is about the
 failure mode.** `player_gameweeks` has foreign keys to `fixtures`, `teams` and
@@ -464,8 +160,8 @@ on every row (API identity rule 7). It returns 99 rows — eleven seasons by the
 nine nullable columns — each saying whether that column is `full`, `partial` or
 `none` there, and the round it starts at when it is partial. It exists for the
 column picker's reason strings, which have to name seasons other than the one on
-screen. Measured at 57 ms; the client fetches it once per page load, off the
-critical path, and nothing blocks on it.
+screen. The client fetches it once per page load, off the critical path, and
+nothing blocks on it.
 
 **`GET /api/bootstrap` also returns `columns`** — the same question for the
 selected season alone, top-level because a bootstrap response is one season
@@ -480,14 +176,9 @@ database (computed, not hardcoded) and accepting `?season=2019-20`. An unknown
 season is a 400 listing the eleven that exist.
 
 **`GET /api/bootstrap` also returns `seasons: string[]`** — every season that
-exists, newest first, which is what the selector offers. It rides on the
-bootstrap rather than on a route of its own because that is already the one
-request the app blocks on at mount, and because arriving on the same payload as
-`season` means "which season this is" and "which seasons exist" cannot disagree.
-It is deliberately **not** on `/api/player/:code` or `/api/fixtures`: only the
-selector needs it, and the same constant on three payloads is three things that
-can drift. See API identity rule 7 for why a manifest is right here when item 1
-refused one on `/career`.
+exists, newest first, which is what the selector offers. It is on the bootstrap
+**only**, never on `/api/player/:code` or `/api/fixtures`. API identity rule 7
+has the argument.
 
 **`GET /api/player/:code/career` also returns a `player` identity block** —
 `{ id, web_name, first_name, second_name, photo }`, the season-independent half.
@@ -496,14 +187,11 @@ is what lets the detail page name a player for a season he was not in the game
 for, where no player-season exists to name him from.
 
 **Each career row also carries `rounds: number[]`** — every round that season
-played, ascending, derived from `fixtures` by a correlated subquery. 2019-20 is
-`[1..29, 39..47]` and 2022-23 is `[1..6, 8..38]`. It is what the per-season GW
-filter offers, and it is a property of the **season** rather than of the player:
-derived instead from the player's own gameweek rows, a gap in the list could
-mean either that the season skipped the round or that he was not in the squad,
-and nothing would distinguish them. Costs +0.77 ms and +1,274 B on an
-eleven-season career, measured. See API identity rule 7 for why it rides on the
-row rather than arriving as a map.
+played, ascending, derived from `fixtures` rather than from the player's own
+gameweek rows, because a gap in the latter cannot distinguish "the season skipped
+this round" from "he was not in the squad". 2019-20 is `[1..29, 39..47]` and
+2022-23 is `[1..6, 8..38]`. It is what the per-season GW filter offers. API
+identity rule 7 has the argument for why it rides on the row.
 
 **The default follows the data, and since item 4 that means a season nobody has
 played yet.** The reasoning is written out beside `latestSeason()` in
@@ -517,11 +205,6 @@ names the season it resolved, and every page header displays it.
 `?season=` and rejects one rather than ignoring it, and its rows carry the label
 instead (API identity rule 7).
 
-**Item 8 removed the "no selector yet" half of that argument without changing
-the conclusion.** The completed seasons are one click away now, so defaulting to
-2026-27 no longer hides anything — it just decides what the app opens on, which
-is still the season being played.
-
 The client sends `?season=` on all three season-scoped routes. `App.tsx` sends
 it on the bootstrap; `Fixtures.tsx` sends it with the round, which it must,
 because that page derives its round from the _selected_ season's events and a
@@ -532,53 +215,17 @@ and each other row's own season when it is expanded.
 `GET /api/bootstrap` runs its aggregate per request. No cache and no
 materialized view: it is fast enough, and a cache is a second source of truth.
 
-**The cost depends on the season, and the recorded figure used to name neither.**
-"~90ms" described a _completed_ season while the actual default, 2026-27, has no
-match rows at all. Item 8 is where the distinction started to matter, because a
-selector lets a user put the app on the expensive season deliberately. Measured
-end to end — request to last byte, medians of 11 warm runs — which is what a
-user actually waits for, rather than the query time alone:
-
-| Season  | `/api/bootstrap` | Payload | Players | Was (item 8) |
-| ------- | ---------------- | ------- | ------- | ------------ |
-| 2026-27 | **23 ms**        | 333 KB  | 564     | 27 ms        |
-| 2019-20 | 77 ms            | 406 KB  | 666     | 75 ms        |
-| 2022-23 | **105 ms**       | 471 KB  | 778     | 91 ms        |
-| 2025-26 | **121 ms**       | 501 KB  | 841     | 117 ms       |
-
-**Re-measured in item 13, which added four columns to the aggregate**
-(`start_cost`, `matches`, `saves`, `defensive_contribution`) **and the
-`columns` availability block.** Three of the four seasons moved by less than the
-run-to-run spread, which is what the plan predicted: the new columns ride on the
-existing scan and the existing `GROUP BY`.
-
-**2022-23 is the exception at +14ms, and it is the only season paying it.** It
-is the one season with a `partial` column — `starts` and the expected family are
-measured from round 16 and not before — and a partial column is the only thing
-that needs `measuredFrom` run to find its boundary. Ten of the eleven seasons
-run **zero** extra queries; 2022-23 runs one.
-
-That query is **sequential rather than parallel, necessarily**: which columns
-are partial is not known until the aggregate has been reduced, so it cannot be
-fired alongside `listPlayerTotals`. Firing it unconditionally for all nine
-nullable columns would make it parallel and would also make every season pay for
-it, which is the trade the gating exists to avoid.
-
-`GET /api/columns` — the eleven-season availability matrix, 99 rows, 8.3 KB —
-measures **57 ms** on the same method. It is fetched once per page load on the
-Players page, off the critical path, and nothing blocks on it. Note the shape it
-is NOT: driving that aggregate from
-`(SELECT DISTINCT season FROM player_seasons) LEFT JOIN player_gameweeks`, so a
-season with no match rows still gets a row, measures **161 ms** against **51 ms**
-for the same aggregate grouped straight on the fact table — 110 ms to carry one
-row for a season that has no data. It is two cheap queries in one `Promise.all`
-with the empty seasons folded in afterwards instead.
-
-For comparison, item 7 measured `listPlayerTotals` alone at 9ms for 2026-27 and
-99ms for 2025-26; the difference is serialisation and transfer, which the query
-figure does not include. The worst case is a season change to 2025-26 at ~121ms,
-which is why the shell keeps the previous bootstrap mounted rather than blanking
-— see the item 8 record in `CLAUDE-history.md`.
+**The cost depends on the season**, from ~23 ms on the unplayed 2026-27 to
+~121 ms on a complete 2025-26, measured end to end. Two things about the shape
+outlive the numbers. **2022-23 is the only season that runs a second query**: it
+is the one season with a `partial` column, and a partial column is the only thing
+that needs `measuredFrom` run to find its boundary — the other ten seasons run
+zero extra queries. That query is **sequential rather than parallel of
+necessity**, because which columns are partial is not known until the aggregate
+has been reduced, and firing it unconditionally would make every season pay for
+it. And the worst case is why the shell keeps the previous bootstrap mounted
+across a season change rather than blanking. Measurements:
+`docs/items/item-13-selectable-columns.md`.
 
 The app defaults to **2026-27**: 564 players, 20 clubs, 380 unplayed fixtures
 and 38 real deadlines, with GW1 locking 21 Aug 2026 at 17:30Z. 2025-26 remains
@@ -684,7 +331,9 @@ not started. Every verification in item 5 is shaped by that fact.
 fpl-lens/
 ├── data/raw/                  # gitignored, downloaded CSVs by season
 ├── docs/
-│   └── data-profile.md        # column presence matrix, generated in Phase 0
+│   ├── data-profile.md        # column presence matrix, generated in Phase 0
+│   ├── testing.md             # what every test file pins: the suite's map
+│   └── items/                 # item-NN-<slug>.md: one full record per item
 ├── scripts/
 │   ├── fetch-raw-data.ts      # downloads historical CSVs
 │   └── profile-raw-data.ts    # profiles column drift across seasons
@@ -776,8 +425,7 @@ fpl-lens/
 ├── docker-compose.yml         # dev Postgres 16, host port 5434
 ├── .env.example               # copy to .env; read by compose AND server/src/db
 ├── package.json               # root scripts (concurrently runs both)
-├── CLAUDE.md                  # the rules: read every session
-└── CLAUDE-history.md          # the Phase 1 item records: read on demand
+└── CLAUDE.md                  # the rules: read every session
 ```
 
 ## Data Layer Rules
@@ -984,51 +632,13 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
    total. Filtering the numerator by `minutes > 0` as well looks obviously right, and
    it disagreed with FPL on **7 player-seasons**.
 
-   **Nine of the 26 averaged columns can be non-zero on a row with no minutes.** An
-   earlier draft of this entry said `total_points` was the only one; that was wrong
-   and self-contradicting, since the rows were found *by* their yellow card. Measured
-   over all ten seasons — **19 rows, 18 player-seasons, nine seasons (not 2018-19)**:
-
-   | Column | Rows | Range | Column | Rows | Range |
-   | --- | --- | --- | --- | --- | --- |
-   | `bps` | 15 | −9 … 4 | `influence` | 2 | 1.0 … 2.0 |
-   | `total_points` | 14 | −3 … −1 | `creativity` | 2 | 0.4 … 1.1 |
-   | `yellow_cards` | 13 | 1 | `expected_goals_conceded` | 2 | 0.37 |
-   | `ict_index` | 3 | 0.1 … 0.4 | `red_cards` | 1 | 1 |
-   | | | | `threat` | 1 | 2.0 |
-
-   The other seventeen are 0 on every such row: goals, assists, clean sheets, goals
-   conceded, own goals, both penalty columns, saves, bonus, the expected family bar
-   xGC, and the defensive quartet.
-
-   **Those 19 rows are two disjoint populations, and only one of them has an
-   established cause.** No row carries both a card and an ICT-family or xGC value —
-   checked, the overlap is exactly 0.
-
-   - **14 rows are bookings**, and these are fully accounted for: 13 yellows at
-     −1 point / −3 BPS, and one red (Matheus N., 2022-23 round 28) at −3 / −9. The
-     ICT family and xGC are 0 on every one. This explains `total_points`,
-     `yellow_cards`, `red_cards`, and 14 of the 15 `bps` rows.
-   - **5 rows carry attacking or defensive values with no card at all**, which a
-     booking does not account for — a BPS penalty is negative, and a card generates
-     no threat: De Bruyne 2016-17 r32 (creativity 1.1), Philip 2017-18 r37
-     (influence 1.0), Kerkez and Kluivert 2023-24 r28 (xGC 0.37 each — same club,
-     same round, a double gameweek), and Ferguson 2024-25 r24 (threat 2.0,
-     influence 2.0, creativity 0.4, and the one **positive** BPS, +4).
-
-   **The cause of that second group is not established and was not chased.** A
-   minutes figure wrong at source is the obvious guess — threat implies a shot, xGC
-   implies time on the pitch — but it is a guess and is recorded as one. It does not
-   need settling: the arithmetic reproduces FPL at **400 of 400** either way, so
-   whatever the source's story is, we tell the same one.
-
-   **This changed the averages of all nine columns, not just Pts** — each numerator
-   now includes rows its denominator does not count. That is correct for the same
-   reason the points treatment is: it is what FPL's own totals do. `total_points` is
-   simply the only one printed beside a second number that could expose a
-   disagreement, which is why the PPG cross-check caught it and nothing else would
-   have. Of the 13 player-seasons with a bench row carrying points, **7 differ once
-   rounded to one decimal**; the rest are absorbed by the rounding.
+   **Nineteen rows across the ten seasons carry a value on a row with no minutes**
+   — mostly bookings, plus five rows carrying attacking or defensive values with no
+   card at all — and **nine of the 26 averaged columns** can be non-zero on such a
+   row. That is why the asymmetry is deliberate rather than an oversight waiting to
+   be tidied away, and it changed the averages of all nine columns, not just Pts.
+   The rows, the two populations and the one unexplained group are in
+   `docs/items/item-11-averages-by-appearances.md`.
 
    **It is sent unrounded, and rounded once on the client — changed in item 11.**
    It used to be rounded in SQL by `to_char(round((x * 10)::float8)…)`, which made
@@ -1044,13 +654,6 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
    that `toFixed` is **not** an implementation of the other convention — it is
    whatever the binary representation gives, so it must never be used for this.
 
-   **A consequence worth expecting: sorting changed.** `ppm` on the Players list
-   and the Dashboard's `bestPerMatch` sort on the real quotient now rather than on
-   a value pre-rounded to one decimal. One decimal left only 54-62 distinct values
-   for 624-865 players, with the largest tie group running 119-305 players ordered
-   by FPL element code — so 4,206 of 7,338 player-seasons change position, moving
-   out of an arbitrary order into a meaningful one. The Dashboard's top-3
-   membership is unchanged in all ten seasons.
 6. **`is_current` / `is_next` are derived from the deadline and the clock, never
    stored.** Rewritten in item 4, which gave the app a live season and so made
    the old wording — "false on every event" — false itself. The reason it was
@@ -1204,20 +807,14 @@ the data; that is not a reversal of item 13's move of `seasonAvailability` into
 
 `npm run verify:defcon` checks the defensive contribution hit count and prints
 **two results that are deliberately never merged**, because FPL publishes no hit
-count and there is nothing external to diff against. **Read-only.**
-
-1. **Cross-derivation — plumbing, not the rule.** The season count from
-   `listPlayerTotals` against the summed per-row flags from `getPlayerHistory`,
-   every player-season in 2025-26: **841 of 841**. Both sides call
-   `defconHitSql`, so **a wrong threshold agrees with itself and this part exits
-   0**. It catches a guard applied on one side only, the join multiplying rows,
-   or the two queries filtering differently.
-2. **The audit's distribution, frozen as literals — this is the rule check.**
-   Computed in SQL before `defcon.ts` existed and **compared** rather than
-   printed, because a printed number nobody diffs is not a check. Swapping DEF's
-   10 with MID's 12 moves it and nothing else in the codebase notices.
-
-Exits non-zero on either. Same discipline as item 5's replay-plus-cross-check.
+count and there is nothing external to diff against. **Read-only.** One is a
+cross-derivation — the season count against the summed per-row flags — which is a
+check on the plumbing and **not on the rule**, since both sides call
+`defconHitSql` and a wrong threshold agrees with itself. The other is the audit's
+distribution, computed in SQL before `defcon.ts` existed and frozen as literals:
+**compared** rather than printed, because a printed number nobody diffs is not a
+check. Exits non-zero on either. Full output:
+`docs/items/item-14-starts-and-defcon-hits.md`.
 
 `npm run verify:history-past` diffs every player-season we hold against FPL's
 `history_past` totals and prints where the two disagree, what the disagreement
@@ -1253,12 +850,8 @@ can be run alone with `npm run test:client`.
       an appearance floor, ICT index
 - [x] Fixtures page with difficulty ratings, by gameweek
 - [x] Every page header names the season it is showing
-- [x] One career table with the selected season merged into it as a row — its
-      totals in line with every other season when collapsed, its gameweeks
-      underneath when expanded, and no "This Season" / "Previous Seasons"
-      headings to be wrong about which is which
-- [x] Career history: one summary row per season on the detail page, each
-      expanding into that season's gameweeks
+- [x] One career table, every season a row, the selected one merged in as a row
+      like any other — its gameweeks underneath when expanded
 - [x] The eleven columns FPL shows that we used to drop — xGC, tackles, CBI,
       recoveries, defensive contribution, own goals, penalties saved and missed,
       cards, saves — on both the gameweek rows and the season summary
@@ -1278,12 +871,9 @@ can be run alone with `npm run test:client`.
 - [x] The player's photograph on the header card, with a placeholder fallback
 - [x] The incremental gameweek sync — **written and verified, not yet run**, so
       no 2026-27 match rows exist and the two empty states remain
-- [x] A read-only cross-check of all ten seasons against FPL's own totals,
-      which found 178 fixtures where the CSVs hold 0 for a column nobody
-      measured
-- [x] NULL rather than 0 where the source holed a column — 152 fixtures of
-      2022-23 across `starts` and the expected family, applied by both gameweek
-      writers; and a season aggregate that returns no total for a column
+- [x] A read-only cross-check of all ten seasons against FPL's own totals
+- [x] NULL rather than 0 where the source holed a column, applied by both
+      gameweek writers; and a season aggregate that returns no total for a column
       measured on only part of a season
 - [x] A season selector: all eleven seasons on every page, persisted, and
       validated by the server rather than by a second copy of its rule
@@ -1292,30 +882,24 @@ can be run alone with `npm run test:client`.
       the player was not in the game for
 - [x] `currentGameweek`/`nextGameweek` return null instead of a plausible wrong
       answer, so no completed season announces a played round as upcoming
-- [x] Club shirts on every player row — the Players list and all three Dashboard
-      rankings — with the goalkeeper variant, falling back to the club badge for
-      the fifteen stored clubs FPL no longer publishes a shirt for, and to the
-      grey placeholder behind that
-- [x] The header card's photograph at a third of its former weight, falling back
-      to the club shirt; and `preconnect` to both image origins
+- [x] Club shirts on every player row, with the goalkeeper variant, falling back
+      to the club badge for the fifteen stored clubs FPL publishes no shirt for,
+      and to a grey placeholder behind that
+- [x] The header card's photograph, falling back to the club shirt; and
+      `preconnect` to both image origins
 - [x] Selectable columns on the Players list — thirteen by default, **twenty-five
-      offered** since item 14 added two, persisted across sessions and season
-      changes. A column is offered
-      only where **every row of that season carries a value**, so 2022-23's
-      expected family is withheld rather than shown as a fourteen-round-short
-      total; an unavailable column is **disabled with the reason on screen**
-      rather than hidden, and the reason names where the column *is* recorded
+      offered**, persisted across sessions and season changes. A column is offered
+      only where **every row of that season carries a value**; an unavailable one
+      is **disabled with the reason on screen** rather than hidden, and the reason
+      names where the column *is* recorded
 - [x] Games started per gameweek — the one thing the gameweek table could not
       say, since a row reading 45 minutes is either a start hooked at half time
       or a substitute brought on at half time
 - [x] Defensive contribution **hits**: a per-gameweek 0/1 beside the raw count,
       and a season count plus hits-per-start on the Players list. The first
-      scoring rule the app computes for itself, stated once on the server;
-      goalkeepers score none, because FPL computes no DC for them at all
-- [x] Derived columns in the picker (`dependsOn`), whose availability is the
-      most restrictive of the columns they read — so both new entries are
-      withheld on the ten seasons with no DC data, each naming where it *is*
-      recorded
+      scoring rule the app computes for itself, stated once on the server
+- [x] Derived columns in the picker (`dependsOn`), whose availability is the most
+      restrictive of the columns they read
 
 The live FPL API proxy in `services/fplApi.ts` still exists with its 5-minute
 cache, but no route calls it: it is the ingestion source for the live season.
@@ -1349,26 +933,16 @@ around it.
 
   **Half one: coverage, which the badge fallback handles.** Nine of twenty clubs
   on 2016-17 have no shirt and render their club badge instead, and the badge
-  covers all 35 codes including clubs relegated a decade ago. Measured in the
-  browser on a full 200-row render of 2016-17: 115 rows shirt, 85 rows badge,
-  zero broken images, zero grey placeholders — from 49 requests, being 40 shirt
-  (22 × 200, 18 × 503) and 9 badge.
+  covers all 35 codes including clubs relegated a decade ago.
 
   **A missing shirt returns 503 to the browser, and that 503 is deterministic
-  rather than a rate limit** — which matters, because `recordMissingShirt`
-  writes its conclusion for the rest of the session and 200 rows hitting one
-  origin at once is exactly the shape that draws a limit. Measured before the
-  cache was trusted:
+  rather than a rate limit** — established by repeated cache-busted bursts before
+  the cache was trusted, since `recordMissingShirt` writes its conclusion for the
+  rest of the session and 200 rows hitting one origin at once is exactly the
+  shape that draws a limit. The measurements are in
+  `docs/items/item-09-club-jerseys.md`.
 
-  - Five rounds of all 40 shirt URLs fired in parallel, cache-busted: **18
-    failures every round, the failing set byte-for-byte identical across all
-    five**, and exactly the nine shirtless clubs × two variants.
-  - **No URL that should succeed ever failed**, in any round.
-  - 40 simultaneous requests at a good URL: 40/40 succeeded. At a bad URL: 0/40.
-    At a good URL *immediately after* the bad burst: 40/40. Every failure 503,
-    never 429, under 40-way concurrency.
-
-  **The qualification, which the evidence does not cover: the host is
+  **The qualification, which that evidence does not cover: the host is
   deterministic, the cache is not self-correcting.** `onError` carries no status,
   so it cannot tell "this asset does not exist" from "this request failed" — a
   dropped connection while 200 rows are painting would record that club as
@@ -1400,15 +974,6 @@ around it.
   the older kits are gone from the host — no archived path exists, which was
   checked rather than assumed. It looks like a bug precisely because the club is
   right, which is why it is written down.
-- **RESOLVED in item 8: the player object on the detail page was a snapshot.**
-  `App.tsx` stored the whole `Player` in `detailPlayer` when a row was clicked,
-  so the header card kept rendering the object captured then while its season
-  label came from the live `bootstrap`. Inert while nothing could change the
-  season; a real defect the moment a selector existed. It now stores
-  `detailCode` and re-resolves from `bootstrap.players` on every render, exactly
-  as the entry predicted. Pinned by `App.test.tsx`, which is the first test
-  `App.tsx` has had — and the mutation confirms it: reverting to a captured
-  `Player` turns two tests red.
 - **The Fixtures page labels a completed season's last round "Upcoming".**
   **Deferred, not blocked — the fix is one conditional and the information is
   already in hand.**
@@ -1487,12 +1052,6 @@ around it.
   one is wrong in exactly the window between a season starting and its data
   landing.
 
-  **A trailing paragraph claiming "Not in the game that season" was still
-  unreachable was removed in item 12.** It contradicted this entry's own opening
-  sentence and had been false since item 8. That is the failure mode the working
-  agreement's "trace a claim to the code before repeating it" exists to catch,
-  found here by reading the entry end to end rather than by testing anything.
-
   All four remain rendered and asserted by `GameweekSection.test.tsx`.
 
 - **`DCH` means two different things one click apart, and both are labelled but
@@ -1569,18 +1128,13 @@ around it.
   rule 6 violated at source. The single-round ICT holes are final-round or
   single-match scrapes that ran before FPL published.
 
-  **What the old entry said the consequence was, and what it is now.** A
-  2022-23 ever-present showed 24 starts against a real 38. It now shows the
-  no-value marker, on the career table and the header card alike, for the 661 of
-  778 players who played through the hole — and a real number for the 117 who
-  did not. The per-match rows show `—` rather than `0.00` for xG, xA, xGI and
-  xGC on rounds 1-15, switching to `0.00` at round 16, which is the source's own
-  boundary made visible.
-
-  **We still disagree with FPL by exactly as much as before, and that is
-  correct.** `sum()` skips NULLs either way, so `verify:history-past` reports the
-  same 1,524 drifts and the same 38 unexplained. What changed is that the app no
-  longer presents a fourteen-round-short figure as a season total.
+  **The consequence on screen.** A 2022-23 ever-present shows the no-value marker
+  rather than 24 starts against a real 38, on the career table and the header
+  card alike — 661 of 778 players lose the total and 117 keep a real one. The
+  per-match rows show `—` rather than `0.00` for xG, xA, xGI and xGC on rounds
+  1-15, switching to `0.00` at round 16, which is the source's own boundary made
+  visible. `verify:history-past` reports exactly the drift it did before: `sum()`
+  skips NULLs either way, so nothing it compares moved.
 
 - **A sort on 2022-23 `starts` or the expected family would rank backwards. No
   such sort exists today, which is the only reason this costs nothing.** The
@@ -1923,36 +1477,22 @@ numbers from the events themselves rather than counting them.
 
 Same rule as Phase 0: one item per session, committed between each.
 
-**The full records live in `CLAUDE-history.md`, one file up the directory.** They
-were split out in item 13, when this file reached 195k characters against a 150k
-context budget — a fifth of it went unread every session, with nothing saying
-which fifth, and the unread part included the working agreement and the data
-rules. The entries there are the original text moved verbatim, not summarised:
-several measurements exist nowhere else.
+**The full record of every item lives in `docs/items/item-NN-<slug>.md`, one
+file per item, and every item from 1 to 14 has one.** What is left below is a
+stub — three to six lines and nothing more. **A stub is not the record.** Before
+planning around anything an item decided, read its file; the working agreement's
+"trace a claim to the code before repeating it" applies doubly to a four-line
+summary of a four-page argument.
 
-What is left below is a stub per item — three or four lines and a pointer, the
-pattern items 10 and 11 already used. **A stub is not the record.** Before
-planning around anything an item decided, read its entry in `CLAUDE-history.md`;
-the working agreement's "trace a claim to the code before repeating it" applies
-doubly to a four-line summary of a four-page argument.
+Items 10 and 11 wrote no record at the time, so their files are their commit
+messages, reconstructed in item 15 and labelled as such.
 
-> **ITEM 15 STARTS BY TRIMMING THIS FILE. Do it first, before any other work.**
->
-> `CLAUDE.md` is at roughly **145k characters against a 150k context budget** —
-> about 5,400 of headroom, which is **less than item 14's own entry consumed**.
-> So the next item overflows it during the write-up, which is exactly when there
-> is least appetite to do anything about it, and the overflow is silent: a fifth
-> of the file simply stops being read with nothing saying which fifth.
->
-> Trimming last is what put it here. Item 13 split the file precisely to fix this
-> and the margin was eaten in one item, because a record written at the end of a
-> session is written when the budget is already spent.
->
-> **What moves:** prose in Current State that restates an item record, and any
-> stub that has grown past its three or four lines. **What stays:** the data
-> rules, the API identity rules, Known Issues, the schema notes and this working
-> agreement — they are what the next session has to reason *from*, and they are
-> the part that was being dropped.
+The one-file-per-item layout is item 15's. Item 13 had split every record into a
+single sibling `CLAUDE-history.md`, which halved this file's growth once without
+changing its slope; item 15 dissolved that file, moved the test-suite catalogue
+to `docs/testing.md`, and put a mechanical size check on this one
+(`npm run docs:size`) so the wall is hit by a failing test rather than by a
+session that has already spent its budget.
 
 **Commits go directly to `main`.** No branches, no `Co-Authored-By` trailer.
 This is a solo repository with no reviewer and no CI, so a pull request has
@@ -2052,9 +1592,6 @@ unnecessary once this line exists.
       computes `overflow-y` to **auto**, so every wrapper was already an
       unbounded vertical scroller in which a sticky header never sticks.
 
-      This entry was a stub before the split too — the commit message is the full
-      record. Read `git show 2ce4fd9`.
-
 - [x] **11. Averages divide by appearances, not fixtures.** → `5fad1b8`
 
       The averages row divided by every row shown while the career row six inches
@@ -2062,8 +1599,6 @@ unnecessary once this line exists.
       the normalization strategies, per-column denominators, `roundHalfEven` and
       `fmtPpg`. The numerator and denominator filters are deliberately **not**
       symmetric, which API identity rule 5 now records in full.
-
-      A stub before the split as well. Read `git show 5fad1b8`.
 
 - [x] **12. The selected season merged into the career table.** → `0becf6d`
 
@@ -2075,43 +1610,24 @@ unnecessary once this line exists.
       rather than the player's own rows. The averages footnote names its column
       group instead of printing a range spanning both denominators.
 
-- [x] **13. Selectable stat columns on the Players list.**
+- [x] **13. Selectable stat columns on the Players list.** → `5c61e16`
 
-      The list showed five fixed metric columns while the database held twenty-odd
-      season aggregates. It has a column picker now — thirteen by default,
-      twenty-three offered, persisted across sessions and season changes.
+      A column picker: thirteen by default, twenty-three offered, persisted. The
+      picker is the easy half. The load-bearing half is the **availability rule**
+      — a column is offered for a season only when every row that season carries a
+      value, so 2022-23's expected family is withheld rather than shown as a
+      whole-season total, and an unavailable column is **disabled with the reason
+      on screen** rather than hidden. New: `/api/columns`, `bootstrap.columns`,
+      `npm run verify:columns`.
 
-      The picker is the easy half. The load-bearing half is the **availability
-      rule**: a column is offered for a season only when every row that season
-      carries a value, so 2022-23's expected family, measured from round 16, is
-      withheld rather than shown as a whole-season total. An unavailable column is
-      **disabled with the reason on screen**, never hidden. New: `/api/columns`,
-      `bootstrap.columns`, `npm run verify:columns`, and `Status` left the table
-      to become a picker entry.
-
-      Full record: `CLAUDE-history.md`.
-
-- [x] **14. Games started per gameweek, and defensive contribution hits.**
+- [x] **14. Games started per gameweek, and defensive contribution hits.** → `5aca74f`
 
       A season DC total does not say whether the player clears the threshold.
-      Gabriel's 2025-26 is 277 over 30 starts — 9.2 a start against a defender's
-      10 — and he hits **11 times in 38**. Three additions: `starts` as a
-      per-gameweek column (`St`), a per-gameweek `defcon_hit` (`DCH`), and two
-      Players-list entries — the season hit count and hits per start.
-
-      **The first scoring rule the app computes for itself**, so it gets a module
-      (`server/src/repositories/defcon.ts`) and the client never compares a number
-      to a threshold: the server ships both the per-row 0/1 and the season count
-      from one definition. Goalkeepers have no threshold — FPL computes no DC for
-      them at all, measured rather than assumed.
-
-      New: `dependsOn` on a column definition, which costs the server nothing
-      because both dependencies were already in the bootstrap's five; and
-      `npm run verify:defcon`, which reports **two** results that are never
-      merged — a cross-derivation that a wrong threshold would pass, and the
-      audit's distribution frozen as literals.
-
-      Full record: `CLAUDE-history.md`.
+      Adds `starts` and a `defcon_hit` 0/1 per gameweek, and two Players-list
+      entries. **The first scoring rule the app computes for itself**, so it gets
+      a module (`server/src/repositories/defcon.ts`) and the client never compares
+      a number to a threshold. Also new: `dependsOn` on a column definition, and
+      `npm run verify:defcon`, which reports two results that are never merged.
 
 ## Deferred
 
@@ -2229,18 +1745,35 @@ every hour, and needs somewhere to put them and a policy for how often.
 ## Working Agreement
 
 - Read this file and `docs/data-profile.md` before starting any task.
-- **`CLAUDE-history.md` is the other half and is deliberately not read by
-  default.** It holds the full Phase 1 item records; this file holds a stub per
-  item. Read the relevant record before planning around what an item decided,
-  and before repeating any claim a stub makes — a stub is a four-line summary of
-  a four-page argument and is exactly the kind of thing "trace a claim to the
-  code before repeating it" exists to catch.
+- **This file is one of three, and the split is load-bearing rather than tidy.**
+  `docs/items/item-NN-<slug>.md` holds the full record of each Phase 1 item;
+  `docs/testing.md` holds the map of the test suite; this file holds what the next
+  session has to reason *from* — the data rules, the API identity rules, Known
+  Issues, Current State, the schema notes and this agreement. Neither of the other
+  two is read by default. Read the relevant item file before planning around what
+  an item decided, and before repeating any claim a stub makes.
 
-  The split exists because this file hit 195k characters against a 150k context
-  budget: a fifth was being silently dropped, and nothing indicated which fifth.
-  **Keep it that way.** New item records go in `CLAUDE-history.md` with a stub
-  here; rules, invariants, Known Issues, Current State and schema notes stay
-  here, because they are what the next session has to reason from.
+  The rules that keep it that way, each of which exists because the file hit a
+  context budget twice:
+
+  - **A new item's record goes in `docs/items/item-NN-<slug>.md`. This file gets
+    the stub only, three to six lines. A stub is not the record.**
+  - **A superseded invariant is rewritten IN PLACE, never corrected in a line
+    underneath.** The item file keeps the history, so the invariant does not have
+    to carry it. Two paragraphs saying "it used to be X, now it is Y" is how a
+    rule section turns into a changelog nobody can read a rule out of.
+  - **A resolved Known Issue moves to the item file that resolved it.** It does
+    not stay with a RESOLVED tag. Known Issues is the section that grows every
+    item, and an entry describing something that no longer happens is the first
+    thing that should leave it.
+  - **Test suite documentation lives in `docs/testing.md`, not here.** What each
+    file pins is a map of the suite; only the conventions it is written to are
+    rules.
+  - **`npm run docs:size` runs in the test suite and fails above 120,000
+    characters for this file. Do not raise the threshold to make it pass** — the
+    threshold is below the 150k read limit precisely so one item's record can land
+    before the budget bites, and raising it spends the margin that exists to stop
+    an overflow being silent.
 - One item per session, from Deferred, chosen deliberately. Commit between them.
 - Plan before writing code for anything that ingests or aggregates. That is
   where an agent will confidently produce something that silently drops rows.
@@ -2292,20 +1825,18 @@ every hour, and needs somewhere to put them and a policy for how often.
 
   The preconnect A/B pre-committed to comparing the between-arm difference
   against the **within-arm range**, and a range is fixed by the single worst
-  sample and grows with N. One unexplained 1321 ms outlier set it at 962 ms, so
-  **no effect under about half a second could have resolved** and the null was
-  returned by the rule rather than by the data.
+  sample and grows with N. One outlier set the bar so high that no plausible
+  effect could have resolved, and the null was returned by the rule rather than by
+  the data. The samples are in `docs/items/item-09-club-jerseys.md`.
 
   An alternating A/B/A/B design carries its power in the **paired differences** —
   that is the entire reason for pairing — and testing the raw arms throws the
   pairing away. Pre-committing to the wrong statistic is not a safeguard; it
   just fixes the wrong answer in advance.
 - **Never use `git checkout --` to revert a mutation in a working tree full of
-  uncommitted work.** Item 14 reverted one mutated file with
-  `git checkout -- server` and discarded every uncommitted item-14 edit to
-  tracked server files with it; only the three new files survived, because they
-  were untracked. **Copy the target file first and restore from the copy**, which
-  is what the remaining ten mutations did.
+  uncommitted work.** Item 14 reverted one mutated file that way and discarded
+  every uncommitted edit to tracked server files with it; only the untracked new
+  files survived. **Copy the target file first and restore from the copy.**
 
   Same class as the `pkill -f` entry below: a blunt instrument whose blast radius
   is larger than the thing it is aimed at, and whose damage is silent — a
@@ -2338,18 +1869,19 @@ every hour, and needs somewhere to put them and a policy for how often.
   then `disown`) so they survive an unrelated kill, and match on something
   narrower than a substring that also appears in the kill command — a port, a
   full script path, or a recorded PID.
-- **Check this file's size at the START of an item, not at the end.** The budget
-  is 150k characters; item 14 ended at ~145k, and the trim it needed could only
-  be scheduled for item 15 because by the time the record was written the room
-  was already gone. A file that has to be trimmed is trimmed while there is still
-  appetite to do it properly — see the boxed note at the top of Phase 1.
+- **Check this file's size at the START of an item, not at the end** — and
+  `npm run docs:size` is what does the checking, so a red test says it rather than
+  a habit. The failure mode it replaces: item 14 ended at ~145k against a 150k
+  read limit, and the trim it needed could only be scheduled for item 15, because
+  by the time a record is written the room is already gone. A file that has to be
+  trimmed is trimmed while there is still appetite to do it properly.
 
 - End each session by updating the Current State section above so the next
   session starts from truth rather than a stale description, and by writing the
-  item's record — **in `CLAUDE-history.md`**, with a stub here. Items 10 and 11
-  skipped their record entirely and the client test count drifted from 82 to 134
-  unnoticed across two items, because there was nowhere the number was being
-  restated. The record is where a measurement survives; the stub is only a
+  item's record — **in `docs/items/item-NN-<slug>.md`**, with a stub here. Items
+  10 and 11 skipped their record entirely and the client test count drifted from
+  82 to 134 unnoticed across two items, because there was nowhere the number was
+  being restated. The record is where a measurement survives; the stub is only a
   pointer to it.
 
 ## Agent skills
