@@ -592,21 +592,22 @@ is silently wrong.
     manually in `server/src/ingest/seed-teams.ts`. Strength ratings do not exist
     for those seasons and stay NULL.
 16. **`ea_index` is excluded.** It appears in `merged_gw.csv` for 2016-17 through
-    2018-19 and is 0 in all 67,936 rows across those three seasons. Storing 0
-    would assert a measurement nobody took; storing NULL would leave it empty in
-    every row it exists in. It carries no signal either way, so it gets no column.
-    Note that `docs/data-profile.md` lists it as present in three seasons with no
-    indication that it is empty, because the profiler reports column presence, not
-    column content.
+    2018-19 and is **0 in every row of all three**. Storing 0 would assert a
+    measurement nobody took; storing NULL would leave it empty in every row it
+    exists in. It carries no signal either way, so it gets no column. Note that
+    `docs/data-profile.md` lists it as present in those seasons with no indication
+    that it is empty, because the profiler reports column presence, not column
+    content. Counts: `docs/items/phase-0.md`.
 17. **`player_seasons.team_id` is the club at the END of that season, not for the
     whole season.** `players_raw.csv` is an end-of-season bootstrap snapshot, so a
     player who transferred in January is recorded under his new club for the entire
     season row. Never use it to answer "which club was this player at in gameweek
     N". That comes from the fixture: `was_home` picks `home_team_id` or
-    `away_team_id` on the `player_gameweeks` row's fixture. Verified empirically:
-    for the 96 players who turned out for two clubs in one season across 2020-21,
-    2022-23, 2024-25 and 2025-26, the snapshot's `team_code` matches the club of
-    their chronologically last appearance in 96 of 96 cases.
+    `away_team_id` on the `player_gameweeks` row's fixture. **Verified
+    empirically against the fixtures rather than assumed**: over every player who
+    turned out for two clubs in one season, the snapshot matches the club of his
+    chronologically last appearance in every case. Result:
+    `docs/items/phase-0.md`.
 18. **The literal string `'None'` is a null, and only `'None'`.** The upstream
     scraper serialises Python `None` as the four-character string `None`. It occurs
     in eleven columns of `players_raw.csv`, of which only `birth_date` is ingested
@@ -1439,8 +1440,8 @@ from the vaastav files. Note that `history_past` reports `starts: 0` before
 row counts**, and so can catch loss those counts cannot: every season must have
 exactly 380 distinct `fixture_id`s, and `SUM(minutes)` must land within 1% below
 380 × 2 × 11 × 90 = 752,400. The minutes figure is reported, never pinned to a
-number — red cards and stoppage time make it approximate. Observed range is 0.13%
-to 0.52% below.
+number — red cards and stoppage time make it approximate, and the observed spread
+sits comfortably inside the bound. Observed range: `docs/items/phase-0.md`.
 
 ### Rounds are not 1..n
 
@@ -1491,27 +1492,26 @@ unnecessary once this line exists.
       `GET /api/player/:code/career`, one row per season, each expanding into
       that season's gameweeks by re-using `GET /api/player/:code?season=X` and
       the same `StatsTable`. Rewrote API identity rule 7 rather than satisfying
-      it: a response spanning seasons labels every row, not the body. Empty
-      states went from one to four. Found the StrictMode double-fetch — a fetch
-      fired inside a `setExpanded` updater.
+      it: a response spanning seasons labels every row, not the body. Found the
+      StrictMode double-fetch — a fetch fired inside a `setExpanded` updater.
 
 - [x] **2. Client-side testing.** → `a4cefed`
 
       Vitest in jsdom, React Testing Library, the API mocked at
       `services/api.ts`. Two runners rather than one, with root `test` as
       `run-s --continue-on-error` so a red server suite cannot hide the client
-      result. The mutation check found the double-fetch test goes red only when
-      **both** halves are reverted, which is why the record insists "either half
-      alone is green" must not be read as "either half alone is fine".
+      result. The mutation check found a test that goes red only when **both**
+      halves of a fix are reverted — so "either half alone is green" must never be
+      read as "either half alone is fine".
 
 - [x] **3. Keyboard reach and click-through.** → `6c01bb6`
 
       Career rows were `<tr onClick>` that no keyboard could reach, and the
       Dashboard's three rankings had no click handler at all. Four `<tr>`/`<th>`
       handlers became real `<button>`s, plus one focus bug. The browser pass
-      caught a regression no class-level test could: the header row collapsed
-      from 40px to 21px on every sortable table, with every asserted class
-      present — jsdom does not lay out.
+      caught a regression no class-level test could — every sortable table's
+      header row collapsed with every asserted class present, because jsdom does
+      not lay out.
 
 - [x] **4. The 2026-27 season, from the live API.** → `5a611de`
 
@@ -1527,27 +1527,29 @@ unnecessary once this line exists.
       `ingest:live-gameweeks`, **written and verified, never run** — no 2026-27
       match has been played. The verification the task asked for was impossible,
       the API serving no previous season at gameweek granularity, so it is two
-      results deliberately never merged into one: a 29,747-row replay of
-      2025-26's CSV through the new mapper, and a 60-player `history_past`
-      cross-check. Also found the 2024-25 `defensive_contribution` gap.
+      results **deliberately never merged into one**: a replay of 2025-26's CSV
+      through the new mapper, which is strong about the new code and silent about
+      the source, and a `history_past` cross-check, which is the other half. Also
+      found the 2024-25 `defensive_contribution` gap.
 
 - [x] **6. The `history_past` cross-check, run wide.** → `59b1860`
 
-      `verify:history-past` over every reachable player-season in all ten
-      seasons: 1,915 player-seasons, 27 columns, **51,705 cells**. 1,524 drifts,
-      1,486 attributable to 178 fixtures where a column is 0 on every row of a
-      played match, **38 unexplained**. Drift direction — 1,516 low against 8
-      high — is the measurement that pointed at the cause, since revision goes
-      both ways and loss only goes down.
+      `verify:history-past` diffs every player-season we hold against FPL's own
+      totals, over all ten seasons and every column. Nearly all of the drift is
+      attributable to **fixtures where a column reads 0 on every row of a match
+      that was played**, which is what item 7 then fixed; a small residue is
+      genuinely unexplained and is recorded as such. **Drift direction is what
+      pointed at the cause** — ours is lower almost everywhere, and revision goes
+      both ways while loss only goes down.
 
 - [x] **7. Store NULL where the source holed a column.** → `cdb5407`
 
       The hole rule, `server/src/ingest/holes.ts`, applied by both gameweek
-      writers: **152 fixtures, 9,704 rows, all in 2022-23**. `measuredSum` stops
-      the season aggregate reporting a partly measured column as a whole-season
-      total. The ICT quartet was excluded on proportion — its holes drift
-      2.9-6.8% against FPL where the expected family drifts 36.1-38.6%, and
-      blanking would cost every player in two seasons their ICT total.
+      writers, and `measuredSum`, which stops a season aggregate reporting a
+      partly measured column as a whole-season total. **The ICT quartet was
+      excluded on proportion**: its holes are an order of magnitude smaller than
+      the expected family's, and blanking them would cost every player in two
+      seasons their ICT total to flag a few percent.
 
 - [x] **8. A season selector.** → `b34876b`
 
@@ -1561,10 +1563,10 @@ unnecessary once this line exists.
 
       `PlayerShirt` on every player row, falling back shirt → club badge → grey.
       The audit ran first and reshaped the item: a shirt exists for **exactly**
-      the twenty clubs in the current season and no others, so the planned grey
-      fallback would have blanked half of 2016-17. The header photograph dropped
-      to a third of its weight. Holds the preconnect A/B and the post-mortem on
-      its stopping rule, which returned a null by construction.
+      the current season's twenty clubs and no others, so the planned grey
+      fallback would have blanked half of 2016-17. The header photograph got much
+      lighter. Holds the preconnect A/B and the post-mortem on its stopping rule,
+      which returned a null by construction.
 
 - [x] **10. Sticky headers, pinned columns, row striping.** → `2ce4fd9`
 
@@ -1573,8 +1575,8 @@ unnecessary once this line exists.
       Opp beside GW, pins the Player column, stripes all four tables, and moves
       row background colour from the cell to the row (`lib/rowSurface.ts`). The
       load-bearing discovery: `overflow-x: auto` with `overflow-y: visible`
-      computes `overflow-y` to **auto**, so every wrapper was already an
-      unbounded vertical scroller in which a sticky header never sticks.
+      computes `overflow-y` to **auto**, so every wrapper was already a vertical
+      scroller in which a sticky header never sticks.
 
 - [x] **11. Averages divide by appearances, not fixtures.** → `5fad1b8`
 
@@ -1596,13 +1598,12 @@ unnecessary once this line exists.
 
 - [x] **13. Selectable stat columns on the Players list.** → `5c61e16`
 
-      A column picker: thirteen by default, twenty-three offered, persisted. The
-      picker is the easy half. The load-bearing half is the **availability rule**
-      — a column is offered for a season only when every row that season carries a
-      value, so 2022-23's expected family is withheld rather than shown as a
-      whole-season total, and an unavailable column is **disabled with the reason
-      on screen** rather than hidden. New: `/api/columns`, `bootstrap.columns`,
-      `npm run verify:columns`.
+      A persisted column picker on the Players list. The picker is the easy half.
+      The load-bearing half is the **availability rule** — a column is offered for
+      a season only when every row that season carries a value, so 2022-23's
+      expected family is withheld rather than shown as a whole-season total, and
+      an unavailable column is **disabled with the reason on screen** rather than
+      hidden. New: `/api/columns`, `bootstrap.columns`, `npm run verify:columns`.
 
 - [x] **14. Games started per gameweek, and defensive contribution hits.** → `5aca74f`
 
@@ -1617,11 +1618,12 @@ unnecessary once this line exists.
 
       `CLAUDE.md` hit its read limit for the second time, item 13's split having
       been consumed by one item. One file per item under `docs/items/`, the test
-      catalogue to `docs/testing.md`, Deferred to `docs/roadmap.md`: **147k → 111k**.
-      The content test — "would a reader need this to avoid writing wrong code
-      tomorrow?" — moved out what a pure record-dissolution would have left,
-      three quarters of it from sections nominated to stay. Also
-      resolved five flagged invariants and made the budget a failing test.
+      catalogue to `docs/testing.md`, Deferred to `docs/roadmap.md`. **The content
+      test** — "would a reader need this to avoid writing wrong code tomorrow?" —
+      moved out most of what a pure record-dissolution would have left, and most
+      of that came from sections nominated to stay, because the mixing is *within*
+      sections. Also resolved five flagged invariants and made the budget a
+      failing test.
 
 ## Deferred
 
@@ -1691,6 +1693,14 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
 
   - **A new item's record goes in `docs/items/item-NN-<slug>.md`. This file gets
     the stub only, three to six lines. A stub is not the record.**
+
+    **A stub exists so a reader can decide whether to open the item file**, and
+    that decides what goes in it: **what the item decided and why it matters, not
+    what it measured.** A count does not help anyone choose whether to read
+    further, and it is in the item file already. Write the decision, the trap it
+    avoided, or the rule it changed — the things a reader would regret not
+    knowing. Settled once, in the item-15 preamble, so it is not re-argued per
+    item.
   - **A superseded invariant is rewritten IN PLACE, never corrected in a line
     underneath.** The item file keeps the history, so the invariant does not have
     to carry it. Two paragraphs saying "it used to be X, now it is Y" is how a

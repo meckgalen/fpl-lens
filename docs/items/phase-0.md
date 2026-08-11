@@ -58,3 +58,47 @@ layer was built and what each step decided.
       has one call site and the id round-tripped from bootstrap correctly. That
       is now pinned by `server/src/repositories/api-identity.test.ts` rather
       than asserted in prose.
+
+
+---
+
+## Verification results moved here in the item-15 preamble
+
+Three measurements that `CLAUDE.md` carried inline. They are results rather than
+rules — nothing compares against them, and none would change any code if the next
+ingest moved them — so under the numbers rule they belong here, with the claim and
+a pointer left in place. Each is the evidence for a rule that is still stated in
+`CLAUDE.md`.
+
+### `ea_index` is empty, not just present (Data Layer rule 16)
+
+It appears in `merged_gw.csv` for 2016-17 through 2018-19 and is **0 in all
+67,936 rows across those three seasons**. That is why it gets no column at all:
+storing 0 would assert a measurement nobody took, and storing NULL would leave it
+empty in every row it exists in.
+
+`docs/data-profile.md` lists it as present in three seasons with no indication
+that it is empty, because the profiler reports column presence, not column
+content. This is the case that establishes that caveat.
+
+### The end-of-season snapshot, verified (Data Layer rule 17)
+
+`players_raw.csv` records a January transfer under the player's **new** club for
+the whole season row. Checked against the fixtures rather than assumed: for the
+**96 players who turned out for two clubs in one season** across 2020-21, 2022-23,
+2024-25 and 2025-26, the snapshot's `team_code` matches the club of their
+chronologically last appearance in **96 of 96 cases**.
+
+So the snapshot is reliably the *end* state and reliably useless for "which club
+was this player at in gameweek N", which is the rule.
+
+### The minutes volume check, observed (acceptance test)
+
+`SUM(minutes)` must land within 1% below 380 × 2 × 11 × 90 = 752,400 per season.
+The figure is reported and never pinned to a number, because red cards and
+stoppage time make it approximate. **Observed range across the ten CSV seasons:
+0.13% to 0.52% below.**
+
+That band is what makes the 1% bound meaningful rather than arbitrary — the
+observed spread sits comfortably inside it, so the check has room to catch real
+loss without firing on ordinary variation.
