@@ -61,10 +61,11 @@ the eleventh season announces itself.
 **Item 6 checked those rows against a second source and found holes; item 7
 stored NULL for five columns of them and deliberately left four.** The rule is
 Data Layer rule 6 applied per **fixture** as well as per season, and it lives in
-`server/src/ingest/holes.ts`, which both gameweek writers call. Which fixtures
-are holed, and which four columns still store `0`, is the table in Known Issues.
-The measurements are in `docs/items/item-06-history-past-cross-check.md` and
-`docs/items/item-07-null-for-holed-columns.md`.
+`server/src/ingest/holes.ts`, which both gameweek writers call. The four columns
+that still store `0` are the ICT quartet, and the entry in Known Issues names the
+rounds; the full table of what was found, including the five columns now stored
+NULL, is in `docs/items/item-07-null-for-holed-columns.md`, with the
+measurements there and in `docs/items/item-06-history-past-cross-check.md`.
 
 **The app has a season selector, and the selected season is `bootstrap.season`**
 — the one the server actually served — rather than a second piece of state that
@@ -147,15 +148,32 @@ saying so; the left join yields a NULL position, falls through the `ELSE`-less
 `CASE` to NULL, and renders the no-value marker. Pinned by a test that inserts
 an orphan and goes red under an inner join.
 
-**Five of the six routes read Postgres, and the sixth reads nothing.**
+**Six of the seven routes read Postgres, and the seventh reads nothing.**
 `GET /api/bootstrap`, `GET /api/columns`, `GET /api/player/:code`,
-`GET /api/player/:code/career` and `GET /api/fixtures` go through
-`server/src/repositories/`, and no SQL exists outside that directory.
+`GET /api/player/:code/career`, `GET /api/fixtures` and `GET /api/comparison` go
+through `server/src/repositories/`, and no SQL exists outside that directory.
 `GET /api/comparison-thresholds` serves item 16's frozen constants from
 `server/src/comparison/thresholds.ts` and touches no database at all — it is on
 the server so that re-deriving a threshold is a server-only change, and so that
 `verify:thresholds` can import the constants without a third cross-package
 import.
+
+**`GET /api/comparison` writes no SQL of its own, which is the point of it.**
+All eleven chart axes are already `PLAYER_COLUMNS` keys, so
+`server/src/comparison/cohort.ts` calls `listPlayerTotals` — the Players list's
+own query, with `measuredSum` and item 14's count guard already applied — and
+reads fields off its rows. Two axes are the exception and cost a **second
+implementation**: `Pts/£` and `DCH/St` are quotients whose only other home is
+`client/src/lib/playerColumns.ts`, and the band forces the duplication, because a
+median across 109 players cannot be taken on a client that sees two. The drift is
+held by a test that ties the chart's `Pts/£` to the Pts and Price columns
+rendered beside it, not by a note.
+
+**The band is the selected season's cohort and never a pooled one**, and the
+ceilings are pooled and never per-season. Those are two different objects: a
+scale has to be stable across seasons or nothing is comparable, and a band has to
+describe the population on screen or it is describing a different game. Defensive
+contribution points are what forced the split — see the stub for item 16.
 `server/src/services/fplApi.ts` and its 5-minute cache are still there and still
 unused by the routes — it is the ingestion source for the live season, not dead
 code.
@@ -355,9 +373,11 @@ fpl-lens/
 │   │   │   ├── live-season.test.ts    # offline, in a rolled-back transaction
 │   │   │   ├── ingest-live-gameweeks.ts  # match rows: ingest:live-gameweeks
 │   │   │   └── live-gameweeks.test.ts # the 2025-26 replay + the gate
-│   │   ├── comparison/        # the frozen chart thresholds; NO SQL, no DB
+│   │   ├── comparison/        # the chart's constants and data; NO SQL at all
 │   │   │   ├── thresholds.ts  # 35 floors/ceilings + the re-derivation rule
-│   │   │   └── thresholds.test.ts # shape only: values are verify:thresholds'
+│   │   │   ├── thresholds.test.ts # shape only: values are verify:thresholds'
+│   │   │   ├── cohort.ts      # axis values + the per-season median band
+│   │   │   └── cohort.test.ts # the band anchors, the floor, the convention
 │   │   ├── repositories/      # DB query layer — the ONLY place SQL may live
 │   │   │   ├── defcon.ts      # the DC threshold: the one place the rule lives
 │   │   │   └── defcon.test.ts # boundaries, GK, clause order, the orphan row
@@ -366,7 +386,7 @@ fpl-lens/
 │   │   │                      # suites sharing one deadlocked on 40P01
 │   │   ├── routes/fpl.ts      # /api/bootstrap, /api/columns, /api/fixtures,
 │   │   │                      # /api/player/:code[/career],
-│   │   │                      # /api/comparison-thresholds
+│   │   │                      # /api/comparison-thresholds, /api/comparison
 │   │   ├── services/fplApi.ts # live FPL API client, cache; ingest source only
 │   │   ├── verify/            # read-only cross-checks against other pipelines
 │   │   │   ├── history-past-check.ts  # npm run verify:history-past
@@ -752,15 +772,11 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
      could not say which. It is the same rule — the label rides on the datum —
      with the label being a set because the provenance is.
 
-   **A season-scoped fact that is not a stat belongs on the row too, and item 12
-   is the first case.** Career rows carry `rounds: number[]` — every round that
-   season played, derived from `fixtures`. It is a property of the season rather
-   than of the player, so the obvious alternative was a
-   `Record<season, number[]>` map beside the rows. That is the manifest shape
-   this rule refused for `season` itself, for the same reason: a map and the
-   rows it describes are two statements of one fact that can disagree. On the
-   row, the season naming itself and the rounds it played arrive together and
-   cannot come apart.
+   **A season-scoped fact that is not a stat belongs on the row too**, and
+   `rounds: number[]` on each career row is the first case. A
+   `Record<season, number[]>` map beside the rows is the manifest shape this rule
+   refuses, for the reason it always refuses one. Argument in full:
+   `docs/items/item-12-career-table-merge.md`.
 
    A top-level `season: null` on a career response was considered and rejected.
    Null already means "not measured" everywhere in this codebase (rule 6), and a
@@ -769,15 +785,12 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
    than data. A `seasons: string[]` manifest was rejected for duplicating what
    the rows already carry, and so being able to disagree with them.
 
-   **Item 8 then put a `seasons: string[]` on the bootstrap response, and that
-   is not a reversal of the sentence above.** What was refused on `/career` was
-   a manifest _beside rows that each already name a season_ — eleven copies of
-   the same facts, free to drift apart. A bootstrap response is one season
-   throughout: nothing in it answers "which others exist", so there is nothing
-   for the field to duplicate and nothing for it to contradict. The two
-   decisions turn on the same property, which is why they land differently.
+   **Item 8's `seasons: string[]` on the bootstrap is not a reversal of that**,
+   because a bootstrap response is one season throughout and so has nothing for
+   the field to duplicate. Argument in full:
+   `docs/items/item-08-season-selector.md`.
 
-   It is on the bootstrap **only**. `PlayerDetailResponse` and `FixturesResponse`
+   That field is on the bootstrap **only**. `PlayerDetailResponse` and `FixturesResponse`
    do not carry it, deliberately: only the selector needs the list, the selector
    lives in the shell, and the shell is driven by bootstrap. Three copies of one
    constant is three things that can drift, which is the objection that killed
@@ -1077,45 +1090,6 @@ around it.
   and is what `StatsTable` uses). Nothing needs the wider key yet — the career
   table renders one `StatsTable` per expanded season, so keys never have to be
   unique across seasons.
-- **All four empty states are reachable from the UI**, down from two unreachable
-  at item 1 and one at item 4. Item 8's selector reached the last of them; item
-  12 moved three of them and had to relocate the fourth entirely. Where each one
-  lives now, since the merge changed the answer:
-
-  | State | Where it renders |
-  | --- | --- |
-  | Not in the game | **Page level**, above the career table |
-  | Registered, no rows | Inside that season's expanded row |
-  | Never played | Inside that season's expanded row |
-  | Filtered out | Inside any expanded row — every season has filters now |
-
-  **"Not in the game" could not stay in the table, and that is a structural fact
-  rather than a layout choice.** It fires exactly when the player has no
-  `player_seasons` row for the selected season — which is exactly when
-  `getPlayerCareer` returns no row for it, so the merged table has nothing to
-  attach the sentence to. The wording still lives in `GameweekSection.tsx`, as
-  the exported `NotInGame` both callers use. Confirmed in the browser on Haaland
-  at 2016-17: the sentence, a name-and-photo header, no season-scoped tiles, the
-  career table intact, and **no row marked "Selected"** — correct, because the
-  selected season has no row to mark.
-
-  "Registered, no rows yet" became real the day 2026-27 was ingested and is what
-  every 2026-27 player's row shows when expanded — confirmed in the browser.
-
-  **The state is a fact about the data, not about the date**: a
-  `player_seasons` row exists and no `player_gameweeks` row does. Playing the
-  matches does not end it; **ingesting** them does. So it stays reachable past
-  21 Aug 2026 and until the incremental gameweek sync writes 2026-27's first
-  match rows — a later item with no date on it. If that gap runs a month, this
-  is what the page shows for a month into a season that has started.
-
-  Which is the correction the Dashboard's "No matches recorded" wording already
-  got, made here for the same reason: a calendar claim standing in for a data
-  one is wrong in exactly the window between a season starting and its data
-  landing.
-
-  All four remain rendered and asserted by `GameweekSection.test.tsx`.
-
 - **`DCH` means two different things one click apart, and both are labelled but
   neither label mentions the other.** In the gameweek table the AVG row divides
   by **appearances** — item 11's convention, stated by the footnote beneath it —
@@ -1168,33 +1142,6 @@ around it.
   artefact, and it will matter to anything that ranks on defensive contribution
   across seasons. It is the only gap of its kind: no column outside the
   defensive quartet has a single cell where we hold NULL and FPL holds a number.
-
-- **RESOLVED for five columns in item 7; the ICT quartet is the entry below.**
-  Whole rounds were missing from four columns of 2022-23 and from the ICT family
-  in three seasons, stored as `0` rather than NULL. Measured in item 6, fixed in
-  item 7 for `starts` and the expected family. Kept here as the record of what
-  was found and where each half went.
-
-  | Season  | Rounds     | Columns holed                                                                                           | Fixtures | Now      |
-  | ------- | ---------- | ------------------------------------------------------------------------------------------------------- | -------- | -------- |
-  | 2022-23 | 1-6, 8-15  | `starts`, `expected_goals`, `expected_assists`, `expected_goal_involvements`, `expected_goals_conceded` | 136      | **NULL** |
-  | 2022-23 | 29         | `expected_goal_involvements` alone                                                                      | 16       | **NULL** |
-  | 2022-23 | 16, 33, 38 | influence, creativity, threat, `ict_index`                                                              | 15       | still 0  |
-  | 2021-22 | 38         | influence, creativity, threat, `ict_index`                                                              | 10       | still 0  |
-  | 2019-20 | 21         | influence, creativity, threat, `ict_index`                                                              | 1        | still 0  |
-
-  The 2022-23 block is the upstream scraper starting to collect those five
-  columns at round 16 and writing `0` for the fourteen rounds before, which is
-  rule 6 violated at source. The single-round ICT holes are final-round or
-  single-match scrapes that ran before FPL published.
-
-  **The consequence on screen.** A 2022-23 ever-present shows the no-value marker
-  rather than 24 starts against a real 38, on the career table and the header
-  card alike, and it degrades per player rather than per season. The per-match
-  rows show `—` rather than `0.00` for xG, xA, xGI and xGC on rounds
-  1-15, switching to `0.00` at round 16, which is the source's own boundary made
-  visible. `verify:history-past` reports exactly the drift it did before: `sum()`
-  skips NULLs either way, so nothing it compares moved.
 
 - **A sort on 2022-23 `starts` or the expected family would rank backwards, and
   the column picker is what stops it happening.** The players who lose their total
@@ -1669,6 +1616,13 @@ unnecessary once this line exists.
       at 2025-26, so a pooled band would render the typical modern defender
       permanently above it. Also killed a rule of its own: the clipping trigger
       fired on 18 of 36 axes as arithmetic rather than as data.
+
+      Step 3 added `GET /api/comparison` — the values drawn against those scales,
+      and **the band computed per season for the reason above**. It writes no SQL:
+      every axis is a `PLAYER_COLUMNS` key, so it reads `listPlayerTotals`'s rows.
+      The median is `percentile_disc` — an actual member value — and the test that
+      pins it uses an **even** cohort, because every odd one agrees under both
+      conventions and would pass either.
 
 ## Deferred
 

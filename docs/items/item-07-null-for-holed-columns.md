@@ -161,3 +161,39 @@ so it can be compared against FPL, and adopting `measuredSum` there would blank
 our side of every holed player-season and make the drift vanish without a
 stored value having changed. What item 7 buys is that the app no longer _shows_
 a part-season figure as a whole-season one.
+
+---
+
+## The holes as found, moved here from Known Issues in item 16
+
+**Moved verbatim from `CLAUDE.md`, applying the working agreement's "a resolved
+Known Issue moves to the item file that resolved it" retroactively.** The entry
+described itself as "the record of what was found and where each half went",
+which is item-file content. Its still-live half — the ICT quartet that item 7
+deliberately left storing `0` — remains a Known Issue in `CLAUDE.md` and states
+the same rounds in prose.
+
+Whole rounds were missing from four columns of 2022-23 and from the ICT family
+in three seasons, stored as `0` rather than NULL. Measured in item 6, fixed in
+item 7 for `starts` and the expected family.
+
+| Season  | Rounds     | Columns holed                                                                                           | Fixtures | Now      |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------- | -------- | -------- |
+| 2022-23 | 1-6, 8-15  | `starts`, `expected_goals`, `expected_assists`, `expected_goal_involvements`, `expected_goals_conceded` | 136      | **NULL** |
+| 2022-23 | 29         | `expected_goal_involvements` alone                                                                      | 16       | **NULL** |
+| 2022-23 | 16, 33, 38 | influence, creativity, threat, `ict_index`                                                              | 15       | still 0  |
+| 2021-22 | 38         | influence, creativity, threat, `ict_index`                                                              | 10       | still 0  |
+| 2019-20 | 21         | influence, creativity, threat, `ict_index`                                                              | 1        | still 0  |
+
+The 2022-23 block is the upstream scraper starting to collect those five
+columns at round 16 and writing `0` for the fourteen rounds before, which is
+rule 6 violated at source. The single-round ICT holes are final-round or
+single-match scrapes that ran before FPL published.
+
+**The consequence on screen.** A 2022-23 ever-present shows the no-value marker
+rather than 24 starts against a real 38, on the career table and the header
+card alike, and it degrades per player rather than per season. The per-match
+rows show `—` rather than `0.00` for xG, xA, xGI and xGC on rounds
+1-15, switching to `0.00` at round 16, which is the source's own boundary made
+visible. `verify:history-past` reports exactly the drift it did before: `sum()`
+skips NULLs either way, so nothing it compares moved.

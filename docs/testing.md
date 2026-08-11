@@ -17,15 +17,39 @@ restated as rules here. What follows is the catalogue.
 
 ## The counts
 
-`npm test` runs **two suites on two runners**: **123 server tests** and **187
+`npm test` runs **two suites on two runners**: **142 server tests** and **187
 client tests**, all passing. They are counted separately on purpose — two
 runners print two summaries, and a combined figure would be maintained by hand
 against neither of them.
 
 ---
 
-**Server — `node --import tsx --test`, against the populated database.** Nine
+**Server — `node --import tsx --test`, against the populated database.** Ten
 files, one of which touches no database — see `comparison/thresholds.test.ts`:
+
+- `server/src/comparison/cohort.test.ts` — the comparison endpoint's data: the
+  axis set, the band, the two quotients and the cohort floor. **Three kinds of
+  test, and the split is the interesting part.**
+
+  *Value anchors* reproduce the nine 2025-26 defender medians measured by hand in
+  item 16 step 1, before this code existed. *The convention* is pinned separately
+  on GK 2025-26, and has to be: that cohort is **even** (n=22), where
+  `percentile_cont` gives 111 and the implemented `percentile_disc` gives 109 —
+  the nine anchors are n=109, odd, where both conventions agree, so they pass
+  under either and cannot test it. Confirmed by mutation: swapping in
+  interpolation turns the GK test red and leaves all nine anchors green.
+
+  *The floor* needs synthetic rows, because no real (season, position) has a
+  cohort between 1 and 9 — the smallest is 20 goalkeepers — so nine defenders and
+  ten, in a rolled-back transaction, is the only way to put a value on the
+  boundary. Its synthetic season is `'2097-98'`, registered in
+  `test/synthetic-seasons.ts`.
+
+  Also here: the drift guard for the two quotients whose only other
+  implementation is on the client, asserting the chart's `Pts/£` equals the Pts
+  and Price columns rendered beside it for every one of 2025-26's defenders; and
+  both null guards, because `null / 5` is `0` in JavaScript and an unguarded copy
+  renders a confident `0.00` for a player nobody measured.
 
 - `server/src/comparison/thresholds.test.ts` — the comparison chart's frozen
   axis thresholds, **shape only, and the split from the values is the point**.

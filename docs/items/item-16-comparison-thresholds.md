@@ -1,7 +1,8 @@
 # Item 16 — The comparison chart's frozen thresholds
 
-Phase 1 item record. Two sessions: **step 1** derived and audited the numbers,
-**step 2** froze them, put them on the wire and built the check.
+Phase 1 item record. Three sessions: **step 1** derived and audited the numbers,
+**step 2** froze them, put them on the wire and built the check, **step 3**
+trimmed `CLAUDE.md` and added the endpoint that serves the values.
 
 No chart exists yet. This item deliberately produced no client work at all — the
 thresholds are the thing every other decision on the comparison page depends on,
@@ -579,3 +580,124 @@ merely written down.
 
 No chart, no comparison route, no client rendering, and no client code at all.
 The thresholds are served and checked; nothing consumes them yet.
+
+---
+
+# Step 3 — the trim, and `GET /api/comparison`
+
+## The trim, and what it revealed
+
+`CLAUDE.md` was at 116,864 with 3,136 spare — under one item's worth of edits.
+The Working Agreement's "a resolved Known Issue moves to the item file that
+resolved it" had landed in item 15 and only ever been applied forward, so it was
+applied **retroactively**, with one restriction that kept the task finite: only
+entries that say of themselves that they were resolved move. Verifying whether
+the other twenty are still true is an audit with no finish line.
+
+That yielded exactly two entries — the item 7 `RESOLVED` table (2,257) and "all
+four empty states are reachable" (2,182) — plus two history passages out of API
+identity rule 7 (net 580 after the compressed rule statements were written back).
+**116,864 → 111,948**, and Known Issues 25,378 → 20,939.
+
+**The finding is worth more than the number.** Step 2 added 4,077 characters
+with its entire record already going to `docs/items/` — a stub, one Working
+Agreement rule, one rule-7 clause, a verify blurb, five tree lines. So **the
+sections that stay absorb roughly 4k an item regardless of where records go**,
+two items of headroom is about 8k, and moving records out has stopped being the
+lever. The next one is either a section shape change or a rule bounding what a
+stub and its attendant edits may add.
+
+Deliberately not taken: `What's Built` (4,786) — deleting a section outright is a
+shape change deserving its own decision, not a way to hit a number.
+
+## The endpoint
+
+`GET /api/comparison?season=&position=&players=` returns the axis set, the
+cohort band, and raw axis values per requested player. Values are never scaled:
+the client scales against `/api/comparison-thresholds`, so the frozen ceilings
+are applied in exactly one place.
+
+**It writes no SQL.** All eleven axes are already `PLAYER_COLUMNS` keys, so
+`server/src/comparison/cohort.ts` calls `listPlayerTotals` — the Players list's
+own query, with `measuredSum` and item 14's count guard already applied — and
+reads fields off the rows. `seasonAvailability` is handed those same rows, so the
+availability answer costs nothing on ten of eleven seasons.
+
+**An unavailable axis is absent, not null.** 2016-17 returns eight spokes rather
+than ten with two nulls, so the client drops the spoke and re-spaces rather than
+interpreting a null. `full` and nothing less: a `partial` column is 2022-23's
+expected family, a season total short by fourteen rounds in a spoke
+indistinguishable from a complete one.
+
+### The band is per season; the ceilings stay pooled
+
+The decision the DEF structural break forced. They are two different objects: a
+scale has to be stable across seasons or nothing is comparable, and a band has to
+describe the population on screen or it describes a different game. Pooling the
+band would have rendered the typical modern defender permanently above it on Pts,
+PPM and Pts/£.
+
+`cohort.size` always travels, including at 0. `cohort.band` is null below
+**`COHORT_MIN_SIZE = 10`** — the server applies the floor and the client never
+compares a number to a threshold, which is `defcon.ts`'s rule for `defcon.ts`'s
+reason. Ten rather than "not empty" because an average over the first three
+players past 1,200 minutes is those three players; on an in-progress season the
+cohort is empty until roughly GW14, so this is a live season's ordinary opening
+state rather than an edge case.
+
+### The median: `percentile_disc`, computed in TypeScript
+
+**In TypeScript because of the reuse rule, not by preference.** Computing the
+band in SQL would restate all eleven axis expressions in a second place. Taking
+it over the same extractor that produces the player values means one expression
+per axis feeds both the spoke and the band.
+
+**`percentile_disc` rather than `percentile_cont`** — an actual member value, and
+the lower of two middles on an even cohort. Nine of the eleven axes are integer
+counts; interpolating puts the band at 6.5 clean sheets or 2.5 goals, a value no
+player achieved, on a marker whose job is to say "here is the typical player".
+
+### The test that had to change shape
+
+The nine 2025-26 DEF band anchors are n=109 — **odd** — and every odd cohort
+agrees under both conventions. They would have passed under `percentile_cont`,
+so they cannot test the choice. The convention is pinned separately on **GK
+2025-26, n=22**, where `cont` gives 111 and `disc` gives 109.
+
+Confirmed by mutation: swapping the median for interpolation turns the GK test
+red (109 → 111) and the synthetic floor test red (14 → 14.5), and leaves **all
+nine DEF anchors green**. That is the blind spot, demonstrated rather than
+argued.
+
+The cohort floor needed synthetic rows for the same class of reason: no real
+(season, position) has a cohort between 1 and 9 — the smallest is 20 goalkeepers
+— so nine defenders and ten in a rolled-back transaction is the only way to put a
+value on the boundary. Synthetic season `'2097-98'`, registered in
+`test/synthetic-seasons.ts`.
+
+### The two client-side quotients, and why the guard is a test
+
+`Pts/£` and `DCH/St` are the only axes whose formula lived on the client
+(`perMillion`, `hitsPerStart`). **The band forces a server copy**: a median
+across 109 players cannot be taken on a client that sees two. Promoting them onto
+`listPlayerTotals` would have put two derived fields on every player row of every
+bootstrap to save four lines.
+
+**The drift guard is a test, not a Known Issues entry.** Item 11's rounding bug
+was one formula in two languages and surfaced only when the two numbers
+disagreed on screen — a note recording that risk would not have fired. So the
+suite asserts the chart's `Pts/£` equals `Pts ÷ Price` as rendered, for every one
+of 2025-26's 109 defenders, plus two anchors from the record: Gabriel's DCH/St is
+exactly 11/30 (item 14's count) and Guéhi's Pts/£ is 35.10 (step 1's top-three
+table).
+
+**Both null operands are guarded and both are tested.** `null / 5` and
+`4 / null` are `0` in JavaScript, not `NaN`, so an unguarded copy renders a
+confident `0.00` for a player nobody measured — rule 6 defeated by a coercion.
+A zero denominator is null too, so "made no starts" and "hit none of his starts"
+stay distinguishable.
+
+## What step 3 did not do
+
+No chart, no radar geometry, no comparison page component, no client code. Two
+routes now serve everything a chart needs and nothing consumes either.

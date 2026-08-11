@@ -186,3 +186,19 @@ _Was `CLAUDE.md` lines 1403-1411._
   as the entry predicted. Pinned by `App.test.tsx`, which is the first test
   `App.tsx` has had — and the mutation confirms it: reverting to a captured
   `Player` turns two tests red.
+
+---
+
+## Why `bootstrap.seasons` is not a reversal, moved from API identity rule 7 in item 16
+
+**The rule stays in `CLAUDE.md`; the argument for it lives here.** Applying the
+trim rule to a rule section: what a rule *is* stays, why a past decision went the
+way it did moves to the item that decided it.
+
+Item 8 put a `seasons: string[]` on the bootstrap response, and that is not a
+reversal of rule 7's refusal of a manifest. What was refused on `/career` was a
+manifest _beside rows that each already name a season_ — eleven copies of the
+same facts, free to drift apart. A bootstrap response is one season throughout:
+nothing in it answers "which others exist", so there is nothing for the field to
+duplicate and nothing for it to contradict. The two decisions turn on the same
+property, which is why they land differently.

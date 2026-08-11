@@ -38,10 +38,12 @@ import {
 } from '../repositories/players.js';
 import { listEvents, listFixtures } from '../repositories/fixtures.js';
 import { listColumnHistory, seasonAvailability } from '../repositories/columns.js';
-import { COMPARISON_THRESHOLDS } from '../comparison/thresholds.js';
+import { COMPARISON_THRESHOLDS, type ComparisonPosition } from '../comparison/thresholds.js';
+import { getComparison } from '../comparison/cohort.js';
 import type {
   BootstrapResponse,
   ColumnHistoryResponse,
+  ComparisonResponse,
   ComparisonThresholdsResponse,
   ErrorResponse,
   FixturesResponse,
@@ -53,6 +55,9 @@ const router = Router();
 
 /** Rule 8: '2016-17'. Rejected early so a typo cannot reach a query. */
 const SEASON_FORMAT = /^\d{4}-\d{2}$/;
+
+/** The four the comparison chart draws. Named here so the 400 can list them. */
+const COMPARISON_POSITIONS: ComparisonPosition[] = ['GK', 'DEF', 'MID', 'FWD'];
 
 /**
  * Resolve ?season=, defaulting to the latest season in the database.
@@ -202,6 +207,60 @@ router.get('/comparison-thresholds', async (req: Request, res: Response) => {
   }
 
   res.json({ thresholds: COMPARISON_THRESHOLDS } satisfies ComparisonThresholdsResponse);
+});
+
+/**
+ * GET /api/comparison — the chart's values, for one season and one position.
+ *
+ * `?position=` is required and `?players=` is a comma-separated list of
+ * `fpl_code`s, which may be empty: the band alone is a legitimate answer, and
+ * the page can render its axes before anyone has been picked.
+ *
+ * The scaling rule is not here and never will be. Values go out raw and the
+ * client scales them against `/api/comparison-thresholds`, so the frozen
+ * ceilings are applied in exactly one place.
+ */
+router.get('/comparison', async (req: Request, res: Response) => {
+  try {
+    const season = await resolveSeason(req, res);
+    if (season === null) return;
+
+    const position = String(req.query.position ?? '');
+    if (!COMPARISON_POSITIONS.includes(position as ComparisonPosition)) {
+      res.status(400).json({
+        error: `Unknown position '${position}'. One of ${COMPARISON_POSITIONS.join(', ')}.`,
+      } satisfies ErrorResponse);
+      return;
+    }
+
+    // An empty ?players= is no players, not one player called "". Filtering the
+    // blanks before parsing is what keeps `players=` and `players` identical.
+    const raw = String(req.query.players ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s !== '');
+
+    const codes: number[] = [];
+    for (const token of raw) {
+      const code = Number(token);
+      if (!Number.isInteger(code)) {
+        res.status(400).json({ error: `Invalid player code '${token}'` } satisfies ErrorResponse);
+        return;
+      }
+      codes.push(code);
+    }
+
+    const outcome = await getComparison(pool, season, position as ComparisonPosition, codes);
+    if (!outcome.ok) {
+      res.status(outcome.status).json({ error: outcome.error } satisfies ErrorResponse);
+      return;
+    }
+
+    res.json(outcome.result satisfies ComparisonResponse);
+  } catch (err) {
+    console.error('Comparison query failed:', err);
+    res.status(500).json({ error: 'Failed to load comparison data' } satisfies ErrorResponse);
+  }
 });
 
 /**

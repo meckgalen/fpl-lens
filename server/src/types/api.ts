@@ -27,6 +27,7 @@ import type {
   UpcomingFixture,
 } from './domain.js';
 import type { AxisThreshold, ComparisonPosition } from '../comparison/thresholds.js';
+import type { ComparisonResult } from '../comparison/cohort.js';
 
 /**
  * The five fields that describe the live game: who is injured, what the market
@@ -213,6 +214,26 @@ export interface FixturesResponse {
 export interface ComparisonThresholdsResponse {
   thresholds: Record<ComparisonPosition, AxisThreshold[]>;
 }
+
+/**
+ * `GET /api/comparison` — axis values for the players asked for, and the cohort
+ * band to read them against.
+ *
+ * **One season throughout, so the label is top-level** (API identity rule 7's
+ * single-season form) — unlike its sibling `/api/comparison-thresholds`, which
+ * spans seasons and labels each threshold with the set it came from. The two
+ * routes carry their labels at different levels because they are different
+ * shapes of answer, which is the rule working rather than an inconsistency.
+ *
+ * **The band is this season's cohort and never a pooled one**, and that is the
+ * decision the DEF structural break forced: 2025-26 introduced defensive
+ * contribution points, and a defender's median points went to 95.0 against a
+ * 68.5-85 range over the previous nine seasons. A band pooled across ten seasons
+ * would render the typical modern defender permanently above it. The *ceilings*
+ * stay pooled — a scale wants to be stable across seasons, a band has to
+ * describe the population on screen.
+ */
+export type ComparisonResponse = ComparisonResult;
 
 export interface ErrorResponse {
   error: string;

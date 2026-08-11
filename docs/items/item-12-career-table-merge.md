@@ -209,3 +209,66 @@ _Was `CLAUDE.md` lines 1490-1494._
   sentence and had been false since item 8. That is the failure mode the working
   agreement's "trace a claim to the code before repeating it" exists to catch,
   found here by reading the entry end to end rather than by testing anything.
+
+---
+
+## The four empty states, moved here from Known Issues in item 16
+
+**Moved from `CLAUDE.md`, applying "a resolved Known Issue moves to the item
+file that resolved it" retroactively.** The issue was *unreachable* empty states
+— two at item 1, one at item 4 — and item 8's selector reached the last of them,
+so the entry had become a statement of resolution. It lands in item 12's record
+rather than item 8's because what it documents is the post-merge layout, which
+is this item's doing. Its one still-live claim, that the "registered, no rows"
+state ends on ingest rather than on the calendar, stays in `CLAUDE.md`'s Current
+State, which already said it.
+
+All four empty states are reachable from the UI, down from two unreachable at
+item 1 and one at item 4. Item 8's selector reached the last of them; item 12
+moved three of them and had to relocate the fourth entirely.
+
+| State | Where it renders |
+| --- | --- |
+| Not in the game | **Page level**, above the career table |
+| Registered, no rows | Inside that season's expanded row |
+| Never played | Inside that season's expanded row |
+| Filtered out | Inside any expanded row — every season has filters now |
+
+**"Not in the game" could not stay in the table, and that is a structural fact
+rather than a layout choice.** It fires exactly when the player has no
+`player_seasons` row for the selected season — which is exactly when
+`getPlayerCareer` returns no row for it, so the merged table has nothing to
+attach the sentence to. The wording still lives in `GameweekSection.tsx`, as the
+exported `NotInGame` both callers use. Confirmed in the browser on Haaland at
+2016-17: the sentence, a name-and-photo header, no season-scoped tiles, the
+career table intact, and **no row marked "Selected"** — correct, because the
+selected season has no row to mark.
+
+"Registered, no rows yet" became real the day 2026-27 was ingested and is what
+every 2026-27 player's row shows when expanded — confirmed in the browser.
+
+**The state is a fact about the data, not about the date**: a `player_seasons`
+row exists and no `player_gameweeks` row does. Playing the matches does not end
+it; **ingesting** them does. So it stays reachable past 21 Aug 2026 and until the
+incremental gameweek sync writes 2026-27's first match rows. Which is the
+correction the Dashboard's "No matches recorded" wording already got, made for
+the same reason: a calendar claim standing in for a data one is wrong in exactly
+the window between a season starting and its data landing.
+
+All four remain rendered and asserted by `GameweekSection.test.ts`.
+
+---
+
+## `rounds: number[]` on the career row, moved from API identity rule 7 in item 16
+
+**The rule stays in `CLAUDE.md`; the argument for it lives here.** Same trim,
+applied to a rule section rather than to Known Issues.
+
+A season-scoped fact that is not a stat belongs on the row too, and item 12 is
+the first case. Career rows carry `rounds: number[]` — every round that season
+played, derived from `fixtures`. It is a property of the season rather than of
+the player, so the obvious alternative was a `Record<season, number[]>` map
+beside the rows. That is the manifest shape the rule refused for `season` itself,
+for the same reason: a map and the rows it describes are two statements of one
+fact that can disagree. On the row, the season naming itself and the rounds it
+played arrive together and cannot come apart.
