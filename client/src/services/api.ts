@@ -1,6 +1,9 @@
 import type {
   BootstrapData,
   ColumnHistoryData,
+  ComparisonData,
+  ComparisonPosition,
+  ComparisonThresholdsData,
   PlayerCareerData,
   PlayerDetailData,
   FixturesData,
@@ -155,6 +158,76 @@ export function fetchColumnHistory(): Promise<ColumnHistoryData> {
  */
 export function resetColumnHistory(): void {
   columnHistoryPromise = null;
+}
+
+/**
+ * The frozen axis scales, fetched at most **once per page load**.
+ *
+ * Same module-scope promise memo as `fetchColumnHistory`, and for the same first
+ * reason: the constants do not vary by season, so a season change must not
+ * refetch them. They do not vary by *anything* — that is the point of freezing
+ * them — so one request per page load is one more than strictly necessary and
+ * exactly as many as is safe.
+ *
+ * **A failure is memoized there and is deliberately NOT memoized here, and the
+ * difference is what each page does without the answer.** The column matrix only
+ * appends a pointer clause to a sentence that is already complete, so the picker
+ * degrades and a retry would buy a request per mount for the rest of the session.
+ * This response is the comparison page's entire axis configuration: with no
+ * floors and ceilings there is nothing to draw and nothing to degrade to. So a
+ * rejection clears the memo and the next mount tries again, which is the one
+ * recovery a user has short of reloading.
+ *
+ * That is the accepted cost of serving these rather than compiling them in, and
+ * it is recorded on `comparison/thresholds.ts` as such: the page needs a real
+ * loading state, and the loading state is not optional.
+ */
+let comparisonThresholdsPromise: Promise<ComparisonThresholdsData> | null = null;
+
+export function fetchComparisonThresholds(): Promise<ComparisonThresholdsData> {
+  comparisonThresholdsPromise ??= request<ComparisonThresholdsData>(
+    `${BASE}/comparison-thresholds`,
+    'comparison thresholds'
+  ).catch((err: unknown) => {
+    // Runs after the assignment above — the rejection cannot land before the
+    // synchronous `??=` completes — so this clears the memo rather than racing
+    // with it.
+    comparisonThresholdsPromise = null;
+    throw err;
+  });
+  return comparisonThresholdsPromise;
+}
+
+/** Drop the memo. **Tests only** — see `resetColumnHistory`, same reasoning. */
+export function resetComparisonThresholds(): void {
+  comparisonThresholdsPromise = null;
+}
+
+/**
+ * One season's comparison data: the axes that season can answer, its cohort
+ * band, and raw values for the players asked for.
+ *
+ * **The season is required rather than optional**, unlike the bootstrap's. A
+ * request without one would ask the *default* season for players picked from the
+ * *selected* one — `fetchFixtures`' bug, whose fix was to make the parameter
+ * real. Here it is one step stronger: a comparison trace is identified by
+ * (player, season), so the season is half the identity of what is being asked
+ * for and there is no sense in which it could be left out.
+ *
+ * `codes` may be empty. The band alone is a legitimate answer and is what the
+ * page renders before anyone has been picked.
+ */
+export async function fetchComparison(
+  season: string,
+  position: ComparisonPosition,
+  codes: number[]
+): Promise<ComparisonData> {
+  const params = new URLSearchParams({ season, position });
+  // `players=` and no `players` at all mean the same thing to the server, which
+  // filters blanks before parsing; sending the key only when it has content
+  // keeps the URL readable in the network panel.
+  if (codes.length > 0) params.set('players', codes.join(','));
+  return request<ComparisonData>(`${BASE}/comparison?${params}`, 'comparison data');
 }
 
 /**

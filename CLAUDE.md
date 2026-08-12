@@ -165,9 +165,12 @@ own query, with `measuredSum` and item 14's count guard already applied — and
 reads fields off its rows. Two axes are the exception and cost a **second
 implementation**: `Pts/£` and `DCH/St` are quotients whose only other home is
 `client/src/lib/playerColumns.ts`, and the band forces the duplication, because a
-median across 109 players cannot be taken on a client that sees two. The drift is
-held by a test that ties the chart's `Pts/£` to the Pts and Price columns
-rendered beside it, not by a note.
+median across 109 players cannot be taken on a client that sees two. **The drift
+is held by two anchors on one externally-derived number, one on each side of the
+language boundary** — Guéhi 2025-26 is 35.10 in `cohort.test.ts` and 35.10 in
+`playerColumns.test.ts`, both from item 16 step 1's psql table. Not by the
+server's 109-row loop, which restates the formula inline and so compares server
+code against server code.
 
 **The band is the selected season's cohort and never a pooled one**, and the
 ceilings are pooled and never per-season. Those are two different objects: a
@@ -177,6 +180,18 @@ contribution points are what forced the split — see the stub for item 16.
 `server/src/services/fplApi.ts` and its 5-minute cache are still there and still
 unused by the routes — it is the ingestion source for the live season, not dead
 code.
+
+**There is a Comparison page in the nav, and it draws no chart yet.** Item 16
+step 4 is three sessions; session 1 built the fetching and the state, and the
+radar geometry is session 2. What is settled and load-bearing already: **a trace
+is a (player, season) pair, never a player**, so a trace added on one season
+stays pinned to it when the selector moves and two seasons reach one chart; the
+page issues **one request per season in play**, and draws the axes **every one of
+them can answer** rather than the selected season's alone; and the thresholds
+being served rather than compiled in means there is no axis configuration until
+they land, so the loading state is not optional. Position is a page-level control
+and changing it clears the traces, because the server refuses a player who is not
+the position asked for.
 
 **`GET /api/columns` is the second route that spans seasons**, after `/career`,
 and follows the same rule: no `?season=`, no top-level `season`, and a `season`
@@ -406,11 +421,14 @@ fpl-lens/
 │   │   ├── App.tsx            # shell: nav, theme, SEASON SELECTOR, detail code
 │   │   ├── App.test.tsx       # the selector, persistence, the detailPlayer fix
 │   │   ├── types/fpl.ts       # domain types + UI constants + formatters
-│   │   ├── services/api.ts    # fetch wrappers + ApiError (status, available)
+│   │   ├── services/
+│   │   │   ├── api.ts         # fetch wrappers + ApiError (status, available)
+│   │   │   └── api.comparison.test.ts  # the thresholds memo: NOT failure-memoized
 │   │   ├── lib/
 │   │   │   ├── bootstrap.ts   # BootstrapContext, current/next gameweek
 │   │   │   ├── averages.ts    # normalization, rounding, the footnote model
 │   │   │   ├── playerColumns.ts   # the column table, availability, persistence
+│   │   │   ├── comparison.ts  # Trace = (player, season); the axis intersection
 │   │   │   ├── shirtCache.ts  # clubs known to have no shirt; + the test reset
 │   │   │   └── cn.ts          # class name join
 │   │   ├── test/              # harness only — no component lives here
@@ -424,6 +442,8 @@ fpl-lens/
 │   │   │   ├── Dashboard.preseason.test.tsx  # the three empty rankings
 │   │   │   ├── Players.tsx    # the list: own inline search, sort, expand
 │   │   │   ├── Players.test.tsx       # disclosure + sort, by keyboard
+│   │   │   ├── Comparison.tsx # the chart's page: NO chart yet — fetch + state
+│   │   │   ├── Comparison.test.tsx    # the loading state, (player, season), axes
 │   │   │   ├── Fixtures.tsx   # by gameweek, with difficulty
 │   │   │   ├── Fixtures.test.tsx      # the round collision across a season change
 │   │   │   ├── PlayerDetail.tsx  # header / Upcoming / one merged career table
@@ -975,6 +995,8 @@ can be run alone with `npm run test:client`.
       scoring rule the app computes for itself, stated once on the server
 - [x] Derived columns in the picker (`dependsOn`), whose availability is the most
       restrictive of the columns they read
+- [x] A Comparison page: position, club and player pickers, one request per
+      season in play, and the frozen axis scales fetched once — **no chart yet**
 
 The live FPL API proxy in `services/fplApi.ts` still exists with its 5-minute
 cache, but no route calls it: it is the ingestion source for the live season.
@@ -1623,6 +1645,13 @@ unnecessary once this line exists.
       The median is `percentile_disc` — an actual member value — and the test that
       pins it uses an **even** cohort, because every odd one agrees under both
       conventions and would pass either.
+
+      Step 4 is the page, in three sessions of its own. **Session 1 is fetch and
+      state, with no chart**: the route, the two fetches, the loading state the
+      served thresholds make mandatory, and a trace keyed on **(player, season)**
+      so cross-season comparison is reachable rather than a later rewrite. Also
+      found step 3's drift guard comparing server code against server code, and
+      gave it a client-side anchor on the same number.
 
 ## Deferred
 

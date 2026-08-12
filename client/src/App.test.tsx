@@ -53,6 +53,12 @@ vi.mock('./services/api', async () => {
     // so this exercises the unresolved-matrix path for free.
     fetchColumnHistory: vi.fn(() => new Promise<never>(() => {})),
     resetColumnHistory: vi.fn(),
+    // Held open for the same reason: nothing in this file is about the
+    // comparison page's data, and an unresolved threshold fetch is exactly the
+    // state that page is designed to render — its loading state.
+    fetchComparisonThresholds: vi.fn(() => new Promise<never>(() => {})),
+    fetchComparison: vi.fn(() => new Promise<never>(() => {})),
+    resetComparisonThresholds: vi.fn(),
   };
 });
 
@@ -141,6 +147,23 @@ beforeEach(() => {
 
 afterEach(() => {
   localStorage.clear();
+});
+
+describe('the comparison page', () => {
+  it('is reachable from the nav, and names the selected season', async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByText(`Dashboard · ${LIVE}`);
+
+    await user.click(screen.getByRole('button', { name: 'Comparison' }));
+
+    // Its own page rather than a panel: the chart is large and carries its own
+    // position, club and player controls.
+    expect(await screen.findByText(`Comparison · ${LIVE}`)).toBeInTheDocument();
+    // The thresholds are held open by the mock, which is this page's real
+    // opening state — no axis configuration, so nothing to draw.
+    expect(screen.getByText('Loading axis scales…')).toBeInTheDocument();
+  });
 });
 
 describe('the season selector', () => {

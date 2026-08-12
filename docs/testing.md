@@ -17,7 +17,7 @@ restated as rules here. What follows is the catalogue.
 
 ## The counts
 
-`npm test` runs **two suites on two runners**: **142 server tests** and **187
+`npm test` runs **two suites on two runners**: **142 server tests** and **212
 client tests**, all passing. They are counted separately on purpose — two
 runners print two summaries, and a combined figure would be maintained by hand
 against neither of them.
@@ -195,7 +195,7 @@ additionally pin URL shapes and `res.ok` handling, which the server suite
 already covers. `@testing-library/user-event` drives anything involving a
 keyboard — `fireEvent` dispatches a synthetic click and so cannot tell a
 `<button>` from a `<div onClick>`, which is the entire distinction item 3 turns
-on. Eighteen files:
+on. Twenty-one files:
 
 - `client/src/components/PlayerShirt.test.tsx` — the club shirt and its two
   fallbacks. URLs asserted **in full** rather than pattern-matched, for the
@@ -230,6 +230,48 @@ on. Eighteen files:
   recorded/dropped/recorded-again shape that the defensive trio really has and
   that the UI cannot currently reach.
 
+  Also here since item 16 step 4: **the client half of the comparison chart's
+  two-language guard.** `Pts/£` and `DCH/St` are computed in this file *and* in
+  `server/src/comparison/cohort.ts`, where the band forces a copy. The server's
+  own drift test restates the formula inline, so both sides of that assertion
+  are server code and the client's `perMillion` is not in it at all. What ties
+  the two together is that each is pinned to the same externally-derived
+  number — item 16 step 1's psql table. Guéhi 2025-26 is 179 points at £5.1m and
+  35.10 on both sides; Gabriel's `11 / 30` was already here from item 14.
+
+- `client/src/pages/Comparison.test.tsx` — the comparison page's fetching and
+  state, with no chart yet (item 16 step 4, session 1). Nineteen tests over three
+  properties a chart cannot be built on top of if they are wrong.
+
+  **The loading state is real**: serving the thresholds rather than compiling
+  them in means the page has no axis configuration until they land, which item
+  16 step 2 recorded as an accepted cost and this is what stops it being
+  quietly dropped. **A trace is a (player, season) pair**: a trace added on one
+  season is still asked for under that season after the selector moves.
+  Confirmed by mutation — a player-keyed `plan` turns exactly three tests red.
+  **An unavailable axis is dropped, never holed**, and the load-bearing case is
+  the one an obvious implementation gets wrong: reading the axis list off the
+  *selected* season alone passes when the selected season is the restrictive one
+  (a 2016-17 band with a 2025-26 trace) and fails when it is the generous one.
+  Both directions are tested; the mutation leaves the first green and turns the
+  second red.
+
+  **StrictMode is written out by hand** rather than reused from `renderInApp`,
+  because these tests swap the provider's value with `rerender`. It is not
+  ceremony: two tests here originally used `mockImplementationOnce`, which under
+  a double-invoked effect answers the first call and resolves the second, so the
+  loading state they exist for never rendered.
+
+- `client/src/services/api.comparison.test.ts` — the thresholds memo, which is
+  `fetchColumnHistory`'s with one clause **reversed**. `fetch` is mocked rather
+  than `services/api.ts` — `Players.columns.test.tsx`'s exception, for its
+  reason: the memo is the mechanism under test. The clause worth the file is the
+  rejection. The column matrix memoizes its failure deliberately; these
+  thresholds must not, because a page with no floors and ceilings has nothing to
+  degrade to and a memoized failure leaves it dead for the session. Two opposite
+  calls from one shape, which is the kind of thing later tidied into agreement.
+  Proved by mutation: dropping the `.catch` turns it red.
+
 - `client/src/pages/Players.columns.test.tsx` — the picker, persistence and the
   sort fallback. **The load-bearing assertions are the negative ones**: that an
   unavailable column is disabled *with a reason* rather than silently missing,
@@ -241,13 +283,14 @@ on. Eighteen files:
 - `client/src/App.test.tsx` — the shell, and **the first test `App.tsx` has ever
   had**. That absence is why item 3 could only pin the Dashboard's half of the
   click-through contract, and the `detailPlayer` fix cannot be tested anywhere
-  else: it is a bug about which object the shell hands down. Twelve tests: the
+  else: it is a bug about which object the shell hands down. Fourteen tests: the
   selector's options and their order, refetching with the new season, the app
   _not_ blanking mid-switch, persistence of the **served** season, recovery from
   a stored season the database does not have, a network failure _not_ being
   treated as one, the sidebar deadline block in both directions, the header and
   gameweeks agreeing across a season change, the no-false-empty-state window,
-  and the not-in-the-game state.
+  and the not-in-the-game state — plus, since item 16 step 4, that the
+  Comparison page is reachable from the nav and opens on its own loading state.
 
   It does **not** use `renderInApp`: that helper supplies a `BootstrapContext`,
   which is precisely what is under test here. StrictMode is applied by hand for

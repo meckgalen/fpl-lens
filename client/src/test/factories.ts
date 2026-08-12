@@ -18,8 +18,13 @@
  */
 
 import type {
+  AxisThreshold,
   BootstrapData,
   ColumnState,
+  ComparisonAxisKey,
+  ComparisonData,
+  ComparisonPosition,
+  ComparisonThresholdsData,
   SeasonColumnAvailability,
   GameweekEvent,
   GameweekHistory,
@@ -315,6 +320,97 @@ export function aCareer(overrides: Partial<PlayerCareerData> = {}): PlayerCareer
   return {
     player: anIdentity(),
     seasons: [aCareerSeason()],
+    ...overrides,
+  };
+}
+
+/**
+ * The comparison chart's frozen scales.
+ *
+ * **Real values, taken from `server/src/comparison/thresholds.ts`.** A factory
+ * inventing round numbers would let a scaling bug read as plausible; these are
+ * the numbers the page is actually handed, and DEF's ten include the two axes
+ * that only some seasons can answer (`xGI`, `DCH/St`) — which is what makes an
+ * axis-dropping test possible at all.
+ *
+ * The set is deliberately not exhaustive: GK and FWD carry one axis each, enough
+ * for a position change to be observable without restating 35 constants here.
+ */
+const ALL_TEN = [
+  '2016-17', '2017-18', '2018-19', '2019-20', '2020-21',
+  '2021-22', '2022-23', '2023-24', '2024-25', '2025-26',
+];
+
+const DEF_AXES: [ComparisonAxisKey, string, number, number][] = [
+  ['pts', 'Pts', 0, 200],
+  ['clean_sheets', 'CS', 0, 20],
+  ['goals', 'G', 0, 5],
+  ['minutes', 'Min', 1200, 3420],
+  ['ppm', 'PPM', 1.14, 6],
+  ['defcon_hits_per_start', 'DCH/St', 0, 0.8],
+  ['assists', 'A', 0, 10],
+  ['pts_per_now', 'Pts/£', 0, 40],
+  ['expected_goal_involvements', 'xGI', 0, 10],
+  ['bonus', 'Bon', 0, 25],
+];
+
+export function aThreshold(overrides: Partial<AxisThreshold> = {}): AxisThreshold {
+  return {
+    axis: 'pts',
+    label: 'Pts',
+    floor: 0,
+    ceiling: 200,
+    // Ten seasons, which is what every axis but xGI and DCH/St carries.
+    derivedFrom: { seasons: ALL_TEN, cohort: 1064 },
+    ...overrides,
+  };
+}
+
+export function comparisonThresholds(
+  overrides: Partial<Record<ComparisonPosition, AxisThreshold[]>> = {}
+): ComparisonThresholdsData {
+  return {
+    thresholds: {
+      GK: [aThreshold({ axis: 'saves', label: 'Sv', ceiling: 200 })],
+      DEF: DEF_AXES.map(([axis, label, floor, ceiling]) =>
+        aThreshold({
+          axis,
+          label,
+          floor,
+          ceiling,
+          // The two axes with fewer than ten seasons behind them carry their own
+          // derivation, because that is the field the re-derivation rule reads.
+          derivedFrom:
+            axis === 'expected_goal_involvements'
+              ? { seasons: ['2023-24', '2024-25', '2025-26'], cohort: 311 }
+              : axis === 'defcon_hits_per_start'
+                ? { seasons: ['2025-26'], cohort: 109 }
+                : { seasons: ALL_TEN, cohort: 1064 },
+        })
+      ),
+      MID: DEF_AXES.map(([axis, label]) => aThreshold({ axis, label })),
+      FWD: [aThreshold({ axis: 'goals', label: 'G', ceiling: 30 })],
+      ...overrides,
+    },
+  };
+}
+
+/**
+ * One season's comparison payload.
+ *
+ * `axes` defaults to all ten defender axes, and the values map is built to match
+ * — an axis listed with no value would be a shape the server cannot send, and a
+ * value for an axis not listed would be one the client must never read.
+ */
+export function aComparison(overrides: Partial<ComparisonData> = {}): ComparisonData {
+  const axes: ComparisonAxisKey[] = overrides.axes ?? DEF_AXES.map(([axis]) => axis);
+  const band = Object.fromEntries(axes.map((a, i) => [a, 10 + i]));
+  return {
+    season: '2025-26',
+    position: 'DEF',
+    axes,
+    cohort: { size: 109, band },
+    players: [],
     ...overrides,
   };
 }

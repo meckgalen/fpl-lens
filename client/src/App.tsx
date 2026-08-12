@@ -9,9 +9,10 @@ import { Countdown } from './components/Countdown';
 import Dashboard from './pages/Dashboard';
 import Players from './pages/Players';
 import Fixtures from './pages/Fixtures';
+import Comparison from './pages/Comparison';
 import PlayerDetail from './pages/PlayerDetail';
 
-type PageId = 'dashboard' | 'players' | 'fixtures';
+type PageId = 'dashboard' | 'players' | 'fixtures' | 'comparison';
 
 const NAV: { id: PageId; label: string; icon: ReactNode }[] = [
   {
@@ -33,6 +34,18 @@ const NAV: { id: PageId; label: string; icon: ReactNode }[] = [
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
         <circle cx="12" cy="8" r="4" />
         <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
+      </svg>
+    ),
+  },
+  {
+    // Its own page rather than a panel on Players: the chart is large, and it
+    // carries its own position, club and player controls.
+    id: 'comparison',
+    label: 'Comparison',
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M12 2.5 20.5 8v8L12 21.5 3.5 16V8z" />
+        <path d="M12 7.5 16.5 10v4L12 16.5 7.5 14v-4z" />
       </svg>
     ),
   },
@@ -297,6 +310,7 @@ export default function App() {
               <>
                 {page === 'dashboard' && <Dashboard onOpenDetail={openDetail} />}
                 {page === 'players' && <Players onOpenDetail={openDetail} />}
+                {page === 'comparison' && <Comparison />}
                 {page === 'fixtures' && <Fixtures />}
               </>
             )}

@@ -336,6 +336,48 @@ describe('hits per start', () => {
   });
 });
 
+describe('points per million', () => {
+  /**
+   * The client half of the cross-language guard on the two quotients the
+   * comparison chart duplicates.
+   *
+   * `Pts/£` and `DCH/St` are computed **twice**: here, and in
+   * `server/src/comparison/cohort.ts`, where the band forces a copy — a median
+   * across 109 defenders cannot be taken on a client that sees two. The server's
+   * own test cannot close that gap on its own: it restates the formula inline
+   * and compares `ptsPerNow` against the restatement, so both sides of that
+   * assertion are server code and the client's `perMillion` is not in the
+   * comparison at all.
+   *
+   * What ties the two implementations together is that each is pinned to the
+   * **same externally-derived number** — item 16 step 1's top-three table, from
+   * a psql session that predates both. Guéhi's 2025-26 is 179 points at £5.1m
+   * and tops DEF `Pts/£` at 35.10; `cohort.test.ts` asserts that of the server's
+   * value and this asserts it of the column the Players list renders. Neither
+   * imports the other, and a drift in either moves it off 35.10.
+   *
+   * `DCH/St` already has its half above: `player(11, 30)` is Gabriel's 2025-26,
+   * item 14's count, and the server anchors `11 / 30` from the same measurement.
+   */
+  const col = columnByKey('pts_per_now')!;
+  const GUEHI = { ...aPlayer(), total_points: 179, now_cost: 51 } as Player;
+
+  it('reproduces the value the thresholds were derived against', () => {
+    expect(col.value(GUEHI)!.toFixed(2)).toBe('35.10');
+    // Rendered at one place, through `fmtPpg`'s half-to-even rounding — never
+    // `toFixed`, which is whatever the binary representation gives.
+    expect(col.render(GUEHI)).toBe('35.1');
+  });
+
+  it('is null, not 0, where there is no price to divide by', () => {
+    // `100 / null` is Infinity and `null / 5` is 0; neither is a points-per-
+    // million figure, and both would render as a confident number.
+    expect(col.value({ ...GUEHI, now_cost: null } as Player)).toBeNull();
+    expect(col.value({ ...GUEHI, now_cost: 0 } as Player)).toBeNull();
+    expect(col.render({ ...GUEHI, now_cost: null } as Player)).toBe(NO_VALUE);
+  });
+});
+
 describe('describeRecordedIn, directly', () => {
   it('returns null when the column is recorded nowhere', () => {
     // The mid-season lag case: after GW1 is ingested, a column the upstream has

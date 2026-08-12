@@ -419,6 +419,111 @@ export interface FixturesData {
   fixtures: Fixture[];
 }
 
+// ------------------------------------------------------- the comparison chart
+
+/**
+ * An axis key, which is a `PLAYER_COLUMNS` key.
+ *
+ * Deliberately the same vocabulary as the Players list — all eleven axes already
+ * exist as columns that list can offer, so the two surfaces name the same stat
+ * identically. The **caption** is not derived from that key here: it arrives on
+ * the threshold (`AxisThreshold.label`), because a radar spoke and a table header
+ * have different width budgets and `Sv` against the picker's `S` is the one place
+ * they differ. A second label table on this side would be free to disagree.
+ */
+export type ComparisonAxisKey =
+  | 'pts'
+  | 'clean_sheets'
+  | 'goals'
+  | 'minutes'
+  | 'ppm'
+  | 'defcon_hits_per_start'
+  | 'assists'
+  | 'pts_per_now'
+  | 'expected_goal_involvements'
+  | 'bonus'
+  | 'saves';
+
+/**
+ * `GK`, not `GKP`. The server's four-position vocabulary, which is not the one
+ * `POSITION_MAP` above renders — see `ELEMENT_TYPE_OF` in `lib/comparison.ts`,
+ * which is the one place the two are translated.
+ */
+export type ComparisonPosition = 'GK' | 'DEF' | 'MID' | 'FWD';
+
+/**
+ * The seasons a threshold was derived from — the label, in API identity rule 7's
+ * set form. A ceiling is not a claim about one season but about ten, or about the
+ * three that measure xGI, or the one that measures DC.
+ */
+export interface AxisDerivation {
+  seasons: string[];
+  cohort: number;
+}
+
+export interface AxisThreshold {
+  axis: ComparisonAxisKey;
+  /** The spoke's caption. Rendered as it arrives; see `ComparisonAxisKey`. */
+  label: string;
+  floor: number;
+  ceiling: number;
+  derivedFrom: AxisDerivation;
+  /** Present only once an axis has been re-derived: absent on all of them today. */
+  supersedes?: { floor: number; ceiling: number; triggeredBy: string };
+}
+
+/**
+ * `GET /api/comparison-thresholds`. No top-level `season` — this response spans
+ * seasons and each threshold carries the set it came from.
+ */
+export interface ComparisonThresholdsData {
+  thresholds: Record<ComparisonPosition, AxisThreshold[]>;
+}
+
+/**
+ * Axis values, keyed by axis. **Only the axes the response listed appear.**
+ *
+ * An axis the season cannot answer is absent from this map rather than present
+ * and null — so the client drops the spoke and re-spaces, which it could not do
+ * from a null it had to interpret. A null that *is* here means rule 6's "not
+ * measured" for this player specifically.
+ */
+export type AxisValues = Partial<Record<ComparisonAxisKey, number | null>>;
+
+export interface ComparisonPlayerValues {
+  /** The permanent player code, same as `Player.id`. */
+  id: number;
+  web_name: string;
+  values: AxisValues;
+}
+
+export interface ComparisonCohort {
+  /** Player-seasons past the 1,200-minute gate. Present even at 0. */
+  size: number;
+  /**
+   * The cohort median per axis, or null where the server withheld it — below its
+   * own floor, which it applies so the client never compares a size to a
+   * threshold. Null is the ordinary state of a live season until roughly GW14.
+   */
+  band: AxisValues | null;
+}
+
+/**
+ * `GET /api/comparison`. One season throughout, so the label is top-level —
+ * unlike its sibling above, which spans seasons.
+ *
+ * Values are **raw**. The scaling against `floor`/`ceiling` happens on this side,
+ * in exactly one place, so the frozen ceilings are applied once.
+ */
+export interface ComparisonData {
+  season: string;
+  position: ComparisonPosition;
+  /** The spokes that exist for this season, in the frozen canonical order. */
+  axes: ComparisonAxisKey[];
+  cohort: ComparisonCohort;
+  players: ComparisonPlayerValues[];
+}
+
 // ------------------------------------------------------------- UI constants
 
 export const POSITION_MAP: Record<number, string> = {
