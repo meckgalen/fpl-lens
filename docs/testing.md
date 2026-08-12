@@ -17,7 +17,7 @@ restated as rules here. What follows is the catalogue.
 
 ## The counts
 
-`npm test` runs **two suites on two runners**: **142 server tests** and **212
+`npm test` runs **two suites on two runners**: **142 server tests** and **215
 client tests**, all passing. They are counted separately on purpose — two
 runners print two summaries, and a combined figure would be maintained by hand
 against neither of them.
@@ -261,6 +261,19 @@ on. Twenty-one files:
   ceremony: two tests here originally used `mockImplementationOnce`, which under
   a double-invoked effect answers the first call and resolves the second, so the
   loading state they exist for never rendered.
+
+  **The band is hidden when the traces span more than one season**, because two
+  seasons are two cohort medians and the selected season's is not a neutral
+  choice between them. Three tests, and the second is the one that stops the
+  condition being written wrong: the trigger is the number of *distinct trace
+  seasons*, so two traces sharing one season keep their band and zero traces
+  keep theirs. Both mutations were run — dropping the rule turns the first red,
+  and `traces.length > 1` turns the second red while leaving the first green.
+
+  **The trace limit states its reason rather than the rule.** "Maximum 4"
+  restates the number; the sentence a reader can act on is that four is as many
+  as colour can tell apart. Item 13's disabled-with-a-reason, applied to a
+  control instead of to a column.
 
 - `client/src/services/api.comparison.test.ts` — the thresholds memo, which is
   `fetchColumnHistory`'s with one clause **reversed**. `fetch` is mocked rather

@@ -330,6 +330,54 @@ describe('the band', () => {
   });
 });
 
+describe('the band across more than one season', () => {
+  /*
+   * Two seasons on screen is two cohort medians, and the selected season's is
+   * not a neutral choice between them — it is the one that happens to be in the
+   * selector. Drawing it would describe one population under both sets of
+   * traces. Reachable rather than hypothetical: the shell's selector is the only
+   * season control, so a second season is two clicks away.
+   */
+  it('hides the band, and says that is why', async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderPage();
+    await screen.findByText('Pts/£');
+    await user.click(await candidate('Gabriel'));
+    await screen.findByText(/median of 109 DEFs/);
+
+    rerenderAt(rerender, EARLIER);
+    await waitFor(() => expect(comparisonMock).toHaveBeenCalledWith(EARLIER, 'DEF', []));
+    await user.click(await candidate('Guéhi'));
+
+    expect(await screen.findByText(/span 2 seasons, each with its own median/)).toBeInTheDocument();
+    expect(screen.queryByText(/median of 109 DEFs/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the band when two traces share ONE season', async () => {
+    // The condition is the number of distinct trace seasons, not the number of
+    // traces. Written as `traces.length > 1` this is the test that goes red —
+    // and the one above would still pass, so it cannot be the only one.
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Pts/£');
+
+    await user.click(await candidate('Gabriel'));
+    await user.click(await candidate('Guéhi'));
+    await waitFor(() =>
+      expect(comparisonMock).toHaveBeenCalledWith(LATER, 'DEF', [GABRIEL.id, GUEHI.id])
+    );
+
+    expect(await screen.findByText(/median of 109 DEFs/)).toBeInTheDocument();
+  });
+
+  it('keeps the band when there are no traces at all', async () => {
+    // Zero seasons is not "spanning" either, and this is the page's opening
+    // state — the band alone is a legitimate answer.
+    renderPage();
+    expect(await screen.findByText(/median of 109 DEFs/)).toBeInTheDocument();
+  });
+});
+
 describe('the picker', () => {
   it('offers only the chosen position, from the selected season', async () => {
     const user = userEvent.setup();
@@ -429,9 +477,12 @@ describe('the trace limit', () => {
       await user.click(await candidate(`D${n}`));
     }
 
-    expect(await screen.findByText(/is the limit/)).toBeInTheDocument();
-    // Disabled rather than removed, with the reason beside it — item 13's rule
-    // for a column a season cannot answer, applied to a control.
+    // The REASON, not the rule. "Maximum 4" restates the limit; what a reader
+    // can act on is why four — colour is the only thing telling two traces
+    // apart. Item 13's disabled-with-a-reason, applied to a control.
+    expect(await screen.findByText(/as many as colour can tell apart/)).toBeInTheDocument();
+    expect(screen.queryByText(/^4 is the limit/)).not.toBeInTheDocument();
+    // Disabled rather than removed, so the sentence has something to sit beside.
     expect(await candidate('D4')).toBeDisabled();
   });
 });

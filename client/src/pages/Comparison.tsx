@@ -16,6 +16,7 @@ import {
   DEFAULT_POSITION,
   ELEMENT_TYPE_OF,
   MAX_TRACES,
+  TRACE_LIMIT_REASON,
   hasTrace,
   mergeComparison,
   traceKey,
@@ -293,7 +294,7 @@ export default function Comparison() {
           <CardTitle>Add a {position} from {b.season}</CardTitle>
           {full && (
             <span className="text-[11px] text-muted-foreground">
-              {MAX_TRACES} is the limit — remove one to add another
+              {TRACE_LIMIT_REASON}
             </span>
           )}
         </CardHeader>
@@ -379,9 +380,14 @@ export default function Comparison() {
           <CardTitle>Axes</CardTitle>
           {view && (
             <span className="text-[11px] text-muted-foreground">
-              {view.cohort.band === null
-                ? `No band · ${view.cohort.size} ${position}s past 1,200 minutes in ${b.season}`
-                : `Band · median of ${view.cohort.size} ${position}s past 1,200 minutes in ${b.season}`}
+              {view.bandWithheld === 'spans-seasons'
+                ? // Two seasons on screen is two cohort medians. Drawing the
+                  // selected season's would describe one population under both
+                  // sets of traces, and it is in the selector rather than chosen.
+                  `No band · the traces span ${new Set(traces.map((t) => t.season)).size} seasons, each with its own median`
+                : view.band === null
+                  ? `No band · ${view.cohortSize} ${position}s past 1,200 minutes in ${b.season}`
+                  : `Band · median of ${view.cohortSize} ${position}s past 1,200 minutes in ${b.season}`}
             </span>
           )}
         </CardHeader>
@@ -436,7 +442,7 @@ export default function Comparison() {
                       <td className="py-1 pr-4 text-right text-muted-foreground">{axis.floor}</td>
                       <td className="py-1 pr-4 text-right text-muted-foreground">{axis.ceiling}</td>
                       <td className="py-1 pr-4 text-right text-muted-foreground">
-                        {view.cohort.band === null ? NO_VALUE : fmtNum(view.cohort.band[axis.axis] ?? null, 2)}
+                        {view.band === null ? NO_VALUE : fmtNum(view.band[axis.axis] ?? null, 2)}
                       </td>
                       {view.traces.map((r) => (
                         <td key={traceKey(r.trace)} className="py-1 pr-4 text-right text-foreground">

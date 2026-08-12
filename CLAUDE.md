@@ -187,7 +187,9 @@ radar geometry is session 2. What is settled and load-bearing already: **a trace
 is a (player, season) pair, never a player**, so a trace added on one season
 stays pinned to it when the selector moves and two seasons reach one chart; the
 page issues **one request per season in play**, and draws the axes **every one of
-them can answer** rather than the selected season's alone; and the thresholds
+them can answer** rather than the selected season's alone; **traces spanning two
+seasons have no band at all**, because that is two cohort medians and the
+selected season's is the one in the selector rather than a choice between them; and the thresholds
 being served rather than compiled in means there is no axis configuration until
 they land, so the loading state is not optional. Position is a page-level control
 and changing it clears the traces, because the server refuses a player who is not

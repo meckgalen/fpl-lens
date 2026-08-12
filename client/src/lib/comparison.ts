@@ -15,7 +15,6 @@ import type {
   AxisThreshold,
   AxisValues,
   ComparisonAxisKey,
-  ComparisonCohort,
   ComparisonData,
   ComparisonPosition,
 } from '../types/fpl';
@@ -51,6 +50,22 @@ export const DEFAULT_POSITION: ComparisonPosition = 'DEF';
  * pinned to the outer ring of.
  */
 export const MAX_TRACES = 4;
+
+/**
+ * What the picker says when it stops offering players — **the reason, not the
+ * rule.**
+ *
+ * Item 13's rule is that an unavailable thing is disabled with its reason on
+ * screen, and "maximum 4 traces" restates the limit rather than giving one. What
+ * a reader can act on is *why* four: colour is the only thing telling two traces
+ * apart, so a fifth is unreadable precisely where it matters, on the axis
+ * everybody is clipped to.
+ *
+ * It lives beside the constant so the sentence and the number move together, and
+ * interpolates rather than spelling the number out for the same reason.
+ */
+export const TRACE_LIMIT_REASON =
+  `${MAX_TRACES} traces is as many as colour can tell apart — remove one to add another`;
 
 /**
  * A trace is a **(player, season) pair, never a player.**
@@ -107,12 +122,38 @@ export interface ComparisonView {
    */
   axes: AxisThreshold[];
   /**
-   * The **selected season's** cohort, never a pooled one and never another
-   * season's. A band describes the population on screen; the ceilings are pooled
-   * and stable across seasons because a scale has to be. They are different
-   * objects, which is what the DEF structural break at 2025-26 established.
+   * Player-seasons past the minutes gate in the **selected** season. Always
+   * present, including at 0, so the page can word the absence of a band rather
+   * than inferring it.
    */
-  cohort: ComparisonCohort;
+  cohortSize: number;
+  /**
+   * The band to draw, already accounting for both reasons it may not exist — so
+   * a consumer draws it when it is here and does not when it is not, with no
+   * second decision to make.
+   *
+   * It is the **selected season's** cohort median, never a pooled one and never
+   * another season's. A band describes the population on screen; the ceilings
+   * are pooled and stable across seasons because a scale has to be. They are
+   * different objects, which is what the DEF structural break at 2025-26
+   * established.
+   */
+  band: AxisValues | null;
+  /**
+   * Why `band` is null **despite the server having sent one**. Null when the
+   * band is drawn, and null when the server itself withheld it — that case is
+   * read off `cohortSize`, which says how few players there were.
+   *
+   * One value today. **Traces spanning more than one season have no single
+   * band**: each season has its own cohort median, and drawing one of them
+   * under two seasons' traces would describe one population and be read as
+   * describing both. Two medians is not an average of two medians, and the
+   * selected season's is not a neutral choice between them — it is the one that
+   * happens to be in the selector. Hiding it is the only honest answer, and it
+   * is a reachable state rather than a hypothetical: the shell's selector is the
+   * only season control, so a second season is two clicks away.
+   */
+  bandWithheld: 'spans-seasons' | null;
   traces: ResolvedTrace[];
 }
 
@@ -164,5 +205,17 @@ export function mergeComparison(
     return { trace, values: row.values, problem: null };
   });
 
-  return { axes, cohort: selected.data.cohort, traces: resolved };
+  // The seasons the traces actually sit on — not the seasons in play, which
+  // always include the selected one whether anything is drawn from it or not.
+  // Zero traces is not "spanning", and neither is four traces on one season.
+  const traceSeasons = new Set(traces.map((t) => t.season));
+  const bandWithheld = traceSeasons.size > 1 ? ('spans-seasons' as const) : null;
+
+  return {
+    axes,
+    cohortSize: selected.data.cohort.size,
+    band: bandWithheld === null ? selected.data.cohort.band : null,
+    bandWithheld,
+    traces: resolved,
+  };
 }
