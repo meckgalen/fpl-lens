@@ -8,297 +8,71 @@ with filters.
 
 ## Current State
 
-**Phase 0 is complete. All seven steps are done, and the app reads from
-Postgres, not the live FPL API.** The raw CSVs for the ten completed seasons are
-in `data/raw/` and profiled in `docs/data-profile.md`. Postgres 16 runs in
-docker-compose; the schema is `server/migrations/1785550165663_initial-schema.ts`
-plus `1785742016477_live-season.ts`, which item 4 added.
+**Phase 0 is complete: the app reads from Postgres, not the live FPL API.** The
+schema is `server/migrations/`; the raw CSVs are in `data/raw/` and profiled in
+`docs/data-profile.md`.
 
 **The database holds eleven seasons of registrations and ten of matches, and
-those are two different numbers now.** 2016-17 through 2025-26 are complete and
-came from the CSV backfill. 2026-27 came from the live FPL API in Phase 1
-item 4: clubs, roster, deadlines and the full fixture list, and **not one
-`player_gameweeks` row**, because none has been played. Anything that used to
-say "the ten seasons" has to pick which of the two it meant — see the constants
-in `career.test.ts`, which were one and are now two.
+those are two different numbers.** 2016-17 through 2025-26 came from the CSV
+backfill and are complete. 2026-27 came from the live API in item 4 — clubs,
+roster, deadlines and the full fixture list, and **not one `player_gameweeks`
+row**, because none has been played. Anything that used to say "the ten seasons"
+has to pick which of the two it meant: `ALL_SEASONS` and `SEASONS_WITH_GAMEWEEKS`
+in `career.test.ts` were one constant and are now two.
 
-**All seven tables are populated.** Four ingest scripts do it, and a fifth
-exists but has never been run — see "the gameweek sync" below. All are
-idempotent, run in one transaction, and assert their own results:
+**Five ingest scripts, four of which have been run.** The three CSV scripts go in
+order — `ingest:dimensions`, `ingest:fixtures`, `ingest:gameweeks` — and each
+asserts its predecessors' row counts before it starts, failing with a message
+naming the one to run first. `ingest:live` has no ordering constraint, owns
+2026-27 end to end, and is meant to be re-run through the transfer window.
 
-| Table              | Rows                  | Populated by                        |
-| ------------------ | --------------------- | ----------------------------------- |
-| `teams`            | 35                    | `ingest:dimensions` + `ingest:live` |
-| `team_seasons`     | 220 (20 per season)   | `ingest:dimensions` + `ingest:live` |
-| `players`          | 2690                  | `ingest:dimensions` + `ingest:live` |
-| `player_seasons`   | 7902                  | `ingest:dimensions` + `ingest:live` |
-| `fixtures`         | 4180 (380 per season) | `ingest:fixtures` + `ingest:live`   |
-| `events`           | 38 (2026-27 only)     | `npm run ingest:live`               |
-| `player_gameweeks` | 253509                | `npm run ingest:gameweeks`          |
+**The fifth, `ingest:live-gameweeks`, has never been run**, because no 2026-27
+match has been played; item 5 built and verified it anyway. Two consequences a
+session will otherwise get wrong. `player_gameweeks` holds exactly the ten CSV
+seasons. And the two "no matches recorded / no rows yet" empty states are gated
+on that table being empty, so **playing** the matches does not clear them and
+**ingesting** them does. The first real run turns `SEASONS_WITH_GAMEWEEKS` red on
+purpose: that is how the eleventh season announces itself.
 
-The three CSV scripts must be run in that order. Each asserts its predecessors'
-row counts before it starts and fails with a message naming the one to run
-first: `ingest:fixtures` needs `team_seasons`, and `ingest:gameweeks` needs
-`player_seasons` and `fixtures` to resolve its three season-scoped ids.
-`ingest:live` has no ordering constraint — it owns its own season end to end —
-and can be run at any time, as often as you like.
+**Item 7 stored NULL where the source holed a column — five columns of them, and
+deliberately not four.** That is Data Layer rule 6 applied per **fixture** as well
+as per season, in `server/src/ingest/holes.ts`, which both gameweek writers call.
+The four still storing `0` are the ICT quartet; Known Issues has the reason and
+`docs/items/item-07-null-for-holed-columns.md` the whole table.
 
-**Every one of those preconditions is scoped to the ten CSV seasons, and must
-stay scoped rather than loosened to `>=`.** The numbers are exact because that is
-what catches a dropped row, and a bound wide enough to admit a new season is wide
-enough to admit a missing match.
+**The app defaults to the newest season in the database — computed, not
+hardcoded — and since item 4 that is a season nobody has played yet.** The
+argument is written out beside `latestSeason()` in
+`server/src/repositories/seasons.ts`, which is where the next person will hit it.
+Every page header names the season it is showing, and the selected season **is**
+`bootstrap.season`, the one the server actually served, rather than a second piece
+of state free to disagree with the payload on screen.
 
-**The gameweek sync exists and has not been run.** `npm run ingest:live-gameweeks`
-loads match rows for the live season from the official API. Item 5 built and
-verified it; **it has never been pointed at 2026-27, because no match has been
-played.** `player_gameweeks` therefore still holds exactly the ten CSV seasons,
-and the two "no matches recorded / no rows yet" empty states stay until the
-first real run — they are gated on that table being empty, so playing the
-matches does not clear them and ingesting them does. The first real run also
-turns `SEASONS_WITH_GAMEWEEKS` in `career.test.ts` red, on purpose: that is how
-the eleventh season announces itself.
+**Seven routes: six read Postgres through `server/src/repositories/` and the
+seventh reads nothing.** The response shapes are `server/src/types/api.ts` and are
+not restated here. What is not in the types: `GET /api/bootstrap` runs its
+aggregate per request, with no cache and no materialized view, because a cache is
+a second source of truth.
 
-**Item 6 checked those rows against a second source and found holes; item 7
-stored NULL for five columns of them and deliberately left four.** The rule is
-Data Layer rule 6 applied per **fixture** as well as per season, and it lives in
-`server/src/ingest/holes.ts`, which both gameweek writers call. The four columns
-that still store `0` are the ICT quartet, and the entry in Known Issues names the
-rounds; the full table of what was found, including the five columns now stored
-NULL, is in `docs/items/item-07-null-for-holed-columns.md`, with the
-measurements there and in `docs/items/item-06-history-past-cross-check.md`.
+**There is a Comparison page, and it draws a radar of up to four (player, season)
+traces.** A trace is a **(player, season) pair, never a player**, so one added on
+one season stays pinned to it when the selector moves and two seasons reach one
+chart; the page issues one request per season in play and draws the axes **every
+one of them can answer**. The thresholds being served rather than compiled in
+means there is no axis configuration until they land, so the loading state is not
+optional. `client/src/lib/radar.ts` is the only place a value is scaled and
+`client/src/lib/comparison.ts` the only place the band's absence is decided —
+neither rule is restated in the component.
 
-**The app has a season selector, and the selected season is `bootstrap.season`**
-— the one the server actually served — rather than a second piece of state that
-could disagree with the payload on screen. The list of seasons rides on the
-bootstrap response as `seasons: string[]`.
+**The band is the selected season's cohort; the ceilings are pooled over ten
+seasons. Those are two different objects.** A scale has to be stable across
+seasons or nothing is comparable, and a band has to describe the population on
+screen or it describes a different game. Defensive contribution points forced the
+split — the evidence is in item 16's record.
 
-`npm test` runs **two suites on two runners**, server and client, plus
-`docs:size`. The suites are counted separately on purpose: two runners print two
-summaries, and a combined figure would be maintained by hand against neither of
-them. **The counts, and what every test file pins, are in `docs/testing.md`.**
-
-The root script is `run-s --continue-on-error docs:size test:server test:client`,
-so the client suite runs even when the server suite is red and the overall exit
-code is still non-zero. `npm run test:server` and `npm run test:client` run
-either alone. Not `&&`, which would hide the client result behind a database
-problem, and not `;`, which reports only the last command's exit code and would
-let a red server suite pass silently.
-
-The conventions the suites are written to belong here rather than in
-`docs/testing.md`, because they are rules rather than a map:
-
-- **The server suite is `node --import tsx --test` against the populated
-  database.** The client suite is **Vitest in jsdom** and touches no database.
-- **The client suite mocks the API at `services/api.ts`, never at `fetch`.**
-  Mocking the transport would additionally pin URL shapes and `res.ok` handling,
-  which the server suite already covers. `Players.columns.test.tsx` is the one
-  exception and says why in the file.
-- **Anything involving a keyboard is driven by `@testing-library/user-event`.**
-  `fireEvent` dispatches a synthetic click and so cannot tell a `<button>` from a
-  `<div onClick>`, which is the entire distinction item 3 turns on.
-- **A rule that is load-bearing in more than one caller gets its own test file**,
-  rather than coverage through its callers: `holes.test.ts` and `defcon.test.ts`
-  exist for that reason, and a regression in either would otherwise surface as a
-  confusing failure somewhere else.
-- **A test that writes to the real database writes a synthetic season inside a
-  `BEGIN … ROLLBACK`, and each suite owns its own.** `node --test` runs files in
-  parallel, and two suites sharing one season deadlocked on the unique index
-  (Postgres 40P01). The reservations are in `server/src/test/synthetic-seasons.ts`.
-
-Two runners rather than one, deliberately. The server suite's defining property
-is that it talks to Postgres, and `node:test` was already there and works. The
-client suite needs jsdom and a module mock, which is Vitest's job. Migrating the
-server suite to Vitest would be a tooling change wearing a testing item's
-clothes.
-
-**The player detail page is the header card, an Upcoming strip, and one career
-table**, and that career is the app's reason to exist: the FPL site shows a
-summary of previous seasons and stops, while every row here expands. One row per
-season, newest first, each into that season's gameweeks with its own GW-range and
-venue filters. The selected season
-is a row like any other, marked "Selected" in place, and starts expanded. There
-is no "This Season" section and no "Previous Seasons" heading — both named
-something that stopped being true when the selector landed.
-
-**Item 14 added the first scoring rule the app computes for itself.** Everything
-else on screen is FPL's number or arithmetic over FPL's numbers; a defensive
-contribution "hit" is a comparison we make. `server/src/repositories/defcon.ts`
-holds `DEFCON_THRESHOLDS` (DEF 10, MID 12, FWD 12, no goalkeeper threshold) and
-`defconHitSql(pg, ps)`, and **nothing else states the rule**: `getPlayerHistory`
-gets the per-row 0/1 and `listPlayerTotals` gets the season count from the same
-function. The client never compares a number to a threshold, because the Players
-list needs a count only the server can compute and one rule in two languages is
-free to drift.
-
-**Goalkeepers score no hits, because FPL computes no DC for them at all**, which
-was measured rather than assumed: DC is 0 on every goalkeeper row of 2025-26
-*while its components are not* — keepers recorded tackles, CBI and recoveries in
-those same rows. The 0 is FPL declining to compute the stat, so a keeper's DC is
-stored as it arrives and no threshold is applied.
-`defensive_contribution` is a raw action count and not points, and its
-composition is position-dependent: DEF = CBIT, MID/FWD = CBIRT.
-
-**`getPlayerHistory` LEFT JOINs `player_seasons`, and the choice is about the
-failure mode.** `player_gameweeks` has foreign keys to `fixtures`, `teams` and
-`players` and **none to `player_seasons`**, so an orphan match row is
-representable; but `player_seasons`' primary key `(player_id, season)` means the
-join cannot multiply. Only one half of that invariant is enforced. An inner join
-would **drop** an orphan and the gameweek would vanish with nothing on screen
-saying so; the left join yields a NULL position, falls through the `ELSE`-less
-`CASE` to NULL, and renders the no-value marker. Pinned by a test that inserts
-an orphan and goes red under an inner join.
-
-**Six of the seven routes read Postgres, and the seventh reads nothing.**
-`GET /api/bootstrap`, `GET /api/columns`, `GET /api/player/:code`,
-`GET /api/player/:code/career`, `GET /api/fixtures` and `GET /api/comparison` go
-through `server/src/repositories/`, and no SQL exists outside that directory.
-`GET /api/comparison-thresholds` serves item 16's frozen constants from
-`server/src/comparison/thresholds.ts` and touches no database at all — it is on
-the server so that re-deriving a threshold is a server-only change, and so that
-`verify:thresholds` can import the constants without a third cross-package
-import.
-
-**`GET /api/comparison` writes no SQL of its own, which is the point of it.**
-All eleven chart axes are already `PLAYER_COLUMNS` keys, so
-`server/src/comparison/cohort.ts` calls `listPlayerTotals` — the Players list's
-own query, with `measuredSum` and item 14's count guard already applied — and
-reads fields off its rows. Two axes are the exception and cost a **second
-implementation**: `Pts/£` and `DCH/St` are quotients whose only other home is
-`client/src/lib/playerColumns.ts`, and the band forces the duplication, because a
-median across 109 players cannot be taken on a client that sees two. **The drift
-is held by two anchors on one externally-derived number, one on each side of the
-language boundary** — Guéhi 2025-26 is 35.10 in `cohort.test.ts` and 35.10 in
-`playerColumns.test.ts`, both from item 16 step 1's psql table. Not by the
-server's 109-row loop, which restates the formula inline and so compares server
-code against server code.
-
-**The band is the selected season's cohort and never a pooled one**, and the
-ceilings are pooled and never per-season. Those are two different objects: a
-scale has to be stable across seasons or nothing is comparable, and a band has to
-describe the population on screen or it is describing a different game. Defensive
-contribution points are what forced the split — see the stub for item 16.
 `server/src/services/fplApi.ts` and its 5-minute cache are still there and still
-unused by the routes — it is the ingestion source for the live season, not dead
+unused by the routes: it is the ingestion source for the live season, not dead
 code.
-
-**There is a Comparison page in the nav, and it draws the radar.** Item 16
-step 4 is three sessions; the browser pass and the record are session 3. What is
-settled and load-bearing: **a trace is a (player, season) pair, never a player**,
-so a trace added on one season stays pinned to it when the selector moves and two
-seasons reach one chart; the page issues **one request per season in play**, and
-draws the axes **every one of them can answer** rather than the selected
-season's alone; and the thresholds being served rather than compiled in means
-there is no axis configuration until they land, so the loading state is not
-optional. Position is a page-level control and changing it clears the traces,
-because the server refuses a player who is not the position asked for.
-
-**The band draws only when every trace sits on the selected season.** One
-condition, two ways of otherwise describing a population nobody on screen belongs
-to: traces on two seasons, where two cohort medians exist and the selector picks
-between them by accident, and traces all on one season that is not the selected
-one, where the median comes from a season with nothing on the chart. Zero traces
-satisfies it and keeps its band. **The band never follows the traces instead** —
-a baseline that moved when a trace was added would let two charts be compared
-against different populations with neither saying so, which is worse than an
-absent one.
-
-**The geometry is `client/src/lib/radar.ts` and nothing else states it.** Three
-traps there, each of which renders plausibly when got wrong. A scale is
-**`(v - floor) / (ceiling - floor)`, not `v / ceiling`** — `minutes` floors at
-1,200 and `ppm` at the cohort p01, so the ratio form is right on six of the
-eleven axes and puts a defender on exactly 1,200 minutes at 35% of the radius.
-**At the ceiling exactly is not clipped**: `minutes` ceilings at 3,420 = 38 x 90,
-so an ever-present player hits it and a mark would claim his number was off the
-chart. And **a null breaks the outline** rather than being filtered out of it —
-filtering closes the ring with a chord across the missing spoke, at roughly the
-average of its neighbours, rendering "nobody measured this" as "about typical
-here". A clipped vertex is marked by a **shape**, never a colour: colour already
-carries which trace is which, which is what the four-trace cap budgets for.
-
-**`GET /api/columns` is the second route that spans seasons**, after `/career`,
-and follows the same rule: no `?season=`, no top-level `season`, and a `season`
-on every row (API identity rule 7). It returns 99 rows — eleven seasons by the
-nine nullable columns — each saying whether that column is `full`, `partial` or
-`none` there, and the round it starts at when it is partial. It exists for the
-column picker's reason strings, which have to name seasons other than the one on
-screen. The client fetches it once per page load, off the critical path, and
-nothing blocks on it.
-
-**`GET /api/bootstrap` also returns `columns`** — the same question for the
-selected season alone, top-level because a bootstrap response is one season
-throughout. It covers the **five** nullable columns that aggregate carries and
-makes no claim about the other four, which live on the career query: `none`
-means "no player has a value", and asserting that about a column nobody queried
-is how the first draft came to say `tackles: none` on a season where tackles is
-fully measured.
-
-The three season-scoped routes serve one season, defaulting to the latest in the
-database (computed, not hardcoded) and accepting `?season=2019-20`. An unknown
-season is a 400 listing the eleven that exist.
-
-**`GET /api/bootstrap` also returns `seasons: string[]`** — every season that
-exists, newest first, which is what the selector offers. It is on the bootstrap
-**only**, never on `/api/player/:code` or `/api/fixtures`. API identity rule 7
-has the argument.
-
-**`GET /api/player/:code/career` also returns a `player` identity block** —
-`{ id, web_name, first_name, second_name, photo }`, the season-independent half.
-It replaced that route's `playerExists` call rather than adding a query, and it
-is what lets the detail page name a player for a season he was not in the game
-for, where no player-season exists to name him from.
-
-**Each career row also carries `rounds: number[]`** — every round that season
-played, ascending, derived from `fixtures` rather than from the player's own
-gameweek rows, because a gap in the latter cannot distinguish "the season skipped
-this round" from "he was not in the squad". 2019-20 is `[1..29, 39..47]` and
-2022-23 is `[1..6, 8..38]`. It is what the per-season GW filter offers. API
-identity rule 7 has the argument for why it rides on the row.
-
-**The default follows the data, and since item 4 that means a season nobody has
-played yet.** The reasoning is written out beside `latestSeason()` in
-`server/src/repositories/seasons.ts`, which is where the next person will hit
-it. In short: the app is about the season being played, the pages that aggregate
-over `player_gameweeks` render explicit empty states rather than tables of
-zeroes, and the alternative — defaulting to the newest season with match data —
-would make the season everyone is actually playing invisible. Every one of them
-names the season it resolved, and every page header displays it.
-`/api/player/:code/career` is the exception and spans all of them: it takes no
-`?season=` and rejects one rather than ignoring it, and its rows carry the label
-instead (API identity rule 7).
-
-The client sends `?season=` on all three season-scoped routes. `App.tsx` sends
-it on the bootstrap; `Fixtures.tsx` sends it with the round, which it must,
-because that page derives its round from the _selected_ season's events and a
-request without a season would ask the _default_ season for it; and the detail
-detail page sends the season bootstrap resolved for the selected season's row,
-and each other row's own season when it is expanded.
-
-`GET /api/bootstrap` runs its aggregate per request. No cache and no
-materialized view: it is fast enough, and a cache is a second source of truth.
-
-**The cost depends on the season**, from ~23 ms on the unplayed 2026-27 to
-~121 ms on a complete 2025-26, measured end to end. Two things about the shape
-outlive the numbers. **2022-23 is the only season that runs a second query**: it
-is the one season with a `partial` column, and a partial column is the only thing
-that needs `measuredFrom` run to find its boundary — the other ten seasons run
-zero extra queries. That query is **sequential rather than parallel of
-necessity**, because which columns are partial is not known until the aggregate
-has been reduced, and firing it unconditionally would make every season pay for
-it. And the worst case is why the shell keeps the previous bootstrap mounted
-across a season change rather than blanking. Measurements:
-`docs/items/item-13-selectable-columns.md`.
-
-The app defaults to **2026-27**: 564 players, 20 clubs, 380 unplayed fixtures
-and 38 real deadlines, with GW1 locking 21 Aug 2026 at 17:30Z. 2025-26 remains
-complete and reachable at `?season=2025-26` and through every career table.
-
-**Step 7 split the types, and the JSON changed with it.** Decimals are numbers,
-not strings: `expected_goals` is `7.57`, not `"7.57"`. `server/src/types/`
-holds `wire.ts` (what upstreams send: strings and season-scoped ids), `domain.ts`
-(what the app means: numbers, permanent codes, explicit nulls) and `api.ts` (the
-response bodies). The parse happens once, in `server/src/repositories/parse.ts`,
-called column by column from each repository's mapper. Nothing in `client/`
-calls `parseFloat` any more.
 
 ## Tech Stack
 
@@ -394,7 +168,9 @@ fpl-lens/
 ├── docs/
 │   ├── data-profile.md        # CSV column presence, 2016-17 to 2025-26 only
 │   ├── testing.md             # what every test file pins: the suite's map
+│   ├── roadmap.md             # the work list: deferred, and local defects
 │   └── items/                 # item-NN-<slug>.md: one full record per item
+│       └── README.md          # the index, with each item's three-to-six lines
 ├── scripts/
 │   ├── fetch-raw-data.ts      # downloads historical CSVs
 │   └── profile-raw-data.ts    # profiles column drift across seasons
@@ -541,7 +317,8 @@ is silently wrong.
    contribution". Item 14's threshold rule is the model: it applies no threshold
    to a goalkeeper rather than comparing his 0 to one. Beware the near-miss —
    **a defender with recoveries alone also reads 0, and that is the second state,
-   correctly**, because DEF composition is CBIT and excludes recoveries. The two
+   correctly**, because DEF composition is CBIT and excludes recoveries, where
+   MID and FWD are CBIRT. The column is a raw action count and not points. The two
    are identical in the column. Counts:
    `docs/items/item-14-starts-and-defcon-hits.md` and
    `docs/items/item-15-documentation-split.md`.
@@ -696,6 +473,31 @@ is silently wrong.
     sources are currently clean. Do NOT normalise `'-'`, `'null'`, `'nan'` or
     lowercase `'none'`: none of them occur in any of the three files, and `'-'`
     could be legitimate in a text field.
+19. **A null has no position on a scale, so nothing may draw it at one.** Rule 6
+    in geometry. The case that established it is the comparison radar: filtering
+    the missing axes out of a trace and closing the ring draws a chord across the
+    missing spoke at roughly the average of its neighbours, rendering "nobody
+    measured this" as "about typical here" — a number invented by the drawing.
+    The outline breaks over the gap instead. A vertex at the centre is what a
+    measured **zero** looks like, which is the pair rule 6 exists to keep apart.
+20. **No SQL exists outside `server/src/repositories/`.** Two routes read no
+    database at all rather than reaching around it: `/api/comparison-thresholds`
+    serves frozen constants, and `/api/comparison` reads `listPlayerTotals`'s
+    rows because all eleven of its axes are already `PLAYER_COLUMNS` keys. A
+    query written elsewhere is a second place `measuredSum` and rule 6's count
+    guard have to be remembered.
+21. **Join `player_seasons` with a LEFT JOIN, because only half the invariant is
+    enforced.** `player_gameweeks` has foreign keys to `fixtures`, `teams` and
+    `players` and **none to `player_seasons`**, so an orphan match row is
+    representable — while that table's primary key `(player_id, season)` means
+    the join cannot multiply. An inner join **drops** the orphan and the gameweek
+    vanishes with nothing on screen saying so; the left join yields a NULL
+    position and renders the no-value marker. Pinned by a test that inserts an
+    orphan and goes red under an inner join.
+22. **The ingest preconditions are scoped to the ten CSV seasons and must stay
+    scoped rather than loosened to `>=`.** The asserted row counts are exact
+    because that is what catches a dropped row, and a bound wide enough to admit
+    a new season is wide enough to admit a missing match.
 
 ## API Identity Rules
 
@@ -866,6 +668,17 @@ deliberate breaking change in it. Rules 7 and 8 were added in step 7.
 number` cast that shipped the string, and a `Number(x) || 0` that would turn
    rule 6's null into a zero.
 
+9. **A scoring rule the app computes for itself lives on the server and is
+   stated once.** Everything else on screen is FPL's number or arithmetic over
+   FPL's numbers; a defensive contribution "hit" is a comparison we make.
+   `server/src/repositories/defcon.ts` holds `DEFCON_THRESHOLDS` (DEF 10, MID 12,
+   FWD 12, and none for goalkeepers) and `defconHitSql`, and nothing else states
+   the rule — the per-row 0/1 and the season count come out of the same function.
+   **The client never compares a number to a threshold.** The Players list needs
+   a count only the server can compute, and one rule in two languages is free to
+   drift; item 11's rounding bug was exactly that and surfaced only when the two
+   numbers disagreed on screen.
+
 ## Getting Started
 
 ```bash
@@ -955,84 +768,6 @@ five the ingest fixes, so the ICT quartet nothing NULLs keeps its attribution.
 `npm test` runs both suites. The server suite needs the database up and the
 three CSV ingest scripts to have been run; the client suite needs neither and
 can be run alone with `npm run test:client`.
-
-## What's Built
-
-- [x] Postgres-backed read API through `server/src/repositories/`
-- [x] Player list with search, position filter and sortable columns
-- [x] Player header card (season, team, position, price, apps, starts, xG, xA, ICT)
-- [x] Gameweek-by-gameweek stats table (sortable, all columns, keyed on fixture)
-- [x] Filters on **every** expanded season, not just one: a GW range built from
-      that season's own rounds, and home/away. State is per season, because the
-      round sets differ — 2019-20 runs to 47, 2022-23 has no round 7
-- [x] Averages row in stats table, nulls skipped, denominator stated — and a
-      footnote that **names** the column group resting on a different number of
-      appearances rather than printing a range spanning both
-- [x] Dashboard, ranked on real aggregates: total points, points per match with
-      an appearance floor, ICT index
-- [x] Fixtures page with difficulty ratings, by gameweek
-- [x] Every page header names the season it is showing
-- [x] One career table, every season a row, the selected one merged in as a row
-      like any other — its gameweeks underneath when expanded
-- [x] The eleven columns FPL shows that we used to drop — xGC, tackles, CBI,
-      recoveries, defensive contribution, own goals, penalties saved and missed,
-      cards, saves — on both the gameweek rows and the season summary
-- [x] Four distinct empty states where there was one
-- [x] A client test suite: components in jsdom with the API mocked, running
-      alongside the server suite under one `npm test`
-- [x] Every interactive element reachable by keyboard: the career and Players
-      row toggles, and the sortable column headers on both tables
-- [x] Click-through from all three Dashboard rankings to a player's detail page
-- [x] The live season, ingested from the official API: clubs, roster, deadlines
-      and fixtures for 2026-27, re-runnable through the transfer window
-- [x] Real gameweek deadlines, and a countdown that counts down to one
-- [x] Pre-season empty states on the three Dashboard rankings, worded from the
-      data rather than the calendar
-- [x] Upcoming fixtures on the detail page, with difficulty — populated for the
-      first time, every previous season having been complete
-- [x] The player's photograph on the header card, with a placeholder fallback
-- [x] The incremental gameweek sync — **written and verified, not yet run**, so
-      no 2026-27 match rows exist and the two empty states remain
-- [x] A read-only cross-check of all ten seasons against FPL's own totals
-- [x] NULL rather than 0 where the source holed a column, applied by both
-      gameweek writers; and a season aggregate that returns no total for a column
-      measured on only part of a season
-- [x] A season selector: all eleven seasons on every page, persisted, and
-      validated by the server rather than by a second copy of its rule
-- [x] The detail page survives a season change — header, gameweeks and career
-      row all naming the same season, and a name-and-photo header for a season
-      the player was not in the game for
-- [x] `currentGameweek`/`nextGameweek` return null instead of a plausible wrong
-      answer, so no completed season announces a played round as upcoming
-- [x] Club shirts on every player row, with the goalkeeper variant, falling back
-      to the club badge for the fifteen stored clubs FPL publishes no shirt for,
-      and to a grey placeholder behind that
-- [x] The header card's photograph, falling back to the club shirt; and
-      `preconnect` to both image origins
-- [x] Selectable columns on the Players list — thirteen by default, **twenty-five
-      offered**, persisted across sessions and season changes. A column is offered
-      only where **every row of that season carries a value**; an unavailable one
-      is **disabled with the reason on screen** rather than hidden, and the reason
-      names where the column *is* recorded
-- [x] Games started per gameweek — the one thing the gameweek table could not
-      say, since a row reading 45 minutes is either a start hooked at half time
-      or a substitute brought on at half time
-- [x] Defensive contribution **hits**: a per-gameweek 0/1 beside the raw count,
-      and a season count plus hits-per-start on the Players list. The first
-      scoring rule the app computes for itself, stated once on the server
-- [x] Derived columns in the picker (`dependsOn`), whose availability is the most
-      restrictive of the columns they read
-- [x] A Comparison page: a radar of up to four (player, season) traces on frozen
-      per-axis scales, so two seasons draw against the same rings. An unavailable
-      axis is dropped and the wheel re-spaced; an above-ceiling value clamps and
-      is marked by a shape carrying its true number; an unmeasured one breaks the
-      outline rather than sitting at zero. The season's cohort median is a filled
-      band underneath, withdrawn when the traces are not from that season
-
-The live FPL API proxy in `services/fplApi.ts` still exists with its 5-minute
-cache, but no route calls it: it is the ingestion source for the live season.
-`components/PlayerSearch.tsx` is an orphan from the original scaffold — the
-Players page has its own inline search and nothing imports it.
 
 ## Known Issues
 
@@ -1492,197 +1227,44 @@ numbers from the events themselves rather than counting them.
 
 ## Phase 1
 
-Same rule as Phase 0: one item per session, committed between each.
+One item per session, committed between each. **The record of every item is
+`docs/items/item-NN-<slug>.md`, indexed with these same lines in
+`docs/items/README.md`. This is an index, not a summary — open the file.**
 
-**The full record of every item lives in `docs/items/item-NN-<slug>.md`, one
-file per item, and every item has one.** What is left below is a
-stub — three to six lines and nothing more. **A stub is not the record.** Before
-planning around anything an item decided, read its file; the working agreement's
-"trace a claim to the code before repeating it" applies doubly to a four-line
-summary of a four-page argument.
-
-Items 10 and 11 wrote no record at the time, so their files are their commit
-messages, reconstructed in item 15 and labelled as such.
-
-The one-file-per-item layout is item 15's. Item 13 had split every record into a
-single sibling `CLAUDE-history.md`, which halved this file's growth once without
-changing its slope; item 15 dissolved that file, moved the test-suite catalogue
-to `docs/testing.md`, and put a mechanical size check on this one
-(`npm run docs:size`) so the wall is hit by a failing test rather than by a
-session that has already spent its budget.
-
-**Commits go directly to `main`.** No branches, no `Co-Authored-By` trailer.
-This is a solo repository with no reviewer and no CI, so a pull request has
-nothing to serve: the working agreement above makes the session the unit of
-work and the commit the boundary between units. Every commit in this history
-was made this way. Standing guidance to branch before committing on a default
-branch does not apply here, and flagging the conflict each session is
-unnecessary once this line exists.
-
-- [x] **1. Career history on the player detail page.** → `70003f4`
-
-      `GET /api/player/:code/career`, one row per season, each expanding into
-      that season's gameweeks by re-using `GET /api/player/:code?season=X` and
-      the same `StatsTable`. Rewrote API identity rule 7 rather than satisfying
-      it: a response spanning seasons labels every row, not the body. Found the
-      StrictMode double-fetch — a fetch fired inside a `setExpanded` updater.
-
-- [x] **2. Client-side testing.** → `a4cefed`
-
-      Vitest in jsdom, React Testing Library, the API mocked at
-      `services/api.ts`. Two runners rather than one, with root `test` as
-      `run-s --continue-on-error` so a red server suite cannot hide the client
-      result. The mutation check found a test that goes red only when **both**
-      halves of a fix are reverted — so "either half alone is green" must never be
-      read as "either half alone is fine".
-
-- [x] **3. Keyboard reach and click-through.** → `6c01bb6`
-
-      Career rows were `<tr onClick>` that no keyboard could reach, and the
-      Dashboard's three rankings had no click handler at all. Four `<tr>`/`<th>`
-      handlers became real `<button>`s, plus one focus bug. The browser pass
-      caught a regression no class-level test could — every sortable table's
-      header row collapsed with every asserted class present, because jsdom does
-      not lay out.
-
-- [x] **4. The 2026-27 season, from the live API.** → `5a611de`
-
-      `ingest:live` loads clubs, roster, deadlines and fixtures into the same six
-      tables the CSV backfill writes, plus a new `events`. It writes **no**
-      `player_gameweeks`. Built mostly around one trap: a pre-season bootstrap
-      serves LAST season's totals on every element, so a naive ingest produces a
-      plausible copy of 2025-26. Split `ALL_TEN` into `ALL_SEASONS` and
-      `SEASONS_WITH_GAMEWEEKS`, which were one list until this landed.
-
-- [x] **5. The incremental gameweek sync.** → `2e5918c`
-
-      `ingest:live-gameweeks`, **written and verified, never run** — no 2026-27
-      match has been played. The verification the task asked for was impossible,
-      the API serving no previous season at gameweek granularity, so it is two
-      results **deliberately never merged into one**: a replay of 2025-26's CSV
-      through the new mapper, which is strong about the new code and silent about
-      the source, and a `history_past` cross-check, which is the other half. Also
-      found the 2024-25 `defensive_contribution` gap.
-
-- [x] **6. The `history_past` cross-check, run wide.** → `59b1860`
-
-      `verify:history-past` diffs every player-season we hold against FPL's own
-      totals, over all ten seasons and every column. Nearly all of the drift is
-      attributable to **fixtures where a column reads 0 on every row of a match
-      that was played**, which is what item 7 then fixed; a small residue is
-      genuinely unexplained and is recorded as such. **Drift direction is what
-      pointed at the cause** — ours is lower almost everywhere, and revision goes
-      both ways while loss only goes down.
-
-- [x] **7. Store NULL where the source holed a column.** → `cdb5407`
-
-      The hole rule, `server/src/ingest/holes.ts`, applied by both gameweek
-      writers, and `measuredSum`, which stops a season aggregate reporting a
-      partly measured column as a whole-season total. **The ICT quartet was
-      excluded on proportion**: its holes are an order of magnitude smaller than
-      the expected family's, and blanking them would cost every player in two
-      seasons their ICT total to flag a few percent.
-
-- [x] **8. A season selector.** → `b34876b`
-
-      All eleven seasons on every page. The selected season is
-      `bootstrap.season` — the one the server actually served — rather than a
-      second piece of state free to disagree with the payload on screen. Carried
-      the `detailPlayer` snapshot fix, and made `currentGameweek`/`nextGameweek`
-      return null instead of a plausible wrong answer.
-
-- [x] **9. Club jerseys, and the photo loading work.** → `79950db`
-
-      `PlayerShirt` on every player row, falling back shirt → club badge → grey.
-      The audit ran first and reshaped the item: a shirt exists for **exactly**
-      the current season's twenty clubs and no others, so the planned grey
-      fallback would have blanked half of 2016-17. The header photograph got much
-      lighter. Holds the preconnect A/B and the post-mortem on its stopping rule,
-      which returned a null by construction.
-
-- [x] **10. Sticky headers, pinned columns, row striping.** → `2ce4fd9`
-
-      Column headings scrolled away vertically and the identifying column
-      scrolled away horizontally on three wide tables. Adds sticky headers, pins
-      Opp beside GW, pins the Player column, stripes all four tables, and moves
-      row background colour from the cell to the row (`lib/rowSurface.ts`). The
-      load-bearing discovery: `overflow-x: auto` with `overflow-y: visible`
-      computes `overflow-y` to **auto**, so every wrapper was already a vertical
-      scroller in which a sticky header never sticks.
-
-- [x] **11. Averages divide by appearances, not fixtures.** → `5fad1b8`
-
-      The averages row divided by every row shown while the career row six inches
-      above divided by appearances. New: `client/src/lib/averages.ts`, holding
-      the normalization strategies, per-column denominators, `roundHalfEven` and
-      `fmtPpg`. The numerator and denominator filters are deliberately **not**
-      symmetric, which API identity rule 5 now records in full.
-
-- [x] **12. The selected season merged into the career table.** → `0becf6d`
-
-      One career table with the selected season as a row in it, marked in place
-      and expanded by default. Both section headings went rather than being
-      renamed — item 8's selector made "This Season" and "Previous Seasons" false
-      claims. Filters moved onto every expansion, so their state is per season.
-      `rounds: number[]` is new on every career row, derived from `fixtures`
-      rather than the player's own rows. The averages footnote names its column
-      group instead of printing a range spanning both denominators.
-
-- [x] **13. Selectable stat columns on the Players list.** → `5c61e16`
-
-      A persisted column picker on the Players list. The picker is the easy half.
-      The load-bearing half is the **availability rule** — a column is offered for
-      a season only when every row that season carries a value, so 2022-23's
-      expected family is withheld rather than shown as a whole-season total, and
-      an unavailable column is **disabled with the reason on screen** rather than
-      hidden. New: `/api/columns`, `bootstrap.columns`, `npm run verify:columns`.
-
-- [x] **14. Games started per gameweek, and defensive contribution hits.** → `5aca74f`
-
-      A season DC total does not say whether the player clears the threshold.
-      Adds `starts` and a `defcon_hit` 0/1 per gameweek, and two Players-list
-      entries. **The first scoring rule the app computes for itself**, so it gets
-      a module (`server/src/repositories/defcon.ts`) and the client never compares
-      a number to a threshold. Also new: `dependsOn` on a column definition, and
-      `npm run verify:defcon`, which reports two results that are never merged.
-
-- [x] **15. One record per item, and a size check that fails.**
-
-      `CLAUDE.md` hit its read limit for the second time, item 13's split having
-      been consumed by one item. One file per item under `docs/items/`, the test
-      catalogue to `docs/testing.md`, Deferred to `docs/roadmap.md`. **The content
-      test** — "would a reader need this to avoid writing wrong code tomorrow?" —
-      moved out most of what a pure record-dissolution would have left, and most
-      of that came from sections nominated to stay, because the mixing is *within*
-      sections. Also resolved five flagged invariants and made the budget a
-      failing test.
-
-- [x] **16. The comparison chart's frozen thresholds.**
-
-      Thresholds before any chart, because freezing them is what makes two
-      seasons comparable and every other decision on the page rests on them. 35
-      floors and ceilings, per position, served by
-      `GET /api/comparison-thresholds` — **on the server so that re-deriving one
-      is a server-only change**, and so the check can import them without a third
-      cross-package import. **The ceilings pool ten seasons and the average band
-      must not**: defensive contribution points broke the defender distribution
-      at 2025-26, so a pooled band would render the typical modern defender
-      permanently above it. Also killed a rule of its own: the clipping trigger
-      fired on 18 of 36 axes as arithmetic rather than as data.
-
-      Step 3 added `GET /api/comparison` — the values drawn against those scales,
-      and **the band computed per season for the reason above**. It writes no SQL:
-      every axis is a `PLAYER_COLUMNS` key, so it reads `listPlayerTotals`'s rows.
-      The median is `percentile_disc` — an actual member value — and the test that
-      pins it uses an **even** cohort, because every odd one agrees under both
-      conventions and would pass either.
-
-      Step 4 is the page, in three sessions of its own. **Session 1 is fetch and
-      state, with no chart**: the route, the two fetches, the loading state the
-      served thresholds make mandatory, and a trace keyed on **(player, season)**
-      so cross-season comparison is reachable rather than a later rewrite. Also
-      found step 3's drift guard comparing server code against server code, and
-      gave it a client-side anchor on the same number.
+- [x] **1. Career history on the player detail page.** → `70003f4` — a response
+      spanning seasons labels every row, not the body; rewrote API identity rule 7.
+- [x] **2. Client-side testing.** → `a4cefed` — Vitest in jsdom, two runners, and
+      a test that goes red only when *both* halves of a fix are reverted.
+- [x] **3. Keyboard reach and click-through.** → `6c01bb6` — four `<tr>`/`<th>`
+      handlers became real buttons; the browser caught what no class test could.
+- [x] **4. The 2026-27 season, from the live API.** → `5a611de` — built around one
+      trap: a pre-season bootstrap serves LAST season's totals on every element.
+- [x] **5. The incremental gameweek sync.** → `2e5918c` — written, verified, never
+      run. The asked-for verification was impossible, so it is two halves.
+- [x] **6. The `history_past` cross-check, run wide.** → `59b1860` — drift
+      direction is what pointed at the cause: loss only goes down, revision both ways.
+- [x] **7. Store NULL where the source holed a column.** → `cdb5407` — the ICT
+      quartet excluded on proportion; `measuredSum` for the season aggregate.
+- [x] **8. A season selector.** → `b34876b` — the selected season is
+      `bootstrap.season`, not a second piece of state free to disagree with it.
+- [x] **9. Club jerseys, and the photo loading work.** → `79950db` — the audit ran
+      first and reshaped the item; holds the preconnect A/B post-mortem.
+- [x] **10. Sticky headers, pinned columns, row striping.** → `2ce4fd9` —
+      `overflow-x: auto` computes `overflow-y` to auto, so nothing was sticking.
+- [x] **11. Averages divide by appearances, not fixtures.** → `5fad1b8` — the
+      numerator and denominator filters are deliberately not symmetric.
+- [x] **12. The selected season merged into the career table.** → `0becf6d` — both
+      section headings went rather than being renamed; `rounds` from `fixtures`.
+- [x] **13. Selectable stat columns on the Players list.** → `5c61e16` — the picker
+      is the easy half; the availability rule is the load-bearing one.
+- [x] **14. Games started, and defensive contribution hits.** → `5aca74f` — the
+      first scoring rule the app computes for itself, so it gets a module.
+- [x] **15. One record per item, and a size check that fails.** — the content test
+      moved out most of what a pure record-dissolution would have left.
+- [x] **16. The comparison chart.** — thresholds frozen before any chart, because
+      that is what makes two seasons comparable; then the route, then the radar.
+- [x] **17. What CLAUDE.md is for.** — a criterion rather than a fourth record
+      move: unconditionally-useful stays, re-derivable and local go.
 
 ## Deferred
 
@@ -1739,16 +1321,55 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
 - Read this file before starting any task, and `docs/data-profile.md` before
   touching an ingest. Note what the profile covers: the ten backfilled seasons'
   **CSVs**, not 2026-27 and not the database — see rule 6.
-- **This file is one of three, and the split is load-bearing rather than tidy.**
-  `docs/items/item-NN-<slug>.md` holds the full record of each Phase 1 item;
-  `docs/testing.md` holds the map of the test suite; this file holds what the next
-  session has to reason *from* — the data rules, the API identity rules, Known
-  Issues, Current State, the schema notes and this agreement. Neither of the other
-  two is read by default. Read the relevant item file before planning around what
-  an item decided, and before repeating any claim a stub makes.
+- **What this file is for, and the one test that decides what belongs in it.**
+  It is read *in full, before the task is known*. That is the only property
+  separating it from every other document here, and it gives the criterion:
+
+  > **A section earns its place if a session that has not yet been told its task
+  > would write wrong code without it.**
+
+  Not "is it useful" — nearly all of it is. The test is whether it is useful
+  *unconditionally*, because unconditional is what a full pre-task read buys and
+  the only thing it buys. Two corollaries do the work:
+
+  - **Re-derivable ⇒ out.** A row count, a timing, a response shape is answered
+    by one query or by opening the file that defines it, and it can drift
+    silently in a way the code cannot.
+  - **Local ⇒ out.** If the only session that needs a fact is one already editing
+    the file it concerns, that session is one grep away and the other twenty paid
+    for it.
+
+  **The pointer tax applies to records, not to descriptions**, which is why
+  moving records stopped being the lever after item 15: a record has to be
+  findable by name, so it leaves a stub behind worth roughly half of what it
+  removed. A description of code needs no pointer — it needs re-deriving, and
+  re-deriving is free.
+
+  The rest of the split follows from that. `docs/items/item-NN-<slug>.md` holds
+  each item's full record, indexed by `docs/items/README.md`; `docs/testing.md`
+  maps the test suite; `docs/roadmap.md` holds deferred work. **None of them is
+  read by default.** Read the relevant item file before planning around what an
+  item decided, and before repeating any claim the index makes.
 
   The rules that keep it that way, each of which exists because the file hit a
-  context budget twice:
+  context budget three times:
+
+  - **Current State holds invariants, not descriptions.** A paragraph belongs
+    there only if code could contradict it. A row count, a timing or a response
+    shape is re-derivable and belongs in the item file that measured it.
+  - **A Known Issues entry must be non-local** — it must be able to bite a
+    session that never opens the file it concerns. The 2022-23 `starts` sort
+    hazard is the type case: it fires on a per-90 toggle three files away. A
+    defect confined to one file is roadmap work.
+  - **The levers are finite, and this is the order they run out in.** The file is
+    ~92k, of which ~40k is rules that cannot leave under the criterion above.
+    Next is splitting Known Issues by locality, worth about 5,800 — held back in
+    item 17 only because that session was about to edit three of the surfaces it
+    would have moved, and **you do not relocate something you are about to
+    edit**. After that there is nothing left but the rules themselves, which
+    means a session would stop reading all the prohibitions before it starts.
+    That is a different kind of file. Written down here while it is a choice,
+    rather than discovered at 119,000.
 
   - **A new item's record goes in `docs/items/item-NN-<slug>.md`. This file gets
     the stub only, three to six lines. A stub is not the record.**
@@ -1791,6 +1412,35 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
     threshold is below the 150k read limit precisely so one item's record can land
     before the budget bites, and raising it spends the margin that exists to stop
     an overflow being silent.
+- **The suite is two runners, and the conventions it is written to are rules
+  rather than the map `docs/testing.md` holds.** The server suite is
+  `node --import tsx --test` against the populated database; the client suite is
+  **Vitest in jsdom** and touches none. Two runners deliberately: the server
+  suite's defining property is that it talks to Postgres, and migrating it to
+  Vitest would be a tooling change wearing a testing item's clothes. Root `test`
+  is `run-s --continue-on-error` so a red server suite cannot hide the client
+  result, which `&&` would and `;` would report as green.
+
+  - **The client suite mocks the API at `services/api.ts`, never at `fetch`.**
+    Mocking the transport would additionally pin URL shapes and `res.ok`
+    handling, which the server suite already covers. The two exceptions are the
+    module-scope memos, where the memo **is** the mechanism under test.
+  - **Anything involving a keyboard is driven by `@testing-library/user-event`.**
+    `fireEvent` dispatches a synthetic click and so cannot tell a `<button>` from
+    a `<div onClick>`, which is the entire distinction item 3 turns on.
+  - **A rule load-bearing in more than one caller gets its own test file**, not
+    coverage through its callers. A regression would otherwise surface as a
+    confusing failure somewhere else.
+  - **A test that writes to the real database writes a synthetic season inside a
+    `BEGIN … ROLLBACK`, and each suite owns its own.** `node --test` runs files
+    in parallel, and two suites sharing one season deadlocked on the unique index
+    (Postgres 40P01). Reservations: `server/src/test/synthetic-seasons.ts`.
+- **Commits go directly to `main`.** No branches, no `Co-Authored-By` trailer.
+  Solo repository, no reviewer, no CI, so a pull request has nothing to serve:
+  the session is the unit of work and the commit the boundary between units.
+  Standing guidance to branch before committing on a default branch does not
+  apply here, and flagging the conflict each session is unnecessary once this
+  line exists.
 - One item per session, from Deferred, chosen deliberately. Commit between them.
 - Plan before writing code for anything that ingests or aggregates. That is
   where an agent will confidently produce something that silently drops rows.
@@ -1800,6 +1450,17 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
   competition format, `SUM(minutes)` against 380 × 2 × 11 × 90, acceptance
   values from `history_past` rather than the CSVs — and report an approximate
   quantity as a band, not a number.
+
+  **Two forms of that failure are worth naming, because three tests in item 16
+  passed against the very bug they existed to catch.** A test whose two sides can
+  only disagree in one direction **must exercise that direction** — an
+  odd-numbered cohort agrees under both median conventions, and an axis
+  intersection read off the restrictive season agrees with the wrong
+  implementation. And **a check that never names an externally-derived number is
+  comparing an implementation to itself**: a 109-row loop restating the formula
+  inline is server code against server code, however thorough it looks. Where one
+  quantity is computed in two languages, the guard is one externally-derived
+  anchor **on each side of the boundary**, not a loop on either.
 - **A frozen constant records the seasons and cohort it was derived from, as
   data rather than as a comment, and fewer than five seasons means it gets
   re-derived when a season is added.** Five or more is frozen and re-derived only
@@ -1816,6 +1477,14 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
 
   Five is a defensible line rather than a derived one: it is the point at which a
   statistic's per-season spread stops being one season wide.
+
+  **A frozen scale and a typical-value marker are different objects and must not
+  share a derivation.** A scale has to be stable across seasons or nothing is
+  comparable; a marker has to describe the population on screen or it describes a
+  different game. Item 16 is the evidence: defensive contribution points broke
+  the defender distribution at 2025-26, so the comparison ceilings pool ten
+  seasons while the band is computed per season. Pooling both would have put the
+  typical modern defender permanently above his own average.
 - **Trace a claim to the code before repeating it.** Two entries in Known Issues
   were false when audited in step 7, one of them written by the previous session
   and planned around by the next. An issue list that is not re-checked is worse
@@ -1909,12 +1578,14 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
   by the time a record is written the room is already gone. A file that has to be
   trimmed is trimmed while there is still appetite to do it properly.
 
-- End each session by updating the Current State section above so the next
-  session starts from truth rather than a stale description, and by writing the
-  item's record — **in `docs/items/item-NN-<slug>.md`**, with a stub here. Items
-  10 and 11 skipped their record entirely and the client test count drifted
-  unnoticed across two items, because there was nowhere it was being restated. The record is where a measurement survives; the stub is only a
-  pointer to it.
+- End each session by writing the item's record — **in
+  `docs/items/item-NN-<slug>.md`**, with an index line here and in
+  `docs/items/README.md` — and by correcting any **invariant** in Current State
+  the session made false. Not by describing what it built: that is the
+  descriptions rule above, and it is what took this section to 18,795 characters.
+  Items 10 and 11 skipped their record entirely and the client test count drifted
+  unnoticed across two items, because there was nowhere it was being restated.
+  The record is where a measurement survives; the index line is only a pointer.
 
 ## Agent skills
 
