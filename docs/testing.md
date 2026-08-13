@@ -17,7 +17,7 @@ restated as rules here. What follows is the catalogue.
 
 ## The counts
 
-`npm test` runs **two suites on two runners**: **142 server tests** and **215
+`npm test` runs **two suites on two runners**: **142 server tests** and **244
 client tests**, all passing. They are counted separately on purpose — two
 runners print two summaries, and a combined figure would be maintained by hand
 against neither of them.
@@ -195,7 +195,7 @@ additionally pin URL shapes and `res.ok` handling, which the server suite
 already covers. `@testing-library/user-event` drives anything involving a
 keyboard — `fireEvent` dispatches a synthetic click and so cannot tell a
 `<button>` from a `<div onClick>`, which is the entire distinction item 3 turns
-on. Twenty-one files:
+on. Twenty-three files:
 
 - `client/src/components/PlayerShirt.test.tsx` — the club shirt and its two
   fallbacks. URLs asserted **in full** rather than pattern-matched, for the
@@ -240,8 +240,9 @@ on. Twenty-one files:
   35.10 on both sides; Gabriel's `11 / 30` was already here from item 14.
 
 - `client/src/pages/Comparison.test.tsx` — the comparison page's fetching and
-  state, with no chart yet (item 16 step 4, session 1). Nineteen tests over three
-  properties a chart cannot be built on top of if they are wrong.
+  state (item 16 step 4, sessions 1 and 2). Twenty-three tests over three
+  properties a chart cannot be built on top of if they are wrong. The geometry
+  is not here — see `radar.test.ts` and `ComparisonRadar.test.tsx`.
 
   **The loading state is real**: serving the thresholds rather than compiling
   them in means the page has no axis configuration until they land, which item
@@ -262,18 +263,57 @@ on. Twenty-one files:
   a double-invoked effect answers the first call and resolves the second, so the
   loading state they exist for never rendered.
 
-  **The band is hidden when the traces span more than one season**, because two
-  seasons are two cohort medians and the selected season's is not a neutral
-  choice between them. Three tests, and the second is the one that stops the
-  condition being written wrong: the trigger is the number of *distinct trace
-  seasons*, so two traces sharing one season keep their band and zero traces
-  keep theirs. Both mutations were run — dropping the rule turns the first red,
-  and `traces.length > 1` turns the second red while leaving the first green.
+  **The band draws only when every trace sits on the selected season**, which
+  is one condition covering two failures: traces on two seasons, where there are
+  two cohort medians and the selector picks between them by accident, and traces
+  all on one season that is not the selected one, where a median is drawn from a
+  season with nothing on the chart. Four tests. Two of them exist to stop the
+  condition being written wrong in either direction — two traces sharing one
+  season keep their band, and zero traces keep theirs. Three mutations run:
+  dropping the rule turns the spanning test red; `traces.length > 1` turns the
+  shared-season test red while leaving it green; and session 1's narrower
+  `distinct seasons > 1` turns *only* the not-the-selected-season test red.
 
   **The trace limit states its reason rather than the rule.** "Maximum 4"
   restates the number; the sentence a reader can act on is that four is as many
   as colour can tell apart. Item 13's disabled-with-a-reason, applied to a
   control instead of to a column.
+
+- `client/src/lib/radar.test.ts` — the radar's geometry as arithmetic (item 16
+  step 4, session 2). Sixteen tests, each written against **the wrong
+  implementation it would otherwise agree with** rather than against a plausible
+  number: `v / ceiling` for `(v - floor) / (ceiling - floor)`, which is right on
+  six of the eleven axes and puts a defender on exactly 1,200 minutes at 35% of
+  the radius; `>=` for `>` on the clip test, which marks a value that is exactly
+  at a ceiling — and `minutes` ceilings at 3,420, the maximum the competition can
+  produce, so an ever-present player hits it; and filtering the nulls out before
+  drawing, which closes the ring through a chord across the missing spoke at
+  roughly the average of its neighbours.
+
+  Also the re-spacing: a seven-axis chart is not a ten-axis chart with three
+  spokes missing, so every spoke after the first sits somewhere different.
+
+  Mutations run, and what each turned red: the ratio impostor → 2 tests; `>=` →
+  2, one here and one in the component file; filter-and-close → 3, two here and
+  one in the component file. Nothing else in the suite moved for any of them,
+  which is what says the geometry is pinned here and nowhere by accident.
+
+- `client/src/components/ComparisonRadar.test.tsx` — what the radar draws, once
+  the shapes are in a document: ring count, spoke count, which shape a clipped
+  vertex gets, whether an outline closes, and that the band is painted first so
+  it sits underneath. Twelve tests, no API mock and no provider — the component
+  takes one prop and fetches nothing.
+
+  **The `radar-*` class names it queries are structural hooks, not styling.** An
+  SVG shape has no role and no text, and the alternative was matching on `fill`,
+  which would couple every structural assertion to a colour. This is not item 3's
+  class-level assertion: these name what a shape *is*, and claim nothing about
+  appearance that jsdom cannot see.
+
+  The case worth the file is **two traces clipping the same axis**. Both clamp to
+  the same point, so unmarked they are one triangle where there are two; the
+  markers are fanned along the outer ring at a single radius and both true
+  numbers are printed beside the caption.
 
 - `client/src/services/api.comparison.test.ts` — the thresholds memo, which is
   `fetchColumnHistory`'s with one clause **reversed**. `fetch` is mocked rather

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { PlayerShirt } from '../components/PlayerShirt';
+import { ComparisonRadar } from '../components/ComparisonRadar';
 import { fetchComparison, fetchComparisonThresholds } from '../services/api';
 import type {
   AxisThreshold,
@@ -8,7 +9,6 @@ import type {
   ComparisonThresholdsData,
   Player,
 } from '../types/fpl';
-import { NO_VALUE, fmtNum } from '../types/fpl';
 import { useBootstrap } from '../lib/bootstrap';
 import { FOCUS_RING, cn } from '../lib/cn';
 import {
@@ -16,10 +16,12 @@ import {
   DEFAULT_POSITION,
   ELEMENT_TYPE_OF,
   MAX_TRACES,
+  TRACE_COLORS,
   TRACE_LIMIT_REASON,
   hasTrace,
   mergeComparison,
   traceKey,
+  type ComparisonView,
   type SeasonResult,
   type Trace,
 } from '../lib/comparison';
@@ -31,12 +33,36 @@ const MAX_CANDIDATES = 8;
 const NO_AXES: AxisThreshold[] = [];
 
 /**
- * The player comparison chart.
+ * What the band's presence or absence says, in one place.
  *
- * **Session 1 of three: the fetching and the state, with no chart.** The radar
- * geometry is session 2 and replaces the read-out below; what has to be right
- * first is which seasons are asked for, what a trace is, and what the page does
- * while it has no axis configuration at all.
+ * The two withheld cases are worded from the tag rather than from the traces,
+ * so the sentence and the rule cannot disagree about which case fired. The
+ * third absence — the server's own cohort floor — is read off `cohortSize`,
+ * which is the number that explains it.
+ *
+ * Not exported: a non-component export would take this file out of React Fast
+ * Refresh's hands and turn every subsequent edit to it into a full reload.
+ */
+function bandCaption(view: ComparisonView, position: ComparisonPosition, season: string): string {
+  const cohort = `${view.cohortSize} ${position}s past 1,200 minutes in ${season}`;
+  if (view.bandWithheld?.reason === 'spans-seasons') {
+    return `No band · the traces span ${view.bandWithheld.seasons} seasons, each with its own median`;
+  }
+  if (view.bandWithheld?.reason === 'other-season') {
+    return `No band · every trace is from ${view.bandWithheld.season}, and the band would be ${season}’s`;
+  }
+  return view.band === null ? `No band · ${cohort}` : `Band · median of ${cohort}`;
+}
+
+/**
+ * The player comparison chart: the controls, the two fetches, and the state the
+ * radar is drawn from.
+ *
+ * **The geometry is not here.** This page decides which seasons are asked for,
+ * what a trace is and what the band describes; `lib/comparison.ts` folds the
+ * answers into one `ComparisonView`, and `ComparisonRadar` draws it without
+ * re-deciding any of it. In particular the band's absence arrives already
+ * decided and already worded.
  *
  * Two fetches, and they are different kinds of thing:
  *
@@ -347,11 +373,19 @@ export default function Comparison() {
           applied to a control rather than to a payload. */}
       {traces.length > 0 && (
         <ul className="flex gap-2 flex-wrap mb-4">
-          {traces.map((t) => {
+          {traces.map((t, slot) => {
             const resolved = view?.traces.find((r) => traceKey(r.trace) === traceKey(t));
             return (
               <li key={traceKey(t)}>
-                <span className="inline-flex items-center gap-2 pl-3 pr-1.5 py-1 rounded-full border border-border bg-card text-[13px]">
+                <span className="inline-flex items-center gap-2 pl-2.5 pr-1.5 py-1 rounded-full border border-border bg-card text-[13px]">
+                  {/* The legend. The chip's colour is the promise that the
+                      outline of that colour is this player, so it is read off
+                      the same list by the same index the chart uses. */}
+                  <span
+                    aria-hidden="true"
+                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: TRACE_COLORS[slot % TRACE_COLORS.length] }}
+                  />
                   <span className="font-medium text-foreground">{t.web_name}</span>
                   <span className="text-[11px] text-muted-foreground">{t.season}</span>
                   {resolved?.problem && (
@@ -379,16 +413,7 @@ export default function Comparison() {
         <CardHeader>
           <CardTitle>Axes</CardTitle>
           {view && (
-            <span className="text-[11px] text-muted-foreground">
-              {view.bandWithheld === 'spans-seasons'
-                ? // Two seasons on screen is two cohort medians. Drawing the
-                  // selected season's would describe one population under both
-                  // sets of traces, and it is in the selector rather than chosen.
-                  `No band · the traces span ${new Set(traces.map((t) => t.season)).size} seasons, each with its own median`
-                : view.band === null
-                  ? `No band · ${view.cohortSize} ${position}s past 1,200 minutes in ${b.season}`
-                  : `Band · median of ${view.cohortSize} ${position}s past 1,200 minutes in ${b.season}`}
-            </span>
+            <span className="text-[11px] text-muted-foreground">{bandCaption(view, position, b.season)}</span>
           )}
         </CardHeader>
         <CardContent>
@@ -412,58 +437,19 @@ export default function Comparison() {
           ) : view === null ? (
             <p className="text-sm text-muted-foreground">Loading {b.season}…</p>
           ) : (
-            /* The read-out session 2 replaces with the radar. It renders every
-               number the chart will draw, unscaled, so the geometry lands on
-               data already known to be right. */
-            <div className="overflow-x-auto">
-              <table className="w-full text-[13px] tabular-nums">
-                <thead>
-                  <tr className="text-muted-foreground text-left">
-                    <th className="font-normal py-1 pr-4">Axis</th>
-                    <th className="font-normal py-1 pr-4 text-right">Floor</th>
-                    <th className="font-normal py-1 pr-4 text-right">Ceiling</th>
-                    <th className="font-normal py-1 pr-4 text-right">Band</th>
-                    {view.traces.map((r) => (
-                      <th
-                        key={traceKey(r.trace)}
-                        className="font-normal py-1 pr-4 text-right whitespace-nowrap"
-                      >
-                        {r.trace.web_name} <span className="opacity-60">{r.trace.season}</span>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {view.axes.map((axis) => (
-                    <tr key={axis.axis} className="border-t border-border">
-                      <td className="py-1 pr-4 text-foreground" title={axis.axis}>
-                        {axis.label}
-                      </td>
-                      <td className="py-1 pr-4 text-right text-muted-foreground">{axis.floor}</td>
-                      <td className="py-1 pr-4 text-right text-muted-foreground">{axis.ceiling}</td>
-                      <td className="py-1 pr-4 text-right text-muted-foreground">
-                        {view.band === null ? NO_VALUE : fmtNum(view.band[axis.axis] ?? null, 2)}
-                      </td>
-                      {view.traces.map((r) => (
-                        <td key={traceKey(r.trace)} className="py-1 pr-4 text-right text-foreground">
-                          {r.values === null ? NO_VALUE : fmtNum(r.values[axis.axis] ?? null, 2)}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p className="mt-3 text-[11px] text-muted-foreground">
-                Values are raw. Scaling against these floors and ceilings, and the chart
-                itself, is the next step. Each scale is drawn from{' '}
-                {view.axes.length > 0
-                  ? `${Math.min(...view.axes.map((a) => a.derivedFrom.seasons.length))}–${Math.max(
-                      ...view.axes.map((a) => a.derivedFrom.seasons.length)
-                    )} seasons`
-                  : 'no seasons'}
-                , per axis.
-              </p>
-            </div>
+            <>
+              <ComparisonRadar view={view} />
+              {view.axes.length > 0 && (
+                <p className="mt-2 text-[11px] text-muted-foreground text-center">
+                  Ten rings, each a tenth of that axis&rsquo;s own range. A scale is drawn from{' '}
+                  {`${Math.min(...view.axes.map((a) => a.derivedFrom.seasons.length))}–${Math.max(
+                    ...view.axes.map((a) => a.derivedFrom.seasons.length)
+                  )} seasons`}
+                  , per axis, and is the same on every season — which is what makes two years
+                  comparable. A ▲ is a value past the outer ring, with its true number beside it.
+                </p>
+              )}
+            </>
           )}
         </CardContent>
       </Card>

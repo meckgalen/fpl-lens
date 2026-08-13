@@ -330,13 +330,21 @@ describe('the band', () => {
   });
 });
 
-describe('the band across more than one season', () => {
+describe('the band, and which season the traces are from', () => {
   /*
-   * Two seasons on screen is two cohort medians, and the selected season's is
-   * not a neutral choice between them — it is the one that happens to be in the
-   * selector. Drawing it would describe one population under both sets of
-   * traces. Reachable rather than hypothetical: the shell's selector is the only
-   * season control, so a second season is two clicks away.
+   * **One condition: the band draws only when every trace sits on the selected
+   * season.** What it rules out is a band describing a population nobody on
+   * screen belongs to, which happens two ways — traces on two seasons, where
+   * there are two medians and the selector picks between them by accident; and
+   * traces all on one season that is not the selected one, where a single
+   * median is drawn from a season with nothing on the chart.
+   *
+   * Reachable rather than hypothetical, both: the shell's selector is the only
+   * season control, so either is two clicks away.
+   *
+   * The band never follows the traces instead. A baseline that moves when a
+   * trace is added is worse than an absent one — two charts would have been
+   * compared against different populations with neither saying so.
    */
   it('hides the band, and says that is why', async () => {
     const user = userEvent.setup();
@@ -351,6 +359,23 @@ describe('the band across more than one season', () => {
 
     expect(await screen.findByText(/span 2 seasons, each with its own median/)).toBeInTheDocument();
     expect(screen.queryByText(/median of 109 DEFs/)).not.toBeInTheDocument();
+  });
+
+  it('hides the band when every trace is from a season that is not selected', async () => {
+    // One season, so not "spanning" — and still a median from a season with
+    // nothing drawn from it, under traces from a season with no median. The
+    // quieter of the two failures, and the one a `size > 1` rule misses.
+    const user = userEvent.setup();
+    const { rerender } = renderPage();
+    await screen.findByText('Pts/£');
+    await user.click(await candidate('Gabriel'));
+    await screen.findByText(/median of 109 DEFs/);
+
+    rerenderAt(rerender, EARLIER);
+
+    expect(
+      await screen.findByText(`No band \u00b7 every trace is from ${LATER}, and the band would be ${EARLIER}\u2019s`)
+    ).toBeInTheDocument();
   });
 
   it('keeps the band when two traces share ONE season', async () => {

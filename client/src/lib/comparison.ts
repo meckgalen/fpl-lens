@@ -68,6 +68,30 @@ export const TRACE_LIMIT_REASON =
   `${MAX_TRACES} traces is as many as colour can tell apart — remove one to add another`;
 
 /**
+ * One colour per trace slot, and **the reason `MAX_TRACES` is four is that this
+ * list is** — so the two live together and cannot come apart.
+ *
+ * **Fixed HSL rather than theme tokens.** These carry data identity: the colour
+ * on a chip is the promise that the outline of that colour is that player. A
+ * token would resolve differently in the two themes, and a legend whose meaning
+ * changes with the theme is not a legend. They are mid-lightness so they hold
+ * against both the cream background and the near-black one, and they are spread
+ * around the wheel rather than picked for prettiness — indigo, amber, teal,
+ * magenta — because the whole point is telling four outlines apart where they
+ * overlap.
+ *
+ * The trace's colour is its **position in the list**, not a hash of the player:
+ * removing a trace recolours the ones after it, which is the cost of never
+ * drawing two traces in colours a hash happened to put next to each other.
+ */
+export const TRACE_COLORS = [
+  'hsl(228 62% 52%)',
+  'hsl(28 82% 46%)',
+  'hsl(172 62% 34%)',
+  'hsl(322 58% 50%)',
+];
+
+/**
  * A trace is a **(player, season) pair, never a player.**
  *
  * The page's reason to exist is asking whether 2016-17's best is 2025-26's best,
@@ -144,18 +168,36 @@ export interface ComparisonView {
    * band is drawn, and null when the server itself withheld it — that case is
    * read off `cohortSize`, which says how few players there were.
    *
-   * One value today. **Traces spanning more than one season have no single
-   * band**: each season has its own cohort median, and drawing one of them
-   * under two seasons' traces would describe one population and be read as
-   * describing both. Two medians is not an average of two medians, and the
-   * selected season's is not a neutral choice between them — it is the one that
-   * happens to be in the selector. Hiding it is the only honest answer, and it
-   * is a reachable state rather than a hypothetical: the shell's selector is the
-   * only season control, so a second season is two clicks away.
+   * Two wordings, **one condition**: the band draws only when every trace sits
+   * on the selected season. What that rules out is a band describing a
+   * population nobody on screen belongs to.
+   *
+   *   - `spans-seasons` — traces on two or more seasons. Each has its own
+   *     cohort median, and the selected season's is not a neutral choice
+   *     between them; it is the one that happens to be in the selector.
+   *   - `other-season` — every trace on one season, and it is not the selected
+   *     one. Not ambiguous like the case above, and worse in a quieter way: a
+   *     single median is drawn, from a season with nothing on the chart, under
+   *     traces from a season with no median drawn.
+   *
+   * **The band never follows the traces**, which would fix both by moving the
+   * baseline. A baseline that moves when a trace is added is a worse defect
+   * than an absent one: the reader would have compared two charts drawn against
+   * different populations without either saying so. So the band stays the
+   * selected season's cohort or it stays away, and the season control is the
+   * selector — which is what asks for it back.
+   *
+   * Reachable rather than hypothetical, both of them: the shell's selector is
+   * the only season control, so a second season is two clicks away.
    */
-  bandWithheld: 'spans-seasons' | null;
+  bandWithheld: BandWithheld | null;
   traces: ResolvedTrace[];
 }
+
+/** Which absence it is, carrying what the sentence has to name. */
+export type BandWithheld =
+  | { reason: 'spans-seasons'; seasons: number }
+  | { reason: 'other-season'; season: string };
 
 /**
  * Fold the thresholds, the traces and one response per season into the one shape
@@ -205,11 +247,19 @@ export function mergeComparison(
     return { trace, values: row.values, problem: null };
   });
 
-  // The seasons the traces actually sit on — not the seasons in play, which
-  // always include the selected one whether anything is drawn from it or not.
-  // Zero traces is not "spanning", and neither is four traces on one season.
+  // **One condition**: every trace on the selected season, or no band. Zero
+  // traces satisfies it vacuously, which is right — the band alone is the page's
+  // opening state and describes exactly the season in the selector.
+  //
+  // Written over the traces rather than over the seasons in play, which always
+  // include the selected one whether anything is drawn from it or not and so
+  // could never distinguish the two cases below.
   const traceSeasons = new Set(traces.map((t) => t.season));
-  const bandWithheld = traceSeasons.size > 1 ? ('spans-seasons' as const) : null;
+  const bandWithheld: BandWithheld | null = traces.every((t) => t.season === selectedSeason)
+    ? null
+    : traceSeasons.size > 1
+      ? { reason: 'spans-seasons', seasons: traceSeasons.size }
+      : { reason: 'other-season', season: [...traceSeasons][0] };
 
   return {
     axes,

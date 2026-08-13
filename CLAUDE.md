@@ -181,19 +181,39 @@ contribution points are what forced the split — see the stub for item 16.
 unused by the routes — it is the ingestion source for the live season, not dead
 code.
 
-**There is a Comparison page in the nav, and it draws no chart yet.** Item 16
-step 4 is three sessions; session 1 built the fetching and the state, and the
-radar geometry is session 2. What is settled and load-bearing already: **a trace
-is a (player, season) pair, never a player**, so a trace added on one season
-stays pinned to it when the selector moves and two seasons reach one chart; the
-page issues **one request per season in play**, and draws the axes **every one of
-them can answer** rather than the selected season's alone; **traces spanning two
-seasons have no band at all**, because that is two cohort medians and the
-selected season's is the one in the selector rather than a choice between them; and the thresholds
-being served rather than compiled in means there is no axis configuration until
-they land, so the loading state is not optional. Position is a page-level control
-and changing it clears the traces, because the server refuses a player who is not
-the position asked for.
+**There is a Comparison page in the nav, and it draws the radar.** Item 16
+step 4 is three sessions; the browser pass and the record are session 3. What is
+settled and load-bearing: **a trace is a (player, season) pair, never a player**,
+so a trace added on one season stays pinned to it when the selector moves and two
+seasons reach one chart; the page issues **one request per season in play**, and
+draws the axes **every one of them can answer** rather than the selected
+season's alone; and the thresholds being served rather than compiled in means
+there is no axis configuration until they land, so the loading state is not
+optional. Position is a page-level control and changing it clears the traces,
+because the server refuses a player who is not the position asked for.
+
+**The band draws only when every trace sits on the selected season.** One
+condition, two ways of otherwise describing a population nobody on screen belongs
+to: traces on two seasons, where two cohort medians exist and the selector picks
+between them by accident, and traces all on one season that is not the selected
+one, where the median comes from a season with nothing on the chart. Zero traces
+satisfies it and keeps its band. **The band never follows the traces instead** —
+a baseline that moved when a trace was added would let two charts be compared
+against different populations with neither saying so, which is worse than an
+absent one.
+
+**The geometry is `client/src/lib/radar.ts` and nothing else states it.** Three
+traps there, each of which renders plausibly when got wrong. A scale is
+**`(v - floor) / (ceiling - floor)`, not `v / ceiling`** — `minutes` floors at
+1,200 and `ppm` at the cohort p01, so the ratio form is right on six of the
+eleven axes and puts a defender on exactly 1,200 minutes at 35% of the radius.
+**At the ceiling exactly is not clipped**: `minutes` ceilings at 3,420 = 38 x 90,
+so an ever-present player hits it and a mark would claim his number was off the
+chart. And **a null breaks the outline** rather than being filtered out of it —
+filtering closes the ring with a chord across the missing spoke, at roughly the
+average of its neighbours, rendering "nobody measured this" as "about typical
+here". A clipped vertex is marked by a **shape**, never a colour: colour already
+carries which trace is which, which is what the four-trace cap budgets for.
 
 **`GET /api/columns` is the second route that spans seasons**, after `/career`,
 and follows the same rule: no `?season=`, no top-level `season`, and a `season`
@@ -431,6 +451,9 @@ fpl-lens/
 │   │   │   ├── averages.ts    # normalization, rounding, the footnote model
 │   │   │   ├── playerColumns.ts   # the column table, availability, persistence
 │   │   │   ├── comparison.ts  # Trace = (player, season); the axis intersection
+│   │   │   │                  # + the one band rule and the four trace colours
+│   │   │   ├── radar.ts       # the geometry: the ONLY place a value is scaled
+│   │   │   ├── radar.test.ts  # the floor, the clip boundary, the broken outline
 │   │   │   ├── shirtCache.ts  # clubs known to have no shirt; + the test reset
 │   │   │   └── cn.ts          # class name join
 │   │   ├── test/              # harness only — no component lives here
@@ -444,7 +467,7 @@ fpl-lens/
 │   │   │   ├── Dashboard.preseason.test.tsx  # the three empty rankings
 │   │   │   ├── Players.tsx    # the list: own inline search, sort, expand
 │   │   │   ├── Players.test.tsx       # disclosure + sort, by keyboard
-│   │   │   ├── Comparison.tsx # the chart's page: NO chart yet — fetch + state
+│   │   │   ├── Comparison.tsx # the chart's page: controls, fetch, state
 │   │   │   ├── Comparison.test.tsx    # the loading state, (player, season), axes
 │   │   │   ├── Fixtures.tsx   # by gameweek, with difficulty
 │   │   │   ├── Fixtures.test.tsx      # the round collision across a season change
@@ -454,6 +477,8 @@ fpl-lens/
 │   │   └── components/
 │   │       ├── ui/            # Card, Table, Badge, Switch, Input
 │   │       │                  # + DisclosureButton: the one row toggle
+│   │       ├── ComparisonRadar.tsx  # the SVG: rings, spokes, band, traces
+│   │       ├── ComparisonRadar.test.tsx  # two traces clipping ONE axis
 │   │       ├── OpenPlayerButton.tsx # a player's name, as a link to their page
 │   │       ├── ColumnPicker.tsx     # which columns render, and why not
 │   │       ├── PlayerShirt.tsx      # club shirt -> club badge -> grey avatar
@@ -997,8 +1022,12 @@ can be run alone with `npm run test:client`.
       scoring rule the app computes for itself, stated once on the server
 - [x] Derived columns in the picker (`dependsOn`), whose availability is the most
       restrictive of the columns they read
-- [x] A Comparison page: position, club and player pickers, one request per
-      season in play, and the frozen axis scales fetched once — **no chart yet**
+- [x] A Comparison page: a radar of up to four (player, season) traces on frozen
+      per-axis scales, so two seasons draw against the same rings. An unavailable
+      axis is dropped and the wheel re-spaced; an above-ceiling value clamps and
+      is marked by a shape carrying its true number; an unmeasured one breaks the
+      outline rather than sitting at zero. The season's cohort median is a filled
+      band underneath, withdrawn when the traces are not from that season
 
 The live FPL API proxy in `services/fplApi.ts` still exists with its 5-minute
 cache, but no route calls it: it is the ingestion source for the live season.
