@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { DisclosureButton } from '../components/ui/DisclosureButton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table';
@@ -38,6 +38,15 @@ import {
  * a column, and it becomes real when the live field sync lands.
  */
 const POSITIONS = ['ALL', 'GKP', 'DEF', 'MID', 'FWD'] as const;
+
+/**
+ * How many rows are added at a time.
+ *
+ * 200 because that is the size item 18 measured: it mounts in ~215ms on the
+ * largest roster stored, against ~792ms for all 865. It also comfortably
+ * overfills any viewport, so the sentinel is never visible on arrival.
+ */
+const CHUNK = 200;
 
 /** The row a player's toggle points `aria-controls` at while it is open. */
 const expandedRowId = (playerCode: number) => `player-summary-${playerCode}`;
@@ -216,6 +225,63 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
       .sort(sortCol ? compareBy(sortCol, sortDir) : () => 0);
   }, [b.players, search, pos, team, sortCol, sortDir]);
 
+  /**
+   * How many rows are on screen, and why the whole roster is not.
+   *
+   * **Measured, not assumed** — item 18 removed a hard `slice(0, 200)` intending
+   * to render everything, and the browser said no. On 2023-24 (865 players, the
+   * largest roster stored), holding season, columns and filters fixed and
+   * varying only the cap:
+   *
+   * | rendered | mount | re-sort |
+   * | -------- | ----- | ------- |
+   * | 200      | 215ms | 160ms   |
+   * | 865      | 792ms | 408ms   |
+   *
+   * Three cheaper fixes were tried against the full set and none moved it:
+   * memoizing `PlayerShirt` (no change), `table-layout: fixed` (no change), and
+   * `content-visibility: auto` (~9%). The cost is React reconciling 865 rows of
+   * 15 cells, not layout or paint, so the only lever left is rendering fewer.
+   *
+   * **Not pagination.** There are no page controls and no page number: the list
+   * grows as it is scrolled, so the roster stays one continuous thing and the
+   * sentinel below says how far along it is. Item 10's sticky header and pinned
+   * column are what make a long scroll usable, and they still apply.
+   */
+  const [visible, setVisible] = useState(CHUNK);
+
+  /**
+   * Back to the first chunk whenever the list itself changes.
+   *
+   * A re-sort produces a different ordering, so "the first 400 of the old order"
+   * has no meaning in the new one — and keeping a grown count would make every
+   * sort click pay the full 865-row cost that this exists to avoid. Keyed on the
+   * list's identity rather than on each input, so it cannot miss one.
+   */
+  useEffect(() => {
+    setVisible(CHUNK);
+  }, [list]);
+
+  /**
+   * Grow when the sentinel comes into view.
+   *
+   * `rootMargin` fires it a screen early, so the next chunk is usually already
+   * there by the time the reader reaches the end of this one.
+   */
+  const moreRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = moreRef.current;
+    if (el === null) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setVisible((v) => v + CHUNK);
+      },
+      { rootMargin: '600px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [visible, list]);
+
   // Three, not four: shirt + Player + Pos. Status left the table in item 13.
   const colWidth = 3 + cols.length;
 
@@ -337,7 +403,7 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
             </TableRow>
           </TableHeader>
           <TableBody>
-            {list.slice(0, 200).map((p, i) => {
+            {list.slice(0, visible).map((p, i) => {
               // From the map index, not `nth-child`. An open row inserts a sibling
               // <tr> into this same <tbody>, which flips the parity of every row
               // below it — only one row can be open at a time, but one is enough.
@@ -437,6 +503,23 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
             })}
           </TableBody>
         </Table>
+        {/*
+          The rest of the roster, and the sentinel that pulls it in.
+
+          **Outside the table**, not a `<tr>`: a row here would land in the
+          striping sequence and inside the `colSpan` arithmetic for no reason,
+          and an `IntersectionObserver` needs a plain block to measure.
+
+          It says what is being withheld and why, per the surface rule — which
+          is also the older defect it closes. The count beside the filters has
+          always printed the true total, so the page read "865 players" above
+          200 rows with nothing accounting for the other 665.
+        */}
+        {visible < list.length && (
+          <div ref={moreRef} className="px-4 py-3 text-xs text-muted-foreground border-t border-border">
+            Showing {visible} of {list.length} · scroll for more
+          </div>
+        )}
       </Card>
     </div>
   );

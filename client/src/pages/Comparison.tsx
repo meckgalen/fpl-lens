@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { PlayerShirt } from '../components/PlayerShirt';
 import { ComparisonRadar } from '../components/ComparisonRadar';
@@ -31,8 +31,17 @@ import {
   type Trace,
 } from '../lib/comparison';
 
-/** How many search results the picker offers before asking for a narrower query. */
-const MAX_CANDIDATES = 8;
+/**
+ * How many candidates are rendered at once.
+ *
+ * The picker used to offer **8** and stop, with nothing on screen saying so —
+ * pick DEF on 2023-24 and the other 270 defenders were unreachable however you
+ * searched. It now lists everyone matching the filters in a scrolling pane, and
+ * renders them a chunk at a time for the reason the Players list does: item 18
+ * measured 200 rows mounting in ~215ms against ~792ms for 865, and this list
+ * re-renders on **every keystroke** in the search box.
+ */
+const CANDIDATE_CHUNK = 60;
 
 /** One array, so "no thresholds yet" is a stable reference. */
 const NO_AXES: AxisThreshold[] = [];
@@ -272,9 +281,34 @@ export default function Comparison() {
         return `${p.first_name} ${p.second_name} ${p.web_name}`.toLowerCase().includes(q);
       })
       .filter((p) => !hasTrace(traces, { code: p.id, season: b.season }))
-      .sort((x, y) => y.total_points - x.total_points)
-      .slice(0, MAX_CANDIDATES);
+      .sort((x, y) => y.total_points - x.total_points);
   }, [b.players, position, team, search, traces, b.season]);
+
+  /**
+   * How many candidates are on screen. Same instrument as the Players list, and
+   * reset on every change to the candidate set — which here includes each
+   * keystroke, so typing always starts from the top of the new matches.
+   */
+  const [shown, setShown] = useState(CANDIDATE_CHUNK);
+  useEffect(() => {
+    setShown(CANDIDATE_CHUNK);
+  }, [candidates]);
+
+  const moreRef = useRef<HTMLLIElement | null>(null);
+  useEffect(() => {
+    const el = moreRef.current;
+    if (el === null) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setShown((n) => n + CANDIDATE_CHUNK);
+      },
+      // The pane is the scroll container, so it is the root: against the
+      // viewport a list scrolled inside a fixed-height box never intersects.
+      { root: el.closest('ul'), rootMargin: '300px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [shown, candidates]);
 
   const full = traces.length >= MAX_TRACES;
 
@@ -353,7 +387,14 @@ export default function Comparison() {
           numbers the choice is actually made on, which a datalist cannot. */}
       <Card className="mb-4">
         <CardHeader>
-          <CardTitle>Add a {position} from {b.season}</CardTitle>
+          <CardTitle>
+            Add a {position} from {b.season}
+            {/* The match count, which the panel never had. Eight rows with no
+                total looked like the whole answer rather than a slice of it. */}
+            <span className="ml-2 font-normal text-[12px] text-muted-foreground tabular-nums">
+              {candidates.length} {candidates.length === 1 ? 'match' : 'matches'}
+            </span>
+          </CardTitle>
           {full && (
             <span className="text-[11px] text-muted-foreground">
               {TRACE_LIMIT_REASON}
@@ -366,8 +407,11 @@ export default function Comparison() {
               No {position} matches that search in {b.season}.
             </p>
           ) : (
-            <ul className="flex flex-col">
-              {candidates.map((p) => (
+            /* A fixed-height scroller: the pane keeps its size whether it holds
+               four defenders or 374, so the chart below it does not jump every
+               time the search changes. */
+            <ul className="flex flex-col max-h-[22rem] overflow-y-auto">
+              {candidates.slice(0, shown).map((p) => (
                 <li key={p.id}>
                   <button
                     type="button"
@@ -399,6 +443,14 @@ export default function Comparison() {
                   </button>
                 </li>
               ))}
+              {shown < candidates.length && (
+                <li
+                  ref={moreRef}
+                  className="px-3 py-2 text-[11px] text-muted-foreground"
+                >
+                  Showing {shown} of {candidates.length} · scroll for more
+                </li>
+              )}
             </ul>
           )}
         </CardContent>
