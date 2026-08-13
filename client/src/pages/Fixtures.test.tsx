@@ -131,26 +131,30 @@ describe('Fixtures across a season change', () => {
   });
 });
 
-describe('Fixtures with no next gameweek', () => {
-  it('still shows a round on a season where nothing is upcoming', async () => {
-    // `nextGameweek` returns null for every completed season, correctly. The
-    // page needs a round anyway, so it derives its own — and this is what pins
-    // that the fallback moved here rather than being deleted with the helper's.
+describe('where the page opens', () => {
+  it('opens a completed season on its last round, showing Results', async () => {
+    // Every deadline is null on a CSV season, so the rule falls to its second
+    // branch: the last FINISHED round. Safe there and only there — that branch
+    // is reachable only when no deadline exists, so every round is wholly
+    // played or wholly not and `bool_and` cannot mislead.
     renderFixtures(completedSeason(LATER));
 
     await waitFor(() => expect(fixturesMock).toHaveBeenCalledWith(38, LATER));
-    expect(screen.getByRole('button', { name: 'GW38 Upcoming' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'GW38 Results' })).toBeInTheDocument();
+    // The tab is half the rule, and the half most likely to go untested.
+    expect(screen.getByRole('button', { name: 'Results' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    expect(await screen.findByText(/Gameweek 38 results/)).toBeInTheDocument();
   });
 
-  it('names a results round even when nothing has been played', async () => {
+  it('opens a pre-season on its first round, showing Difficulty', async () => {
     /*
-     * Found in the browser on 2026-27, not by a test — which is why it is here
-     * now. With no round current and none finished, the derived results round
-     * was undefined: the effect returned early, the *previous tab's* fixtures
-     * stayed mounted, and the heading read "Gameweek ? results" over them.
-     * Stale rows under a wrong label, which is worse than the empty round the
-     * stricter derivation was trying to avoid.
+     * 2026-27: 38 rounds, no deadline passed, nothing finished. The third
+     * branch. Found in the browser originally as a different bug — with no
+     * round current and none finished the derived round was undefined, the
+     * effect returned early, and the previous tab's fixtures stayed mounted
+     * under a "Gameweek ?" heading.
      */
     const preseason = aBootstrap({
       season: '2026-27',
@@ -161,17 +165,19 @@ describe('Fixtures with no next gameweek', () => {
     renderFixtures(preseason);
 
     await waitFor(() => expect(fixturesMock).toHaveBeenCalledWith(1, '2026-27'));
-    expect(screen.getByRole('button', { name: 'GW1 Results' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /GW\? /})).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Difficulty' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
   });
 
-  it('keeps the tab choice across a season change', async () => {
+  it('keeps the view choice across a season change', async () => {
     const user = userEvent.setup();
     const { rerender } = renderFixtures(completedSeason(LATER));
     await screen.findByText(`Fixtures · ${LATER}`);
 
-    await user.click(screen.getByRole('button', { name: 'GW38 Results' }));
-    await screen.findByText(/Gameweek 38 results/);
+    await user.click(screen.getByRole('button', { name: 'Difficulty' }));
+    await screen.findByText(/difficulty ratings shown per team/);
 
     rerender(
       <BootstrapContext.Provider value={completedSeason(EARLIER)}>
@@ -179,9 +185,9 @@ describe('Fixtures with no next gameweek', () => {
       </BootstrapContext.Provider>
     );
 
-    // Upcoming-vs-Results is a choice about the page, not about the season, so
-    // it survives — unlike the fixtures themselves.
+    // Which view is a choice about the page, not about the season, so it
+    // survives — unlike the fixtures themselves.
     await screen.findByText(`Fixtures · ${EARLIER}`);
-    expect(screen.getByText(/Gameweek 38 results/)).toBeInTheDocument();
+    expect(screen.getByText(/difficulty ratings shown per team/)).toBeInTheDocument();
   });
 });

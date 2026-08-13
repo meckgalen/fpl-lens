@@ -23,6 +23,7 @@ import type {
   SeasonColumnAvailability,
 } from '../types/fpl';
 import { fmtPpg, fmtQuotient } from './averages';
+import { noMatchesRecorded } from './emptyStates';
 
 export interface PlayerColumn {
   /** Stable across versions: it is what persistence stores. */
@@ -572,7 +573,7 @@ export function resolveColumn(
     // season has no matches, so every stat column is equally uninformative and
     // the honest thing is one sentence about the season.
     if (!col.nullable) return { available: true };
-    return { available: false, reason: `No matches recorded for ${season} yet.` };
+    return { available: false, reason: noMatchesRecorded(season) };
   }
 
   if (!col.nullable) return { available: true };
