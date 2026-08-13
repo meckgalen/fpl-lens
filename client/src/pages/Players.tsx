@@ -9,6 +9,7 @@ import type { Player } from '../types/fpl';
 import { useBootstrap } from '../lib/bootstrap';
 import { EDGE_PINNED, Z_HEADER, Z_PINNED, Z_PINNED_HEADER, striped } from '../lib/rowSurface';
 import ColumnPicker from '../components/ColumnPicker';
+import { ClubFilter, type ClubSelection } from '../components/ClubFilter';
 import { fetchColumnHistory } from '../services/api';
 import type { ColumnHistoryRow } from '../types/fpl';
 import {
@@ -69,6 +70,7 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
 
   const [search, setSearch] = useState('');
   const [pos, setPos] = useState<(typeof POSITIONS)[number]>('ALL');
+  const [team, setTeam] = useState<ClubSelection>('ALL');
   const [sort, setSort] = useState<string>(DEFAULT_SORT_KEY);
   const [sortDir, setSortDir] = useState<-1 | 1>(-1);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -127,6 +129,26 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
   }, [b.season]);
 
   /**
+   * The club filter falls in the third category: kept when it still means
+   * something, dropped when it does not.
+   *
+   * A club code is permanent (API identity rule 1), so Arsenal selected on
+   * 2025-26 is Arsenal on 2024-25 and the choice is worth carrying — that is the
+   * `search`/`pos` argument. But only twenty clubs are in any one season out of
+   * the thirty-five this database holds, so selecting Leeds and moving to
+   * 2021-22 leaves a filter matching no player: an empty table with nothing on
+   * screen saying why, and a `<select>` whose value matches no `<option>`, which
+   * browsers render blank.
+   *
+   * So it resets only when the club is absent from the new season. Switching
+   * between two seasons that both have the club keeps it, which is the common
+   * case and the one the intent argument is about.
+   */
+  useEffect(() => {
+    if (team !== 'ALL' && !b.teams.some((t) => t.id === team)) setTeam('ALL');
+  }, [b.season, b.teams, team]);
+
+  /**
    * What actually renders: the selection, minus whatever this season cannot
    * answer for. `selected` is left untouched, which is what makes a column come
    * back when the user returns to a season that has it.
@@ -176,6 +198,9 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
     return b.players
       .filter((p) => {
         if (pos !== 'ALL' && POSITION_MAP[p.element_type] !== pos) return false;
+        // `Player.team` and `Team.id` are both `fpl_team_code`, so this is a
+        // direct equality and not a lookup through `team_seasons`.
+        if (team !== 'ALL' && p.team !== team) return false;
         if (q.length < 1) return true;
         const name = `${p.first_name} ${p.second_name} ${p.web_name}`.toLowerCase();
         return name.includes(q);
@@ -189,7 +214,7 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
       // No sorted column only when nothing is selected, in which case the
       // rows carry no metrics to order by and the API's order stands.
       .sort(sortCol ? compareBy(sortCol, sortDir) : () => 0);
-  }, [b.players, search, pos, sortCol, sortDir]);
+  }, [b.players, search, pos, team, sortCol, sortDir]);
 
   // Three, not four: shirt + Player + Pos. Status left the table in item 13.
   const colWidth = 3 + cols.length;
@@ -247,6 +272,8 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
             </button>
           ))}
         </div>
+
+        <ClubFilter id="players-team" value={team} onChange={setTeam} teams={b.teams} />
 
         <ColumnPicker
           selected={selected}
@@ -410,3 +437,4 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
     </div>
   );
 }
+

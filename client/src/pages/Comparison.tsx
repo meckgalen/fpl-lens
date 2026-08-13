@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card'
 import { PlayerShirt } from '../components/PlayerShirt';
 import { ComparisonRadar } from '../components/ComparisonRadar';
 import { ComparisonTable } from '../components/ComparisonTable';
+import { ClubFilter, type ClubSelection } from '../components/ClubFilter';
 import { fetchColumnHistory, fetchComparison, fetchComparisonThresholds } from '../services/api';
 import type {
   AxisThreshold,
@@ -120,7 +121,7 @@ export default function Comparison() {
   const [results, setResults] = useState<Map<string, SeasonResult>>(new Map());
 
   const [search, setSearch] = useState('');
-  const [team, setTeam] = useState<number | 'ALL'>('ALL');
+  const [team, setTeam] = useState<ClubSelection>('ALL');
 
   /**
    * The column matrix, for the reason an absent axis carries.
@@ -341,29 +342,7 @@ export default function Comparison() {
           />
         </div>
 
-        <div>
-          <label htmlFor="comparison-team" className="sr-only">
-            Club
-          </label>
-          <select
-            id="comparison-team"
-            value={team === 'ALL' ? 'ALL' : String(team)}
-            onChange={(e) => setTeam(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
-            className={cn(
-              'h-9 rounded-md border border-input bg-card px-2 text-[13px] text-foreground',
-              FOCUS_RING
-            )}
-          >
-            <option value="ALL">All clubs</option>
-            {[...b.teams]
-              .sort((x, y) => x.name.localeCompare(y.name))
-              .map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-          </select>
-        </div>
+        <ClubFilter id="comparison-team" value={team} onChange={setTeam} teams={b.teams} />
 
         <span className="ml-auto text-xs text-muted-foreground">
           {traces.length} of {MAX_TRACES}
@@ -567,3 +546,4 @@ export default function Comparison() {
     </div>
   );
 }
+
