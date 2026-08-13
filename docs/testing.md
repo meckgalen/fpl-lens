@@ -368,6 +368,50 @@ on. Twenty-four files:
   required: mocking `fetchColumnHistory` would replace the module-scope memo the
   request-count test exists to pin.
 
+- `client/src/pages/Players.club.test.tsx` — item 18's club filter. The
+  composition assertions are the point: a non-default sort, a search and a club
+  are set together, then one is changed. Both halves of every filter assertion
+  are named — "the list got shorter" is also true of a filter matching nothing.
+  Two season-change tests, in opposite directions: a club present in the new
+  season survives, one absent resets. The unconditional-reset mutation breaks
+  everything and isolates nothing; the season-keyed one isolates exactly the
+  survival test.
+
+- `client/src/pages/Players.incremental.test.tsx` — the roster arriving in
+  chunks. `IntersectionObserver` is **stubbed rather than mocked away**, so the
+  test fires the callback itself and proves observing the sentinel is what grows
+  the list — inside `act`, since the callback is not a React event and the state
+  update is otherwise never flushed. The reset-on-filter test deliberately
+  searches a term matching **every** player: an earlier version used a narrower
+  one, which dropped the list under a chunk on its own and so held whether or not
+  the reset existed.
+
+- `client/src/pages/Comparison.candidates.test.tsx` — the picker offering
+  everyone. The regression guard is the number **8**, the old cap, which the
+  first test asserts it is now above. The match count in the header is the
+  load-bearing part: it is what separates "these are all of them" from "these are
+  the first sixty".
+
+- `client/src/lib/comparison.axes.test.ts` — that every axis can explain itself.
+  **The assertion it refuses to make is "eleven non-empty strings exist"**, which
+  would pass against a description equal to the label, to the title, or to any
+  placeholder. It asserts inequality with both instead, plus the specific facts
+  items 13 and 14 settled for the two derived axes. The null-not-fallback case is
+  the clause that stops someone tidying `axisDefinition` into symmetry with the
+  Players list.
+
+- `client/src/lib/fixtures.test.ts` — where the Fixtures page opens, and how it
+  steps. Every stepping test uses 2019-20 or 2022-23, because a `1..38` loop and
+  a correct derivation agree on the other nine seasons. **The partly-played-round
+  case is hand-built and is the mutation target**: no stored season has one, so
+  reverting the rule to "the last finished round" turns that test and only that
+  test red.
+
+- `client/src/pages/Fixtures.navigation.test.tsx` — the same two hazards at page
+  level, plus the two Results empty states and the difficulty restack. The
+  restack test anchors on the **club**, not the rating: the FDR legend renders a
+  chip for every value 1-5, so `getByText('2')` matches two nodes.
+
 - `client/src/App.test.tsx` — the shell, and **the first test `App.tsx` has ever
   had**. That absence is why item 3 could only pin the Dashboard's half of the
   click-through contract, and the `detailPlayer` fix cannot be tested anywhere
@@ -388,9 +432,12 @@ on. Twenty-four files:
   centrepiece is the **round collision**: two seasons that both end at round 38
   produce the same derived round, so an effect keyed on it alone cannot see a
   season change. Plus that the season is sent at all, that fixtures clear while
-  the new ones load, that the tab choice survives, and that a season with
-  nothing played still names a results round — which is a bug item 8 introduced
-  and caught in the browser, not a hypothetical.
+  the new ones load, that the chosen view survives one, and where each kind of
+  season opens — the last-round/Results and first-round/Difficulty branches,
+  each asserting the **tab as well as the round**, since the tab is half the
+  rule and is what a wrong branch condition shows up in first. Rewritten in item
+  18: three of these queried tabs by the names `GW38 Upcoming` / `GW38 Results`,
+  which the two-views-of-one-round model retired.
 
 - `client/src/test/render.test.tsx` — a test for the harness, not the app. The
   suite's helper wraps in StrictMode, and everything `PlayerDetail.test.tsx`

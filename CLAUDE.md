@@ -226,7 +226,10 @@ fpl-lens/
 │   │   │   ├── bootstrap.ts   # BootstrapContext, current/next gameweek
 │   │   │   ├── averages.ts    # normalization, rounding, the footnote model
 │   │   │   ├── playerColumns.ts   # the column table, availability, persistence
+│   │   │   ├── emptyStates.ts # the two "nothing here yet" sentences, shared
+│   │   │   ├── fixtures.ts    # which round the page opens on, and stepping
 │   │   │   ├── comparison.ts  # Trace = (player, season); the axis intersection
+│   │   │   │                  # + COMPARISON_AXES and axisDefinition: NO fallback
 │   │   │   │                  # + the one band rule and the four trace colours
 │   │   │   ├── radar.ts       # the geometry: the ONLY place a value is scaled
 │   │   │   ├── radar.test.ts  # the floor, the clip boundary, the broken outline
@@ -241,12 +244,13 @@ fpl-lens/
 │   │   │   ├── Dashboard.tsx  # three rankings; each entry opens its player
 │   │   │   ├── Dashboard.test.tsx     # the click-through, all three rankings
 │   │   │   ├── Dashboard.preseason.test.tsx  # the three empty rankings
-│   │   │   ├── Players.tsx    # the list: own inline search, sort, expand
+│   │   │   ├── Players.tsx    # the list: search, sort, club filter, expand
 │   │   │   ├── Players.test.tsx       # disclosure + sort, by keyboard
 │   │   │   ├── Comparison.tsx # the chart's page: controls, fetch, state
 │   │   │   ├── Comparison.test.tsx    # the loading state, (player, season), axes
-│   │   │   ├── Fixtures.tsx   # by gameweek, with difficulty
+│   │   │   ├── Fixtures.tsx   # ONE selected round, two views of it
 │   │   │   ├── Fixtures.test.tsx      # the round collision across a season change
+│   │   │   ├── Fixtures.navigation.test.tsx  # the gapped rounds, the empty state
 │   │   │   ├── PlayerDetail.tsx  # header / Upcoming / one merged career table
 │   │   │   ├── PlayerDetail.test.tsx  # expand, collapse, cache reset
 │   │   │   └── PlayerDetail.upcoming.test.tsx  # the remaining fixtures strip
@@ -272,7 +276,8 @@ fpl-lens/
 │   │       ├── StatsTable.tsx
 │   │       ├── StatsTable.test.tsx # rule 6: null renders —, zero renders 0
 │   │       ├── StatsTable.sort.test.tsx  # sorting without a mouse
-│   │       ├── PosBadge.tsx   # PosBadge, StatusDot, FDRBadge, PlayerAvatar
+│   │       ├── PosBadge.tsx   # PosBadge, StatusDot, FDRBadge, FDRBar, PlayerAvatar
+│   │       ├── ClubFilter.tsx # the club dropdown, on Players AND Comparison
 │   │       ├── Countdown.tsx
 │   │       └── PlayerSearch.tsx  # UNUSED: nothing imports it
 │   ├── vite.config.ts         # proxies /api to :3001
@@ -847,35 +852,6 @@ around it.
   the older kits are gone from the host — no archived path exists, which was
   checked rather than assumed. It looks like a bug precisely because the club is
   right, which is why it is written down.
-- **The Fixtures page labels a completed season's last round "Upcoming".**
-  **Deferred, not blocked — the fix is one conditional and the information is
-  already in hand.**
-
-  On any of the ten completed seasons the two tabs read "GW38 Upcoming" and
-  "GW38 Results" and show **the same ten matches**, one with difficulty ratings
-  and one with scores. Pre-dates item 8 — true of every completed season since
-  Phase 0 — but the selector changed the cost: it is now one click away on every
-  page, on ten of the eleven seasons, rather than behind a hand-edited URL.
-
-  The derivation is right and is named for what it is (`upcomingRound`, with
-  `nextGameweek` now correctly returning null): a season with nothing upcoming
-  still has a last round worth showing. It is the tab _wording_ that asserts
-  something the data does not.
-
-  **The fix, stated because it is small.** `nextGameweek` returns null exactly
-  when nothing is upcoming, and `Fixtures.tsx:19` already binds `next` — in
-  scope at both label sites (`:86`, `:93`), which use `upcomingRound` and ignore
-  it. So when `next` is null the tab is naming a round that does not exist as an
-  upcoming one, and the label should say so rather than claim otherwise. One
-  conditional on a value the page already holds; not a new capability, and in
-  particular **not** the "does the page know whether a season is in progress"
-  problem an earlier draft of this entry claimed it was — item 8 made that
-  question answerable and this page already asks it.
-
-  Left alone because item 8 was already carrying two surfaces more than it
-  started with, and picking the replacement wording is a copy decision that
-  wants doing deliberately rather than at the end of an unrelated item.
-
 - **The back link on the detail page says "← Back to players" from every route,
   including the Dashboard.** The behaviour is right: `onBack` clears
   `detailPlayer` and leaves `page` alone, so a player opened from the Dashboard
@@ -1073,9 +1049,11 @@ around it.
   matches in a round of ten and gives no sign anything is missing.** Corrected
   in item 5 — the previous wording here said such a fixture "reaches the client
   with `event: null`", which was written from a plan rather than traced to the
-  code and is wrong. `Fixtures.tsx` always calls `fetchFixtures(targetGw)`, so
+  code and is wrong. `Fixtures.tsx` always calls `fetchFixtures` with a round, so
   `listFixtures` filters `f.gw = $2` and a round-less fixture never reaches the
-  page at all; `formatDay` already renders `'TBD'` for a null kickoff. The page
+  page at all; `formatDay` already renders `'TBD'` for a null kickoff. Item 18's
+  round selector does not change this: it offers the rounds `listEvents` derives,
+  and a round-less fixture is in none of them. The page
   looks complete and is not, which is the quiet-wrong-answer class this project
   keeps refusing to ship.
 
@@ -1276,6 +1254,11 @@ One item per session, committed between each. **The record of every item is
       Three of its tests passed against the bug they existed to catch.
 - [x] **17. What CLAUDE.md is for.** — a criterion rather than a fourth record
       move: unconditionally-useful stays, re-derivable and local go.
+- [x] **18. Pre-deployment fixes.** — five browser-pass defects. Rendering the
+      whole roster was measured and refused, so the lists grow as they scroll and
+      say what they withhold. The Fixtures round rule reads the deadline, never
+      `finished`: `bool_and` skips a partly played round, which no stored season
+      can expose. A compile-time guard that is an unused type alias is inert.
 
 ## Deferred
 

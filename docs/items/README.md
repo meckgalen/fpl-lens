@@ -192,3 +192,17 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       been told its task would write wrong code without it** — re-derivable and
       local both go. 117,987 to 98,258, and the fourteen invariants that were
       hiding in Current State became rules.
+
+- [x] **18. Pre-deployment fixes.** → [`item-18.md`](item-18.md)
+
+      Five browser-pass defects, four steps. Rendering the whole roster was
+      **measured and refused** — 792ms to mount 865 rows against 215ms for 200,
+      with memoization, `table-layout: fixed` and `content-visibility` each
+      tried and each worth nothing — so both lists grow as they scroll and say
+      what they are withholding. The Fixtures round rule reads the **deadline**,
+      never `finished`: `bool_and` skips a partly played round, which no stored
+      season can expose, so the test for it is hand-built and is the mutation
+      target. A compile-time exhaustiveness guard written as an unused type
+      alias is **inert**; it has to fail to construct. Two pre-committed gates
+      are recorded as mis-calibrated rather than raised, and every apparent
+      renderer freeze was `requestAnimationFrame` throttling in a hidden tab.
