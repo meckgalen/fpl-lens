@@ -701,3 +701,304 @@ stay distinguishable.
 
 No chart, no radar geometry, no comparison page component, no client code. Two
 routes now serve everything a chart needs and nothing consumes either.
+
+---
+
+# Step 4 — the page, in three sessions
+
+Kept in this file rather than split into a sibling. The four steps are one
+argument — freeze the scales, serve them, serve the values, draw them — and the
+piece of reasoning that matters most in step 4 (the band is per season, the
+ceilings are pooled) only makes sense beside the distribution tables in step 1
+that forced it. At ~47k the file is long and is still one thing.
+
+## Session 1 — fetch and state, with no chart
+
+The route, the two fetches, the loading state, and the shape everything else
+rests on.
+
+**A trace is a (player, season) pair, never a player.** The page's reason to
+exist is asking whether 2016-17's best is 2025-26's best, which is a question
+about two seasons; a chart keyed on player alone can only draw the season the
+shell happens to be on. So the season is half the identity from the start, and
+the page issues **one request per season in play** rather than one request. A
+trace added on one season stays pinned to it when the selector moves, which is
+what makes two seasons reachable today with the shell's selector as the only
+season control. Building it player-keyed would have been a state rewrite later.
+
+**The loading state is not optional**, and that is the accepted cost recorded in
+step 2: the thresholds are served rather than compiled in, so the client has no
+axis configuration at all until they land. `fetchComparisonThresholds` memoizes
+at module scope like `fetchColumnHistory` with **one clause reversed** — a
+rejection clears the memo. The column matrix memoizes its failure deliberately,
+because every disabled picker entry is a complete sentence without it; here
+there is nothing to degrade to, so a memoized failure would leave the page dead
+for the session.
+
+**An unavailable axis is dropped and the wheel re-spaced**, and the rule is the
+**intersection over every season drawn**, not the selected season's own list.
+That is the server's absent-not-null rule one layer up: with a 2016-17 trace on a
+2025-26 chart, reading the axes off the selected season would give ten spokes and
+leave the 2016-17 trace with a hole at xGI and DCH/St.
+
+## Session 2 — the radar
+
+Geometry in `client/src/lib/radar.ts`, drawing in
+`components/ComparisonRadar.tsx`, and the page keeps only the controls and the
+state. The component re-decides nothing: the band's absence arrives already
+decided and already worded.
+
+### Rule 6 in geometry, which is the piece worth the most
+
+**A null value breaks the outline. It is not filtered out.**
+
+Filtering the missing axes out of a trace and closing the ring over what is left
+draws a chord across the missing spoke, and that chord crosses it at roughly the
+average of its two neighbours. So "nobody measured this" renders as "about
+typical here" — a plausible number invented by the drawing, with nothing on
+screen marking it as invented. That is exactly the failure data layer rule 6
+exists to prevent, arriving in a place the rule had never been applied.
+
+The other half of the same rule is why a null is **not** drawn at the centre: a
+vertex at the centre is what a measured **zero** looks like, and zero and null
+are the pair rule 6 keeps apart. A hole in the outline is the shape of a `—`.
+
+Both halves are one sentence in `vertices` and `segments`, and the second is the
+one an implementation falls into by accident, because filtering nulls is what
+you write when you are thinking about arrays rather than about meaning.
+
+### The band is per season and the ceilings are pooled
+
+They are **different objects**, and this is the decision every other one on the
+page rests on.
+
+A **scale** has to be stable across seasons or nothing is comparable — that is
+the entire reason the thresholds are frozen, and an axis rescaled per season
+would put every season's best player on the outer ring and say nothing about
+whether 2016-17's best is 2025-26's best.
+
+A **band** has to describe the population on screen or it is describing a
+different game.
+
+Those two requirements point in opposite directions, and **the DEF structural
+break at 2025-26 is what forced the split rather than an argument from
+symmetry.** Defensive contribution points arrived that season and moved the
+defender distribution bodily: a band pooled over ten seasons would sit below the
+typical modern defender on Pts, PPM and Pts/£ permanently, so every current
+defender would render as above average against a marker claiming to be the
+average. The evidence is the distribution table in step 1.
+
+The consequence session 2 had to add, and session 3 widened: **the band draws
+only when every trace sits on the selected season.** One condition, two ways of
+otherwise describing a population nobody on screen belongs to — traces on two
+seasons, where two medians exist and the selector picks between them by
+accident; and traces all on one season that is not the selected one, where the
+median comes from a season with nothing on the chart. **The band never follows
+the traces instead.** A baseline that moved when a trace was added would let two
+charts be compared against different populations with neither saying so, which
+is worse than an absent band.
+
+### Clamp and mark
+
+Above the ceiling clamps to the outer ring, and the vertex is marked with a
+**shape** — never a colour, because colour is already carrying which trace is
+which, which is what the four-trace cap spends its budget on. The true number
+goes in the label.
+
+**At the ceiling exactly is not clipped**, and it is not a boundary nobody
+reaches: `minutes` ceilings at 3,420 because that is 38 × 90, the maximum the
+competition can produce. Confirmed in the browser rather than only in a test —
+Virgil's 2025-26 is exactly 3,420 and renders unmarked on the outer ring.
+
+**Two traces clipping the same axis land on the same point**, which is what
+clamping means, so their markers would too. They are fanned tangentially at a
+single radius: same distance out means same clamped position, so the fan
+separates them without implying an order. Cahill and Alonso both scored 6 in
+2016-17 against a ceiling of 5, and in the browser the fan works but the
+**labels do most of the work** — the two triangles are 11.5 units apart and 9
+wide, so they read as one cluster and it is the two colour-coded numbers beneath
+the caption that separate them. That is the design behaving as specified, since
+the labels were always the fallback, and it is worth knowing that the fallback
+is load-bearing rather than decorative.
+
+### Three tests that passed against the bug they existed to catch
+
+The most transferable thing in this item, and it is not about radars.
+
+| Test | Passed while | Fixed by |
+| --- | --- | --- |
+| The nine 2025-26 DEF band anchors (step 3) | the median was interpolated instead of a member value | a cohort of **22 goalkeepers** — an even one |
+| The axis intersection (step 4, session 1) | the axes were read off the selected season alone | the **opposite direction** — a generous selected season with a restrictive trace |
+| The `Pts/£` drift guard (step 3) | the client's formula was not in the comparison at all | an **externally-derived anchor on each side** of the language boundary |
+
+Two rules come out of them.
+
+**A test comparing two things that can only disagree in one direction has to
+exercise that direction.** Every odd-numbered cohort agrees under both median
+conventions, so nine anchors at n=109 could not have caught interpolation
+however many of them there were; the fix was one test at n=22, not more tests.
+The axis intersection is the same shape: 2016-17 is the restrictive season, so
+both implementations agree when it is selected, and the test only discriminates
+when the *generous* season is. Adding cases on the agreeing side is work that
+cannot produce a failure.
+
+**A test that never names an externally-derived number is comparing an
+implementation to itself.** The drift guard looped over all 109 defenders
+asserting `ptsPerNow(row) === row.total_points / (row.now_cost / 10)` — which
+restates the formula inline, so both sides were server code and the client's
+`perMillion` was not in the comparison. It read as thorough *because* it was
+109 rows. The 109-row loop is now two anchors on one number from outside the
+codebase: Guéhi's 35.10 from step 1's psql table, asserted once in
+`cohort.test.ts` and once in `playerColumns.test.ts`, plus Gabriel's `11 / 30`
+from item 14.
+
+Neither rule is about charts, and neither is caught by coverage.
+
+## Session 3 — the browser pass
+
+Seven defects, none of which any test could have found. The pattern holds: item
+10's padding inside the scrollport, item 12's expansion rule, item 13's
+closed-range label, and now these.
+
+### 1. A below-floor value was clamped silently
+
+**The same failure as the null, one end down.** The centre meant "at the floor"
+and "below the floor" identically: a squad player on 113 minutes and a cohort
+member on exactly 1,200 rendered at the same point with nothing saying which.
+
+Not an edge case — the 1,200-minute gate scopes the **cohort**, not who the
+picker offers, so most of a squad is below the Min floor, and PPM's p01 floor
+does the same. Above the ceiling had a marker and a true number from session 2;
+below the floor had neither.
+
+Fixed by mirroring the mechanism: clamp to the centre, mark the vertex with a
+triangle pointing **inward**, print the true number. The direction is what
+distinguishes the two at a glance.
+
+**One marker per axis, in a neutral colour, not one per trace** — the single
+place this does not mirror the clip marker. Floored vertices coincide *at the
+centre*, so there is no radius at which a fan stays inside the axis's own
+sector; a per-trace colour there would promise a distinction the geometry cannot
+keep. The colour-coded labels say which traces and how far, which is the same
+division of labour the clip case falls back on when two traces clip together.
+
+The boundary is tested as the mirror of the ceiling's: **exactly at the floor is
+not marked**, one below it is.
+
+### 2. A dropped axis was silent
+
+Item 13's rule not applied to a new surface, so not a decision. The picker says
+*"Only recorded from 2022-23."*; the chart dropped xGI and DCH/St on 2016-17 and
+said nothing, so a reader comparing eight spokes had no way to know two were
+removed to make that comparison possible.
+
+The reason now comes from **`resolveColumn`** — the picker's own function over
+the same availability data — because every axis key is a `PLAYER_COLUMNS` key.
+No second reason rule was written. The page reads:
+
+```
+DCH/St is not a spoke · Not recorded in 2016-17 · recorded from 2025-26.
+xGI is not a spoke · Not recorded in 2016-17 · recorded from 2022-23.
+```
+
+One case `resolveColumn` cannot answer, and it is named rather than guessed: an
+axis dropped because the **other** season on the chart could not answer it,
+where this season's availability says it is fine. That reads *"Not recorded in
+every season on the chart."*
+
+### 3. The subtitle asserted a band that was not drawn
+
+A static sentence in the header said *"The band is 2025-26's typical DEF."* The
+band is now withheld in three situations, so on any of them that sentence was
+false while `bandCaption` said the true thing 400px below it. Two sentences on
+one screen, one wrong — the class this project refuses. The static one is gone;
+the surviving sentence is derived from the tag that made the decision.
+
+### 4. The default season was an empty target
+
+2026-27 has no match rows, so every value is 0 and 0 minutes is below the Min
+floor: the chart drew eight bare spokes, no band, and every trace as a dot in
+the bullseye. Honest, and indistinguishable from a broken chart — **and it is
+what the app resolves to until the first round is ingested**, so it was the
+first thing most visitors would see for four months.
+
+It now gets a real empty state, as the Dashboard's three rankings did in item 4,
+gated on `bootstrap.columns.measured`. The axes are still **named**, because
+what the page will show is the useful thing to say and the scales are frozen and
+already known.
+
+### 5–7. The three cosmetic ones, and why 7 is not cosmetic in kind
+
+**5.** The clamp value overlapped its own caption — `Pts` and `▲ 209` by 2.6px,
+`▲ 6.53` and `▼ 1` by more. The pitch had been chosen from the **font size**
+where the **rendered box** is what collides: 11px text reports a 14.5px box,
+ascender to descender.
+
+**6.** The chart was 580px inside a 2,035px card. Fixed by putting the values
+table beside it on wide screens, which is the same change as Part C.
+
+**7.** Captions scaled with the viewBox, so at a 300px chart the 11px text
+rendered at **7.3px**. The SVG is now a fixed 580×500 in an `overflow-x: auto`
+wrapper — the same thing every wide table in this app does — so the text is
+always 11px and a narrow viewport scrolls instead.
+
+**7 is the same class as item 3's finding**, and worth naming as such: jsdom
+lays nothing out, so the font size a test reads is the font size that was
+written. No client test can ever catch this, on this page or any other.
+
+### The missing numbers, and the table that answers them
+
+Removing the read-out in session 2 left every non-clipped value unreadable: you
+could see that Gabriel's CS spoke was longer than the band's, not that it was 18
+against 6. On a page whose purpose is comparison that is a gap rather than a
+nitpick.
+
+Decided at four traces with the chart in front of us, which is what settled it.
+A hover shows one number at a time — so it cannot answer "18 against 6" at all —
+needs a 2.8px dot hit, and does not exist on touch. Numbers at each vertex is 40
+numbers. Numbers under each caption is elegant at one or two traces and collides
+at four, which is exactly where the numbers matter most.
+
+**The table is the legend as much as the read-out**, and that is the argument. At
+four traces the radar is at its legibility limit and the only thing tying an
+outline's colour to a player is the chip row; a column headed by the player's
+name in his own trace colour answers both questions in one place. The **band
+column carries as much as the player columns** — a filled grey shape can
+otherwise only be compared to by eye, and the median it stands for is a number.
+
+The clamp labels stay alongside it. They say the one thing a table cannot: that
+a vertex's position is a lie, and in which direction.
+
+### Tested, not yet seen
+
+**A null breaking the outline is correct, pinned, and currently unobservable in
+production.** The only thing producing a per-player null on a *drawn* axis is
+`DCH/St` with zero starts — every other null is a whole column the server drops
+for the season — and the largest such defender in 2025-26 has 113 minutes, so
+his entire trace collapses to a smudge at the centre and there is no outline to
+break. Recorded as tested-not-yet-seen rather than as a defect: it will become
+visible the first time a fringe player with real minutes has no starts.
+
+### Mutations
+
+Session 2, on the geometry:
+
+| Mutation | Red |
+| --- | --- |
+| `v / ceiling` for the floor-relative scale | 2 |
+| `raw >= 1` on the clip test | 2, one geometric and one rendered |
+| filter the nulls out and close the ring | 3, two geometric and one rendered |
+| session 1's `distinct seasons > 1` band rule | 1, only the not-selected-season test |
+
+Session 3, on the fixes:
+
+| Mutation | Red |
+| --- | --- |
+| `raw <= 0` — a value exactly at the floor is marked | 2 |
+| the floor marker points outward | 1 |
+| `absent` never computed — the silent drop restored | 2 |
+| the pre-season gate disabled | 1 |
+| one floor marker per trace, fanned | 1 |
+
+Nothing else in the suite moved for any of them, which is what says each rule is
+pinned where it is meant to be and not by accident somewhere else.

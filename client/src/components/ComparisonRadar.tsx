@@ -2,8 +2,10 @@ import type { AxisThreshold } from '../types/fpl';
 import { fmtNum } from '../types/fpl';
 import { TRACE_COLORS, type ComparisonView } from '../lib/comparison';
 import {
+  FLOOR_MARKER_R,
   RINGS,
   clipMarker,
+  floorMarker,
   pointAt,
   pointsAttr,
   segments,
@@ -33,7 +35,14 @@ import {
  * cannot see.
  */
 
-/** The outer ring, in user units. The viewBox scales it to whatever fits. */
+/** A vertex the geometry moved, and the true number it was moved from. */
+interface Marked {
+  color: string;
+  name: string;
+  value: number;
+}
+
+/** The outer ring, in user units — and, since item 17's fix, in CSS pixels too. */
 const R = 150;
 const CX = 290;
 const CY = 235;
@@ -75,20 +84,33 @@ export function ComparisonRadar({ view }: { view: ComparisonView }) {
    * that is what clamping means — so without this the second marker is drawn
    * exactly under the first and only one of them exists on screen.
    */
-  const clipsByAxis = new Map<number, { color: string; name: string; value: number }[]>();
+  const clipsByAxis = new Map<number, Marked[]>();
+  const floorsByAxis = new Map<number, Marked[]>();
   for (const t of drawn) {
     for (const v of t.vs) {
-      if (v === null || v.placement !== 'clipped') continue;
-      const list = clipsByAxis.get(v.index) ?? [];
+      if (v === null || v.placement === 'scaled') continue;
+      const into = v.placement === 'clipped' ? clipsByAxis : floorsByAxis;
+      const list = into.get(v.index) ?? [];
       list.push({ color: t.color, name: t.resolved.trace.web_name, value: v.value });
-      clipsByAxis.set(v.index, list);
+      into.set(v.index, list);
     }
   }
 
   return (
     <svg
       viewBox="0 0 580 500"
-      className="w-full h-auto max-w-[580px] mx-auto block"
+      /*
+       * **A fixed size, not `w-full`, and the captions are the reason.** Text
+       * inside an SVG scales with the viewBox like everything else, so a chart
+       * that shrank to fit a phone rendered its 11px captions at 7.3px —
+       * measured in the browser at a 300px width. Nothing could have caught
+       * that: jsdom lays out nothing, so the font-size a test reads is the one
+       * that was written. Held at 1:1 and allowed to scroll instead, which is
+       * what every wide table in this app already does.
+       */
+      width={580}
+      height={500}
+      className="block shrink-0"
       // The captions are real text in the DOM, so no `role="img"` — that would
       // hide them from assistive technology to replace them with one sentence.
       aria-label={`${axes.length} axes, ${drawn.length} of ${view.traces.length} players drawn`}
@@ -156,12 +178,28 @@ export function ComparisonRadar({ view }: { view: ComparisonView }) {
           ))
         )}
 
+        {/* One inward marker per axis, not one per trace: see `floorMarker`. */}
+        {[...floorsByAxis].map(([index, floors]) => (
+          <polygon
+            key={index}
+            className="radar-floor"
+            points={pointsAttr(floorMarker(spokeAngle(index, axes.length)))}
+            fill="hsl(var(--muted-foreground))"
+          >
+            <title>
+              {floors.map((f) => f.name).join(', ')}: {axes[index].label} below the{' '}
+              {axes[index].floor} floor
+            </title>
+          </polygon>
+        ))}
+
         {axes.map((axis, i) => (
           <AxisLabel
             key={axis.axis}
             axis={axis}
             angle={spokeAngle(i, axes.length)}
             clips={clipsByAxis.get(i) ?? []}
+            floors={floorsByAxis.get(i) ?? []}
           />
         ))}
       </g>
@@ -231,58 +269,93 @@ function Trace({ vs, color }: { vs: (Vertex | null)[]; color: string }) {
 }
 
 /**
- * An axis caption, plus **the true number for anything clipped on it**.
+ * An axis caption, plus **the true number for anything clamped on it**.
  *
- * The clipped values are the case this component exists to get right. Two traces
+ * The clamped values are the case this component exists to get right. Two traces
  * above the same ceiling are drawn at the same point — correctly, both being off
  * the scale — so once the geometry has said "both are past here", the label is
- * the only thing left that can say how far. Each line carries its trace's colour
- * and the triangle its marker is drawn as, so the fan of markers on the ring and
- * the list of numbers beside it can be read against each other.
+ * the only thing left that can say how far. Below the floor it is doing more
+ * than that, since the marker there is deliberately neutral: the label is the
+ * only thing saying *which* traces are clamped as well as how far.
+ *
+ * Each line carries its trace's colour and the triangle its marker is drawn as,
+ * so the markers on the chart and the numbers beside it can be read against each
+ * other. **The stack always runs downward**, whichever side of the chart the
+ * caption is on, so the lines belonging to one axis never cross another's.
  */
 function AxisLabel({
   axis,
   angle,
   clips,
+  floors,
 }: {
   axis: AxisThreshold;
   angle: number;
-  clips: { color: string; name: string; value: number }[];
+  clips: Marked[];
+  floors: Marked[];
 }) {
   const at = pointAt(angle, LABEL_R);
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
   const anchor = Math.abs(cos) < 0.3 ? 'middle' : cos > 0 ? 'start' : 'end';
-  // A caption below the chart hangs from its point; one above sits on it.
-  const baseline = Math.abs(sin) < 0.3 ? 'middle' : sin > 0 ? 'hanging' : 'auto';
+
+  /*
+   * The caption's own box, resolved to a top edge in user units.
+   *
+   * `dominantBaseline` was doing this before and the value lines were offset
+   * from the caption's ANCHOR rather than from its box, so on a top axis (where
+   * the baseline sits above the anchor) the first line landed 1px inside the
+   * caption and on a bottom axis 2px inside it. Measured in the browser on
+   * `Pts` and `PPM`; jsdom lays nothing out, so no test could have seen it.
+   * Resolving the box here and stacking from its bottom edge makes the spacing
+   * independent of which baseline rule applies.
+   */
+  const above = sin < -0.3;
+  const below = sin > 0.3;
+  const capTop = above ? at.y - CAP_H : below ? at.y : at.y - CAP_H / 2;
+
+  const lines = [
+    ...clips.map((c) => ({ ...c, glyph: '\u25B2' })),
+    ...floors.map((f) => ({ ...f, glyph: '\u25BC' })),
+  ];
 
   return (
     <g>
       <text
         x={at.x}
-        y={at.y}
+        y={capTop + CAP_H - 3}
         textAnchor={anchor}
-        dominantBaseline={baseline}
         className="fill-muted-foreground text-[11px] font-medium"
       >
         {axis.label}
       </text>
-      {clips.map((clip, i) => (
+      {lines.map((line, i) => (
         <text
           key={i}
           x={at.x}
-          y={at.y + (sin > 0.3 ? 13 : 12) * (i + 1) + (sin < -0.3 ? 2 : 0)}
+          y={capTop + CAP_H + LINE_H * i + LINE_H - 3}
           textAnchor={anchor}
-          dominantBaseline={baseline}
           className="text-[10px] tabular-nums"
-          fill={clip.color}
+          fill={line.color}
         >
-          ▲ {fmt(clip.value)}
+          {line.glyph} {fmt(line.value)}
         </text>
       ))}
     </g>
   );
 }
+
+/**
+ * Caption and value-line pitch, in user units, which are 1:1 with px.
+ *
+ * **Measured against the rendered box, not against the font size.** 11px text
+ * reports a 14.5px box — ascender to descender — so a 13/11 pitch chosen from
+ * the font size left `Pts` and `▲ 209` overlapping by 2.6px, and `▲ 6.53` and
+ * `▼ 1` by more. These clear the tallest box on the chart with room to spare,
+ * and four value lines on the six o'clock axis still land inside the viewBox.
+ */
+const CAP_H = 18;
+const LINE_H = 16;
 
 /** Counts render whole; quotients render to two places. */
 const fmt = (v: number): string => fmtNum(v, Number.isInteger(v) ? 0 : 2);

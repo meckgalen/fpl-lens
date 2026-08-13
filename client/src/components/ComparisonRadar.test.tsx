@@ -51,6 +51,7 @@ const trace = (name: string, values: AxisValues | null): ResolvedTrace => ({
 
 const view = (overrides: Partial<ComparisonView> = {}): ComparisonView => ({
   axes: axes(10),
+  absent: [],
   cohortSize: 109,
   band: null,
   bandWithheld: null,
@@ -192,6 +193,74 @@ describe('clamp and mark', () => {
       'Gabriel: pts_per_now 44.10, above the 40 ceiling',
       'Guéhi: pts_per_now 41.70, above the 40 ceiling',
     ]);
+  });
+});
+
+describe('below the floor', () => {
+  it('marks the vertex and prints the true number', () => {
+    const { container } = render(
+      <ComparisonRadar
+        view={view({ traces: [trace('Mayers', values(10, (i) => (KEYS[i] === 'minutes' ? 113 : 10)))] })}
+      />
+    );
+
+    // The centre used to mean "at the floor" and "below the floor" identically.
+    // 113 minutes and 1,200 rendered at the same point with nothing saying which
+    // — rule 6's failure, one end down.
+    const marks = all(container, '.radar-floor');
+    expect(marks).toHaveLength(1);
+    expect(marks[0].textContent).toBe('Mayers: minutes below the 1200 floor');
+    expect(screen.getByText('▼ 113')).toBeInTheDocument();
+  });
+
+  it('does not mark a vertex that is exactly AT the floor', () => {
+    const { container } = render(
+      <ComparisonRadar
+        view={view({ traces: [trace('Cohort', values(10, (i) => (KEYS[i] === 'minutes' ? 1200 : 10)))] })}
+      />
+    );
+
+    // The gate itself, which is the number every marginal cohort member has.
+    expect(all(container, '.radar-floor')).toHaveLength(0);
+  });
+
+  it('draws ONE marker for several traces, and a line for each', () => {
+    const { container } = render(
+      <ComparisonRadar
+        view={view({
+          traces: [
+            trace('Mayers', values(10, (i) => (KEYS[i] === 'minutes' ? 113 : 10))),
+            trace('Sosa', values(10, (i) => (KEYS[i] === 'minutes' ? 99 : 10))),
+          ],
+        })}
+      />
+    );
+
+    // Floored vertices coincide AT THE CENTRE, so there is no radius at which a
+    // fan would stay inside the axis's own sector — unlike the outer ring. One
+    // neutral marker says "clamped here"; the colour-coded lines say who.
+    expect(all(container, '.radar-floor')).toHaveLength(1);
+    expect(screen.getByText('▼ 113')).toBeInTheDocument();
+    expect(screen.getByText('▼ 99')).toBeInTheDocument();
+  });
+
+  it('points the other way from a clip on the same chart', () => {
+    const { container } = render(
+      <ComparisonRadar
+        view={view({
+          traces: [
+            trace('Gabriel', values(10, (i) =>
+              KEYS[i] === 'pts_per_now' ? 44.1 : KEYS[i] === 'minutes' ? 113 : 10
+            )),
+          ],
+        })}
+      />
+    );
+
+    expect(all(container, '.radar-clip')).toHaveLength(1);
+    expect(all(container, '.radar-floor')).toHaveLength(1);
+    expect(screen.getByText('▲ 44.10')).toBeInTheDocument();
+    expect(screen.getByText('▼ 113')).toBeInTheDocument();
   });
 });
 

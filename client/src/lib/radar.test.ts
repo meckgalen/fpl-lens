@@ -20,7 +20,15 @@
 import { describe, expect, it } from 'vitest';
 import { aThreshold } from '../test/factories';
 import type { AxisThreshold, AxisValues, ComparisonAxisKey } from '../types/fpl';
-import { clipMarker, pointAt, scaleValue, segments, spokeAngle, vertices } from './radar';
+import {
+  clipMarker,
+  floorMarker,
+  pointAt,
+  scaleValue,
+  segments,
+  spokeAngle,
+  vertices,
+} from './radar';
 
 const R = 150;
 const TAU = Math.PI * 2;
@@ -104,10 +112,20 @@ describe('the scale', () => {
     expect(scaleValue(100, 0, 200).fraction).toBeCloseTo(100 / 200, 10);
   });
 
-  it('floors a value below the floor at the centre', () => {
-    // Reachable: the 1,200-minute gate applies to the COHORT, not to the players
-    // asked for, so a 600-minute defender can be a trace.
+  it('floors a value below the floor at the centre, and says it did', () => {
+    // Reachable, and not rarely: the 1,200-minute gate scopes the COHORT, not
+    // the players the picker offers, so most of a squad is below the Min floor.
     expect(scaleValue(600, 1200, 3420)).toEqual({ fraction: 0, placement: 'floored' });
+  });
+
+  it('does NOT mark a value that is exactly AT the floor', () => {
+    // The mirror of the ceiling boundary, and the mirror of the mutation that
+    // catches it: `raw <= 0` in place of `raw < 0` marks a defender on exactly
+    // 1,200 minutes as below the gate he just cleared. Virgil's 3,420 confirmed
+    // the other end in the browser; this end is the cohort's own threshold, so
+    // it is hit by every player who scraped in.
+    expect(scaleValue(1200, 1200, 3420)).toEqual({ fraction: 0, placement: 'scaled' });
+    expect(scaleValue(0, 0, 200)).toEqual({ fraction: 0, placement: 'scaled' });
   });
 });
 
@@ -141,6 +159,32 @@ describe('clamp and mark', () => {
     // A lone marker is centred on its spoke rather than offset to one side.
     expect(rOf(alone[0])).toBeCloseTo(R + 11, 6);
     expect(Math.atan2(alone[0].y, alone[0].x)).toBeCloseTo(angle, 6);
+  });
+});
+
+describe('the floor marker', () => {
+  it('points inward, where the clip marker points outward', () => {
+    // The direction is the whole distinction: one says the true value is past
+    // the outer ring, the other past the centre. Read off the radius of the tip
+    // against the radius of the base.
+    const angle = spokeAngle(0, 10);
+    const rOf = (p: { x: number; y: number }) => Math.hypot(p.x, p.y);
+
+    const clip = clipMarker(angle, R, 0, 1);
+    const floor = floorMarker(angle);
+
+    // Tip further out than the base for a clip; nearer in for a floor.
+    expect(rOf(clip[0])).toBeGreaterThan(rOf(clip[1]));
+    expect(rOf(floor[0])).toBeLessThan(rOf(floor[1]));
+  });
+
+  it('sits near the centre but never on it', () => {
+    // On the centre it would be indistinguishable from a vertex, which is the
+    // thing it exists to annotate.
+    const floor = floorMarker(spokeAngle(3, 10));
+    const tip = Math.hypot(floor[0].x, floor[0].y);
+    expect(tip).toBeGreaterThan(0);
+    expect(tip).toBeLessThan(R / 4);
   });
 });
 

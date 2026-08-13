@@ -2,13 +2,17 @@ import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card';
 import { PlayerShirt } from '../components/PlayerShirt';
 import { ComparisonRadar } from '../components/ComparisonRadar';
-import { fetchComparison, fetchComparisonThresholds } from '../services/api';
+import { ComparisonTable } from '../components/ComparisonTable';
+import { fetchColumnHistory, fetchComparison, fetchComparisonThresholds } from '../services/api';
 import type {
   AxisThreshold,
+  ColumnHistoryRow,
   ComparisonPosition,
   ComparisonThresholdsData,
   Player,
+  SeasonColumnAvailability,
 } from '../types/fpl';
+import { columnByKey, resolveColumn } from '../lib/playerColumns';
 import { useBootstrap } from '../lib/bootstrap';
 import { FOCUS_RING, cn } from '../lib/cn';
 import {
@@ -55,6 +59,30 @@ function bandCaption(view: ComparisonView, position: ComparisonPosition, season:
 }
 
 /**
+ * Why an axis is not a spoke, in the picker's own words.
+ *
+ * `resolveColumn` is the shipped reason function, and this reuses it rather than
+ * restating it: an axis key IS a `PLAYER_COLUMNS` key, which is exactly why the
+ * two surfaces can share one rule. An axis whose column resolves as available is
+ * one the *other* season on the chart could not answer, which the availability
+ * data for THIS season cannot explain — so that case names the intersection
+ * instead of guessing.
+ */
+function axisReason(
+  axis: string,
+  availability: SeasonColumnAvailability,
+  history: ColumnHistoryRow[] | null,
+  seasons: string[]
+): string {
+  const col = columnByKey(axis);
+  if (col === undefined) return `Not recorded in ${availability.season}.`;
+  const status = resolveColumn(col, availability, history, seasons);
+  return status.available
+    ? 'Not recorded in every season on the chart.'
+    : status.reason;
+}
+
+/**
  * The player comparison chart: the controls, the two fetches, and the state the
  * radar is drawn from.
  *
@@ -93,6 +121,31 @@ export default function Comparison() {
 
   const [search, setSearch] = useState('');
   const [team, setTeam] = useState<number | 'ALL'>('ALL');
+
+  /**
+   * The column matrix, for the reason an absent axis carries.
+   *
+   * Module-scope memoized in `services/api.ts`, so on a session that has opened
+   * the Players list this costs nothing. Off the critical path and nothing
+   * blocks on it: `resolveColumn` returns a complete sentence from the bootstrap
+   * alone, and the matrix only appends the clause naming where the axis IS
+   * recorded — which is the clause that matters most here, on a page whose whole
+   * point is other seasons.
+   */
+  const [history, setHistory] = useState<ColumnHistoryRow[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchColumnHistory()
+      .then((d) => {
+        if (live) setHistory(d.columns);
+      })
+      .catch(() => {
+        // Degrades to the bootstrap-only sentence, which is already true.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -240,8 +293,12 @@ export default function Comparison() {
           Comparison · {b.season}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
+          {/* No claim about the band here. It is drawn in four different
+              situations and withheld in three of them, and `bandCaption` is
+              derived from the tag that decided it — a second sentence up here
+              could only ever restate that or contradict it, and it did. */}
           Every axis is fixed across seasons, so two players from different years are
-          drawn on the same scale. The band is {b.season}&rsquo;s typical {position}.
+          drawn on the same scale.
         </p>
       </div>
 
@@ -436,19 +493,73 @@ export default function Comparison() {
             </p>
           ) : view === null ? (
             <p className="text-sm text-muted-foreground">Loading {b.season}…</p>
+          ) : !b.columns.measured ? (
+            /*
+             * The pre-season state, and it is the DEFAULT season's — 2026-27 is
+             * what the app resolves to until the first round is ingested, so this
+             * is the first thing most visitors see for the next four months.
+             * Drawing the chart here produced an empty target with every trace
+             * collapsed to a dot in the bullseye: honest, since every value is 0
+             * and 0 minutes is below the Min floor, and indistinguishable from a
+             * broken chart. The Dashboard got its three empty states in item 4 for
+             * the same reason; this is the fourth.
+             *
+             * The axes are still named, because what the page WILL show is the
+             * useful thing to say, and the scales are frozen and already known.
+             */
+            <div className="py-6 text-center">
+              <p className="text-sm text-foreground">
+                No matches recorded for {b.season} yet, so no values and no cohort.
+              </p>
+              <p className="mt-1.5 text-[13px] text-muted-foreground">
+                {position}s will be drawn on {forPosition.length} axes:{' '}
+                {forPosition.map((a) => a.label).join(' · ')}.
+              </p>
+              <p className="mt-1.5 text-[13px] text-muted-foreground">
+                The scales are fixed across seasons, so pick an earlier one to compare on the
+                same rings.
+              </p>
+            </div>
           ) : (
             <>
-              <ComparisonRadar view={view} />
-              {view.axes.length > 0 && (
-                <p className="mt-2 text-[11px] text-muted-foreground text-center">
-                  Ten rings, each a tenth of that axis&rsquo;s own range. A scale is drawn from{' '}
-                  {`${Math.min(...view.axes.map((a) => a.derivedFrom.seasons.length))}–${Math.max(
-                    ...view.axes.map((a) => a.derivedFrom.seasons.length)
-                  )} seasons`}
-                  , per axis, and is the same on every season — which is what makes two years
-                  comparable. A ▲ is a value past the outer ring, with its true number beside it.
-                </p>
+              <div className="flex flex-col xl:flex-row xl:items-start gap-6">
+                {/* The chart keeps its own scroller: it is a fixed 580px so its
+                    captions stay at 11px, so a narrow viewport scrolls it rather
+                    than shrinking the text to 7px. Every wide table in this app
+                    already works this way. */}
+                <div className="overflow-x-auto max-w-full">
+                  <ComparisonRadar view={view} />
+                </div>
+                <div className="flex-1 min-w-0 xl:pt-2">
+                  <ComparisonTable view={view} />
+                </div>
+              </div>
+
+              {view.absent.length > 0 && (
+                /*
+                 * Item 13's rule, applied to a surface that was dropping axes
+                 * silently. The reason comes from `resolveColumn` — the picker's
+                 * own function over the same availability data — because every
+                 * axis key is a `PLAYER_COLUMNS` key, and a second reason rule
+                 * would be a second thing to keep true.
+                 */
+                <ul className="mt-4 border-t border-border pt-3 space-y-1">
+                  {view.absent.map((axis) => (
+                    <li key={axis.axis} className="text-[11px] text-muted-foreground">
+                      <span className="text-foreground">{axis.label}</span> is not a spoke
+                      {' · '}
+                      {axisReason(axis.axis, b.columns, history, b.seasons)}
+                    </li>
+                  ))}
+                </ul>
               )}
+
+              <p className="mt-3 text-[11px] text-muted-foreground">
+                Ten rings, each a tenth of that axis&rsquo;s own range, the same on every season
+                — which is what makes two years comparable. ▲ is a value past the outer
+                ring and ▼ one below the floor; both are drawn at the edge, with their true
+                number beside them.
+              </p>
             </>
           )}
         </CardContent>

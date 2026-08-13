@@ -182,7 +182,7 @@ export function pointsAttr(points: Point[]): string {
 const round = (n: number): number => Math.round(n * 100) / 100;
 
 /**
- * The clip marker: a triangle pointing outward, centred on the spoke.
+ * The clip marker: a triangle pointing **outward**, centred on the spoke.
  *
  * **A shape rather than a colour**, because colour is already carrying which
  * trace is which — that is the argument behind the four-trace cap, and spending
@@ -195,21 +195,44 @@ const round = (n: number): number => Math.round(n * 100) / 100;
  * radius on purpose: same distance out means same clamped position, so it
  * separates the markers without implying an order between them.
  */
-export function clipMarker(
-  angle: number,
-  radius: number,
-  slot: number,
-  of: number
-): Point[] {
-  const fanned = angle + (slot - (of - 1) / 2) * FAN;
-  const tip = pointAt(fanned, radius + 11);
-  const base = pointAt(fanned, radius + 3);
-  const across = { x: -Math.sin(fanned) * 4.5, y: Math.cos(fanned) * 4.5 };
-  return [
-    tip,
-    { x: base.x + across.x, y: base.y + across.y },
-    { x: base.x - across.x, y: base.y - across.y },
-  ];
+export function clipMarker(angle: number, radius: number, slot: number, of: number): Point[] {
+  return triangle(angle + (slot - (of - 1) / 2) * FAN, radius + 3, radius + 11);
+}
+
+/**
+ * The floor marker: a triangle pointing **inward**, just outside the first ring.
+ *
+ * The mirror of `clipMarker`, and the direction is what distinguishes them at a
+ * glance — one says "the true value is past the outer ring", the other "past the
+ * centre". The centre used to mean *at the floor* and *below the floor*
+ * identically, which is rule 6's failure one end down: a squad player on 400
+ * minutes and a cohort member on exactly 1,200 rendered at the same point, and
+ * nothing said which. Not an edge case — the 1,200-minute gate scopes the
+ * cohort, not who the picker offers, so anyone outside it is below the Min floor
+ * and PPM's p01 floor does the same.
+ *
+ * **One marker per axis, in a neutral colour, not one per trace**, which is the
+ * one place this does not mirror the clip marker. Floored vertices all coincide
+ * *at the centre*, so there is no room to fan them apart and no radius at which
+ * a fan would stay inside the axis's own sector; a per-trace colour there would
+ * promise a distinction the geometry cannot keep. The marker says "vertices here
+ * are clamped" and the colour-coded labels beside the caption say which traces
+ * and what their true numbers were — the same division of labour the clip case
+ * falls back on when two traces clip together.
+ */
+export function floorMarker(angle: number): Point[] {
+  return triangle(angle, FLOOR_MARKER_R + 8, FLOOR_MARKER_R);
+}
+
+/** Just outside the innermost ring, so the marker never sits on the centre dot. */
+export const FLOOR_MARKER_R = 20;
+
+/** `base` is the flat edge's radius, `tip` the point's — either may be nearer. */
+function triangle(angle: number, base: number, tip: number): Point[] {
+  const t = pointAt(angle, tip);
+  const b = pointAt(angle, base);
+  const across = { x: -Math.sin(angle) * 4.5, y: Math.cos(angle) * 4.5 };
+  return [t, { x: b.x + across.x, y: b.y + across.y }, { x: b.x - across.x, y: b.y - across.y }];
 }
 
 /** ~4.3°, which is about a marker's width apart at the radius the chart draws. */

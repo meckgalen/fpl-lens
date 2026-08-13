@@ -55,7 +55,7 @@ aggregate per request, with no cache and no materialized view, because a cache i
 a second source of truth.
 
 **There is a Comparison page, and it draws a radar of up to four (player, season)
-traces.** A trace is a **(player, season) pair, never a player**, so one added on
+traces beside a table of their numbers.** A trace is a **(player, season) pair, never a player**, so one added on
 one season stays pinned to it when the selector moves and two seasons reach one
 chart; the page issues one request per season in play and draws the axes **every
 one of them can answer**. The thresholds being served rather than compiled in
@@ -255,6 +255,8 @@ fpl-lens/
 │   │       │                  # + DisclosureButton: the one row toggle
 │   │       ├── ComparisonRadar.tsx  # the SVG: rings, spokes, band, traces
 │   │       ├── ComparisonRadar.test.tsx  # two traces clipping ONE axis
+│   │       ├── ComparisonTable.tsx  # the numbers, and the legend: one column
+│   │       │                  # per trace, headed in that trace's own colour
 │   │       ├── OpenPlayerButton.tsx # a player's name, as a link to their page
 │   │       ├── ColumnPicker.tsx     # which columns render, and why not
 │   │       ├── PlayerShirt.tsx      # club shirt -> club badge -> grey avatar
@@ -480,6 +482,14 @@ is silently wrong.
     measured this" as "about typical here" — a number invented by the drawing.
     The outline breaks over the gap instead. A vertex at the centre is what a
     measured **zero** looks like, which is the pair rule 6 exists to keep apart.
+
+    **The same failure has a low end, and it is not an edge case.** A value below
+    an axis floor clamps to the centre, where it is indistinguishable from one
+    sitting exactly on the floor — the comparison chart's 1,200-minute floor
+    scopes the *cohort*, not who the picker offers, so most of a squad lands
+    there. A clamp at either end must be **marked and carry its true number**:
+    outward past the ceiling, inward past the floor, by a shape rather than a
+    colour where colour already means something else.
 20. **No SQL exists outside `server/src/repositories/`.** Two routes read no
     database at all rather than reaching around it: `/api/comparison-thresholds`
     serves frozen constants, and `/api/comparison` reads `listPlayerTotals`'s
@@ -1263,6 +1273,7 @@ One item per session, committed between each. **The record of every item is
       moved out most of what a pure record-dissolution would have left.
 - [x] **16. The comparison chart.** — thresholds frozen before any chart, because
       that is what makes two seasons comparable; then the route, then the radar.
+      Three of its tests passed against the bug they existed to catch.
 - [x] **17. What CLAUDE.md is for.** — a criterion rather than a fourth record
       move: unconditionally-useful stays, re-derivable and local go.
 
@@ -1502,6 +1513,28 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
 
   **The trigger must be a real content change.** `touch` alone produces no HMR
   event at all, and no event reads exactly like a pass.
+- **A rendered dimension is invisible to the test suite, so it is the browser
+  pass or nothing.** jsdom lays nothing out: the font size a test reads is the
+  font size that was written, and every width, overlap and collision reads as
+  whatever the source says. Item 3 found this from the other side, when a header
+  row collapsed with every asserted class present. Item 16 found it as an SVG
+  whose captions scaled with its viewBox — 11px rendering at **7.3px** on a phone
+  — which no assertion on this project could ever have caught.
+
+  So: **anything whose correctness is a measurement of the rendered result gets
+  measured in the browser**, and the finding is recorded as a number rather than
+  as "looks fine". Text that must not scale needs a fixed-size element; wide
+  content scrolls inside its own `overflow-x: auto` container rather than
+  shrinking.
+- **A surface that withholds something says why, on screen, next to where the
+  thing would have been.** Item 13's column picker is the pattern — an
+  unavailable column is disabled reading *"Only recorded from GW16 in 2022-23."*
+  rather than hidden — and it is a rule rather than that item's style, because a
+  surface that silently drops a thing is indistinguishable from one that never
+  had it. **Reuse the reason function, never write a second one**: the comparison
+  chart names a dropped axis with `resolveColumn`, the picker's own, because an
+  axis key is a `PLAYER_COLUMNS` key. Where the shared function genuinely cannot
+  know the answer, say what is known instead of guessing.
 - **Vary one condition at a time. A comparison that varies two measures
   neither**, and the failure is invisible, because the number it produces looks
   perfectly reasonable — there is no error, no outlier and nothing to notice.

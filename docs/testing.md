@@ -17,7 +17,7 @@ restated as rules here. What follows is the catalogue.
 
 ## The counts
 
-`npm test` runs **two suites on two runners**: **142 server tests** and **244
+`npm test` runs **two suites on two runners**: **142 server tests** and **254
 client tests**, all passing. They are counted separately on purpose — two
 runners print two summaries, and a combined figure would be maintained by hand
 against neither of them.
@@ -195,7 +195,7 @@ additionally pin URL shapes and `res.ok` handling, which the server suite
 already covers. `@testing-library/user-event` drives anything involving a
 keyboard — `fireEvent` dispatches a synthetic click and so cannot tell a
 `<button>` from a `<div onClick>`, which is the entire distinction item 3 turns
-on. Twenty-three files:
+on. Twenty-four files:
 
 - `client/src/components/PlayerShirt.test.tsx` — the club shirt and its two
   fallbacks. URLs asserted **in full** rather than pattern-matched, for the
@@ -240,8 +240,8 @@ on. Twenty-three files:
   35.10 on both sides; Gabriel's `11 / 30` was already here from item 14.
 
 - `client/src/pages/Comparison.test.tsx` — the comparison page's fetching and
-  state (item 16 step 4, sessions 1 and 2). Twenty-three tests over three
-  properties a chart cannot be built on top of if they are wrong. The geometry
+  state (item 16 step 4). Twenty-six tests over three properties a chart cannot
+  be built on top of if they are wrong, plus two the browser pass added. The geometry
   is not here — see `radar.test.ts` and `ComparisonRadar.test.tsx`.
 
   **The loading state is real**: serving the thresholds rather than compiling
@@ -274,13 +274,31 @@ on. Twenty-three files:
   shared-season test red while leaving it green; and session 1's narrower
   `distinct seasons > 1` turns *only* the not-the-selected-season test red.
 
+  **A dropped axis is named with its reason**, from `resolveColumn` — the column
+  picker's own function, because an axis key is a `PLAYER_COLUMNS` key. Two
+  tests, and the second is the one that needed a factory fix rather than a code
+  fix: the helper built every season's bootstrap with 2025-26's availability, so
+  the page reported the wrong reason and nothing noticed. Fixed by making the
+  availability move with the season, which is what let the *other* branch be
+  pinned — an axis dropped because the OTHER season could not answer it, where
+  this season's availability cannot explain the absence.
+
+  **A season with no matches gets an empty state rather than a chart**, gated on
+  `bootstrap.columns.measured`. Every value is 0 and 0 minutes is below the Min
+  floor, so the chart drew bare spokes and a dot in the bullseye — and it is the
+  default season. The axes are still named, which the test pins.
+
+  **The axis captions are queried on the chart specifically.** The values table
+  repeats every caption in its first column, so a bare `getByText('Pts/£')` now
+  matches two nodes — the same collision item 12 hit with "Selected".
+
   **The trace limit states its reason rather than the rule.** "Maximum 4"
   restates the number; the sentence a reader can act on is that four is as many
   as colour can tell apart. Item 13's disabled-with-a-reason, applied to a
   control instead of to a column.
 
 - `client/src/lib/radar.test.ts` — the radar's geometry as arithmetic (item 16
-  step 4, session 2). Sixteen tests, each written against **the wrong
+  step 4). Nineteen tests, each written against **the wrong
   implementation it would otherwise agree with** rather than against a plausible
   number: `v / ceiling` for `(v - floor) / (ceiling - floor)`, which is right on
   six of the eleven axes and puts a defender on exactly 1,200 minutes at 35% of
@@ -293,10 +311,17 @@ on. Twenty-three files:
   Also the re-spacing: a seven-axis chart is not a ten-axis chart with three
   spokes missing, so every spoke after the first sits somewhere different.
 
-  Mutations run, and what each turned red: the ratio impostor → 2 tests; `>=` →
-  2, one here and one in the component file; filter-and-close → 3, two here and
-  one in the component file. Nothing else in the suite moved for any of them,
-  which is what says the geometry is pinned here and nowhere by accident.
+  **Both ends of the scale clamp, and both boundaries are pinned the same way.**
+  Exactly at the ceiling is not marked (`minutes` ceilings at 3,420 = 38 × 90, so
+  an ever-present player hits it — Virgil did, in the browser); exactly at the
+  floor is not marked either, and that number is the cohort gate itself, so every
+  player who scraped in has it. The floor marker points **inward** where the clip
+  marker points outward, which is the whole distinction.
+
+  Mutations run, and what each turned red: the ratio impostor → 2; `>=` on the
+  ceiling → 2; `<=` on the floor → 2; the floor marker pointing outward → 1;
+  filter-and-close → 3. Nothing else in the suite moved for any of them, which is
+  what says the geometry is pinned here and nowhere by accident.
 
 - `client/src/components/ComparisonRadar.test.tsx` — what the radar draws, once
   the shapes are in a document: ring count, spoke count, which shape a clipped
@@ -314,6 +339,16 @@ on. Twenty-three files:
   the same point, so unmarked they are one triangle where there are two; the
   markers are fanned along the outer ring at a single radius and both true
   numbers are printed beside the caption.
+
+  **Below the floor is the same case one end down**, and four tests cover it: the
+  vertex is marked and the true number printed; exactly at the floor is not
+  marked; several floored traces get **one** marker and a line each, because
+  floored vertices coincide at the centre where no fan stays inside the axis's
+  own sector; and a chart with one of each has markers pointing both ways.
+
+- `client/src/components/ComparisonTable.tsx` has no file of its own: it renders
+  through `Comparison.test.tsx`, and what it asserts there is the collision above
+  — the captions it repeats are why the chart's own are queried structurally.
 
 - `client/src/services/api.comparison.test.ts` — the thresholds memo, which is
   `fetchColumnHistory`'s with one clause **reversed**. `fetch` is mocked rather

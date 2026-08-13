@@ -28,14 +28,24 @@ import Comparison from './Comparison';
 import { fetchComparison, fetchComparisonThresholds } from '../services/api';
 import { BootstrapContext } from '../lib/bootstrap';
 import type { BootstrapData, ComparisonData } from '../types/fpl';
-import { aBootstrap, aComparison, aPlayer, aTeam, comparisonThresholds } from '../test/factories';
+import {
+  aBootstrap,
+  aComparison,
+  aPlayer,
+  aTeam,
+  availability,
+  comparisonThresholds,
+} from '../test/factories';
 
 vi.mock('../services/api', () => ({
   fetchBootstrap: vi.fn(),
   fetchPlayerDetail: vi.fn(),
   fetchPlayerCareer: vi.fn(),
   fetchFixtures: vi.fn(),
-  fetchColumnHistory: vi.fn(),
+  // Held open rather than resolved: the matrix only APPENDS a pointer clause to
+  // an absent axis's reason, so the page must be correct without it. A test that
+  // resolved it could not tell the two apart.
+  fetchColumnHistory: vi.fn(() => new Promise<never>(() => {})),
   fetchComparison: vi.fn(),
   fetchComparisonThresholds: vi.fn(),
 }));
@@ -75,6 +85,18 @@ function season(name: string): BootstrapData {
     seasons: [LATER, EARLIER],
     teams: [aTeam(), aTeam({ id: 43, name: 'Crystal Palace', short_name: 'CRY' })],
     players: [GABRIEL, GUEHI, SAKA],
+    // The availability has to move WITH the season, or the page reports the
+    // wrong reason for a dropped axis and nothing notices — the first draft of
+    // this helper left it fixed and the absent-axis test read
+    // "Not recorded in every season on the chart" where the truth was
+    // "Not recorded in 2016-17".
+    columns:
+      name === EARLIER
+        ? availability(
+            { expected_goal_involvements: 'none', defensive_contribution: 'none' },
+            { season: name }
+          )
+        : availability({}, { season: name }),
   });
 }
 
@@ -107,6 +129,22 @@ function renderPage(bootstrap: BootstrapData = season(LATER)) {
  * chip's remove control is `Remove Gabriel 2025-26`, so a bare /Gabriel/ matches
  * both and every "no longer offered" assertion would pass on the wrong node.
  */
+/**
+ * The axis captions **on the chart**, which is not the only place they appear.
+ *
+ * Item 16's values table repeats every caption in its first column, so a bare
+ * `getByText('Pts/£')` now matches two nodes — the same collision item 12 hit
+ * with "Selected", found the same way. The spokes are what these tests mean, so
+ * they say so.
+ */
+const spokeLabels = () =>
+  [...document.querySelectorAll('svg text')].map((t) => t.textContent ?? '');
+
+/** Waits for the radar itself, which is what "the page is ready" means here. */
+const drawn = async () => {
+  await waitFor(() => expect(document.querySelector('.radar-spoke')).not.toBeNull());
+};
+
 const candidate = (name: string) => screen.findByRole('button', { name: `Add ${name}` });
 const noCandidate = (name: string) => screen.queryByRole('button', { name: `Add ${name}` });
 
@@ -176,7 +214,7 @@ describe('the loading state', () => {
 
   it('does not ask for the scales again when the season changes', async () => {
     const { rerender } = renderPage();
-    await screen.findByText('Pts/£');
+    await drawn();
     const onMount = thresholdsMock.mock.calls.length;
 
     rerenderAt(rerender, EARLIER);
@@ -194,7 +232,7 @@ describe('a trace is a (player, season) pair', () => {
   it('pins a trace to the season it was added on', async () => {
     const user = userEvent.setup();
     const { rerender } = renderPage();
-    await screen.findByText('Pts/£');
+    await drawn();
 
     await user.click(await candidate('Gabriel'));
     await waitFor(() => expect(comparisonMock).toHaveBeenCalledWith(LATER, 'DEF', [GABRIEL.id]));
@@ -212,7 +250,7 @@ describe('a trace is a (player, season) pair', () => {
   it('groups two traces on one season into one request', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('Pts/£');
+    await drawn();
 
     await user.click(await candidate('Gabriel'));
     await user.click(await candidate('Guéhi'));
@@ -225,7 +263,7 @@ describe('a trace is a (player, season) pair', () => {
   it('names the season on the chip, because two of them can differ', async () => {
     const user = userEvent.setup();
     const { rerender } = renderPage();
-    await screen.findByText('Pts/£');
+    await drawn();
     await user.click(await candidate('Gabriel'));
 
     rerenderAt(rerender, EARLIER);
@@ -241,7 +279,7 @@ describe('a trace is a (player, season) pair', () => {
   it('drops the traces when the position changes', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('Pts/£');
+    await drawn();
     await user.click(await candidate('Gabriel'));
     await screen.findByRole('button', { name: `Remove Gabriel ${LATER}` });
 
@@ -260,19 +298,19 @@ describe('a trace is a (player, season) pair', () => {
 describe('the axis set', () => {
   it('drops an axis the SELECTED season cannot answer', async () => {
     const { rerender } = renderPage();
-    await screen.findByText('Pts/£');
+    await drawn();
     // 2025-26 measures everything, so all ten spokes exist.
-    expect(screen.getByText('xGI')).toBeInTheDocument();
-    expect(screen.getByText('DCH/St')).toBeInTheDocument();
+    expect(spokeLabels()).toContain('xGI');
+    expect(spokeLabels()).toContain('DCH/St');
 
     rerenderAt(rerender, EARLIER);
     await waitFor(() => expect(comparisonMock).toHaveBeenCalledWith(EARLIER, 'DEF', []));
 
     // 2016-17 predates both, so neither spoke exists. This is the server's rule
     // — absent, never null — arriving unchanged.
-    await waitFor(() => expect(screen.queryByText('xGI')).not.toBeInTheDocument());
-    expect(screen.queryByText('DCH/St')).not.toBeInTheDocument();
-    expect(screen.getByText('Pts/£')).toBeInTheDocument();
+    await waitFor(() => expect(spokeLabels()).not.toContain('xGI'));
+    expect(spokeLabels()).not.toContain('DCH/St');
+    expect(spokeLabels()).toContain('Pts/£');
   });
 
   it('drops an axis a TRACE\u2019s season cannot answer, on a season that can', async () => {
@@ -288,7 +326,7 @@ describe('the axis set', () => {
      */
     const user = userEvent.setup();
     const { rerender } = renderPage(season(EARLIER));
-    await screen.findByText('Pts/£');
+    await drawn();
 
     await user.click(await candidate('Gabriel'));
     await waitFor(() =>
@@ -301,9 +339,18 @@ describe('the axis set', () => {
 
     // The band is 2025-26's and the trace is 2016-17's, so the spokes are the
     // eight both can answer.
-    await waitFor(() => expect(screen.queryByText('xGI')).not.toBeInTheDocument());
-    expect(screen.queryByText('DCH/St')).not.toBeInTheDocument();
-    expect(screen.getByText('Pts/£')).toBeInTheDocument();
+    await waitFor(() => expect(spokeLabels()).not.toContain('xGI'));
+    expect(spokeLabels()).not.toContain('DCH/St');
+    expect(spokeLabels()).toContain('Pts/£');
+
+    // And the reason names the intersection rather than the selected season:
+    // 2025-26 DOES record xGI, so its own availability cannot explain why the
+    // spoke is gone, and a sentence saying "not recorded in 2025-26" would be
+    // false. This is the branch `resolveColumn` alone cannot answer.
+    const notes = [...document.querySelectorAll('li')].map((li) => li.textContent ?? '');
+    expect(notes.find((t) => t.includes('xGI'))).toContain(
+      'Not recorded in every season on the chart.'
+    );
   });
 
   it('reads its captions off the thresholds, not off a second table', async () => {
@@ -311,8 +358,8 @@ describe('the axis set', () => {
 
     // `Sv` is the one caption that differs from the Players list's own label for
     // the same column (`S`), which is why the label travels on the threshold.
-    await screen.findByText('Pts/£');
-    expect(screen.getByText('Min')).toBeInTheDocument();
+    await drawn();
+    expect(spokeLabels()).toContain('Min');
   });
 });
 
@@ -326,7 +373,7 @@ describe('the band', () => {
     // 2026-27 has no match rows: the spokes still exist and only the band is
     // missing, which is a live season's ordinary opening state until ~GW14.
     expect(await screen.findByText(/No band · 0 DEFs past 1,200 minutes/)).toBeInTheDocument();
-    expect(screen.getByText('Pts/£')).toBeInTheDocument();
+    expect(spokeLabels()).toContain('Pts/£');
   });
 });
 
@@ -349,7 +396,7 @@ describe('the band, and which season the traces are from', () => {
   it('hides the band, and says that is why', async () => {
     const user = userEvent.setup();
     const { rerender } = renderPage();
-    await screen.findByText('Pts/£');
+    await drawn();
     await user.click(await candidate('Gabriel'));
     await screen.findByText(/median of 109 DEFs/);
 
@@ -367,7 +414,7 @@ describe('the band, and which season the traces are from', () => {
     // quieter of the two failures, and the one a `size > 1` rule misses.
     const user = userEvent.setup();
     const { rerender } = renderPage();
-    await screen.findByText('Pts/£');
+    await drawn();
     await user.click(await candidate('Gabriel'));
     await screen.findByText(/median of 109 DEFs/);
 
@@ -384,7 +431,7 @@ describe('the band, and which season the traces are from', () => {
     // and the one above would still pass, so it cannot be the only one.
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('Pts/£');
+    await drawn();
 
     await user.click(await candidate('Gabriel'));
     await user.click(await candidate('Guéhi'));
@@ -403,11 +450,74 @@ describe('the band, and which season the traces are from', () => {
   });
 });
 
+describe('an axis that is not a spoke', () => {
+  it('names it and says why, rather than dropping it silently', async () => {
+    const { rerender } = renderPage();
+    await drawn();
+
+    rerenderAt(rerender, EARLIER);
+    await waitFor(() => expect(spokeLabels()).not.toContain('xGI'));
+
+    /*
+     * Item 13's rule on a surface that was dropping axes in silence. A reader
+     * comparing 2016-17 with 2025-26 on eight spokes had no way to know two were
+     * removed to make that possible.
+     *
+     * The sentence is `resolveColumn`'s — the picker's own function over the same
+     * availability data — because an axis key IS a `PLAYER_COLUMNS` key. Written
+     * out here rather than imported, so this cannot agree with itself: a second
+     * copy of the RULE is what item 13 forbids, and a second copy of the STRING
+     * is what makes the test able to disagree.
+     */
+    // The label is its own <span>, so the sentence spans two nodes.
+    const notes = () =>
+      [...document.querySelectorAll('li')].map((li) => li.textContent ?? '');
+    await waitFor(() =>
+      expect(notes().some((t) => /xGI is not a spoke/.test(t))).toBe(true)
+    );
+    expect(notes().some((t) => /DCH\/St is not a spoke/.test(t))).toBe(true);
+    expect(notes().find((t) => t.includes('xGI'))).toContain(`Not recorded in ${EARLIER}.`);
+  });
+
+  it('says nothing when every axis is drawn', async () => {
+    renderPage();
+    await drawn();
+
+    // 2025-26 answers all ten, so there is nothing to explain and no empty note.
+    expect(
+      [...document.querySelectorAll('li')].some((li) => /is not a spoke/.test(li.textContent ?? ''))
+    ).toBe(false);
+  });
+});
+
+describe('a season with no matches yet', () => {
+  it('says so instead of drawing a target with a dot in the middle', async () => {
+    // 2026-27 is what the app resolves to until the first round is ingested, so
+    // this is the page's default state for the next four months. Every value is
+    // 0 and 0 minutes is below the Min floor, so the chart drew every trace as a
+    // point at the centre — honest, and indistinguishable from a broken chart.
+    const preseason = aBootstrap({
+      ...season('2026-27'),
+      season: '2026-27',
+      columns: availability({}, { season: '2026-27', measured: false }),
+    });
+    renderPage(preseason);
+
+    expect(
+      await screen.findByText(/No matches recorded for 2026-27 yet/)
+    ).toBeInTheDocument();
+    // The axes are still named: what the page WILL show is the useful thing to
+    // say, and the scales are frozen and already known.
+    expect(screen.getByText(/Pts · CS · G · Min/)).toBeInTheDocument();
+    expect(document.querySelector('.radar-spoke')).toBeNull();
+  });
+});
+
 describe('the picker', () => {
   it('offers only the chosen position, from the selected season', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('Pts/£');
+    await drawn();
 
     expect(await candidate('Gabriel')).toBeInTheDocument();
     // Saka is a midfielder in this bootstrap.
@@ -420,7 +530,7 @@ describe('the picker', () => {
   it('narrows by club', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('Pts/£');
+    await drawn();
 
     await user.selectOptions(
       screen.getByLabelText('Club'),
@@ -434,7 +544,7 @@ describe('the picker', () => {
   it('narrows by name, and drops a player already picked', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('Pts/£');
+    await drawn();
 
     await user.click(await candidate('Gabriel'));
     // Added, so no longer offered — the same (player, season) pair twice would
@@ -459,7 +569,7 @@ describe('a season that refuses', () => {
     });
 
     const { rerender } = renderPage(season(EARLIER));
-    await screen.findByText('Pts/£');
+    await drawn();
     await user.click(await candidate('Gabriel'));
 
     // Now the selected season is one that answers, and the trace's is not.
@@ -469,7 +579,7 @@ describe('a season that refuses', () => {
     // The chip says why it has no values; the axes and the band are still drawn
     // from the selected season, which answered.
     expect(await screen.findByText(REFUSAL)).toBeInTheDocument();
-    expect(screen.getByText('Pts/£')).toBeInTheDocument();
+    expect(spokeLabels()).toContain('Pts/£');
   });
 
   it('says so on the page when it is the SELECTED season that fails', async () => {
@@ -496,7 +606,7 @@ describe('the trace limit', () => {
       ),
     });
     renderPage(many);
-    await screen.findByText('Pts/£');
+    await drawn();
 
     for (const n of [0, 1, 2, 3]) {
       await user.click(await candidate(`D${n}`));

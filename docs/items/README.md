@@ -182,3 +182,13 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       so cross-season comparison is reachable rather than a later rewrite. Also
       found step 3's drift guard comparing server code against server code, and
       gave it a client-side anchor on the same number.
+
+- [x] **17. What `CLAUDE.md` is for.**
+
+      A criterion rather than a fourth record move, because item 15 had already
+      shown that moving records was no longer the lever: the sections that stay
+      absorb ~4k an item regardless. The file is read in full before the task is
+      known, so **a section earns its place only if a session that has not yet
+      been told its task would write wrong code without it** — re-derivable and
+      local both go. 117,987 to 98,258, and the fourteen invariants that were
+      hiding in Current State became rules.

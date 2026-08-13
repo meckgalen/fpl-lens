@@ -146,6 +146,18 @@ export interface ComparisonView {
    */
   axes: AxisThreshold[];
   /**
+   * The spokes this position has that are **not** drawn, in the same order.
+   *
+   * On the chart they are simply gone, which is right — a spoke nobody can
+   * answer is worse than no spoke. But gone silently is item 13's rule
+   * unapplied: an unavailable thing is withheld **with its reason on screen**,
+   * and a reader comparing 2016-17 against 2025-26 on eight axes has no way to
+   * know two were removed to make that possible. The page names them from
+   * `resolveColumn`, which is the picker's own reason function — every axis key
+   * is a `PLAYER_COLUMNS` key, so there is no second rule to write.
+   */
+  absent: AxisThreshold[];
+  /**
    * Player-seasons past the minutes gate in the **selected** season. Always
    * present, including at 0, so the page can word the absence of a band rather
    * than inferring it.
@@ -227,7 +239,9 @@ export function mergeComparison(
     if (r?.state === 'ok') answered.push(r.data.axes);
   }
 
-  const axes = thresholds.filter((t) => answered.every((list) => list.includes(t.axis)));
+  const drawable = (t: AxisThreshold) => answered.every((list) => list.includes(t.axis));
+  const axes = thresholds.filter(drawable);
+  const absent = thresholds.filter((t) => !drawable(t));
 
   const resolved: ResolvedTrace[] = traces.map((trace) => {
     const result = results.get(trace.season);
@@ -263,6 +277,7 @@ export function mergeComparison(
 
   return {
     axes,
+    absent,
     cohortSize: selected.data.cohort.size,
     band: bandWithheld === null ? selected.data.cohort.band : null,
     bandWithheld,
