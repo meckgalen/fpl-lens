@@ -92,6 +92,22 @@ every hour, and needs somewhere to put them and a policy for how often.
   and the totals need a second season's aggregate on the bootstrap query. Until
   it lands the list shows the new roster with zeros, which is recorded in Known
   Issues rather than left to look like a bug.
+- **Fill `description` on the other Players columns.** Item 18 added a long-form
+  definition to `PlayerColumn` and wrote it for the **eleven comparison axes
+  only** — those are the shorthands with no picker and no header row beside them,
+  so a radar spoke reading `DCH/St` is all the reader gets. The remaining ~19
+  columns fall back to `title`, so the Players list is **uneven**: hover eleven
+  headers and get a sentence, hover the rest and get a noun phrase.
+
+  **Nothing will complain**, which is why this is written down rather than left
+  to be noticed. The field is optional, so there is no type error, no failing
+  test and no red check — `comparison.axes.test.ts` enforces the eleven and is
+  silent about everything else. The uneven state is invisible to every
+  instrument in the project.
+
+  A defect confined to one file, so it is roadmap work rather than a Known
+  Issue. Blocks nothing; blocked on nothing.
+
 - **Data view improvements:** fixture difficulty colouring, totals row, per-90 toggle,
   rolling form, multi-player comparison, styling polish.
 - **Expected points prediction:** transparent weighted formula, not black-box ML,

@@ -16,20 +16,18 @@ import { describe, expect, it } from 'vitest';
 import { ComparisonRadar } from './ComparisonRadar';
 import { aThreshold } from '../test/factories';
 import type { AxisThreshold, AxisValues, ComparisonAxisKey } from '../types/fpl';
+import { COMPARISON_AXES, axisDefinition } from '../lib/comparison';
 import type { ComparisonView, ResolvedTrace } from '../lib/comparison';
 
-const KEYS: ComparisonAxisKey[] = [
-  'pts',
-  'clean_sheets',
-  'goals',
-  'minutes',
-  'ppm',
-  'defcon_hits_per_start',
-  'assists',
-  'pts_per_now',
-  'expected_goal_involvements',
-  'bonus',
-];
+/**
+ * The axis keys, from the shipped list rather than a copy of it.
+ *
+ * This was a hand-written array until item 18 gave `lib/comparison.ts` a runtime
+ * `COMPARISON_AXES` — at which point a second list here was one that could
+ * disagree with the one the app draws from. It is deliberately the full eleven;
+ * `axes(n)` slices, and every caller asks for ten (the DEF set).
+ */
+const KEYS: readonly ComparisonAxisKey[] = COMPARISON_AXES;
 
 /** Real DEF bounds for the two that matter; 0–200 elsewhere so a value reads. */
 const BOUNDS: Partial<Record<ComparisonAxisKey, [number, number]>> = {
@@ -305,5 +303,75 @@ describe('a value that is not measured', () => {
     expect(all(container, '.radar-vertex')).toHaveLength(0);
     // The frame is still there — a trace in flight does not blank the chart.
     expect(all(container, '.radar-spoke')).toHaveLength(10);
+  });
+});
+
+/**
+ * The hover definitions, added in item 18.
+ *
+ * **The structural assertion is the one that matters.** SVG `<text>` takes no
+ * `title` attribute; the tooltip has to be a `<title>` CHILD of the caption. A
+ * `<title>` placed on the wrapping `<g>`, or as a sibling, still answers
+ * `querySelector('title')` in jsdom and still reads as "a title is present" —
+ * so a test that only counts titles passes against markup that shows the wrong
+ * tooltip, or none, in a browser. These assert the parent.
+ */
+describe('axis definitions on hover', () => {
+  /** A caption's OWN text — its direct text nodes, excluding the `<title>`. */
+  const ownText = (el: Element) =>
+    [...el.childNodes]
+      .filter((n) => n.nodeType === Node.TEXT_NODE)
+      .map((n) => n.textContent ?? '')
+      .join('');
+
+  /**
+   * The caption elements, paired with the axis each belongs to.
+   *
+   * Matched by EQUALITY, not `includes`. This file's factory sets
+   * `label: axis`, and `'pts_per_now'.includes('pts')` is true — a substring
+   * match silently attributes the value axis's caption to `pts` and then
+   * compares it against the wrong definition. Caught by this test failing.
+   */
+  const captions = (container: HTMLElement) =>
+    all(container, 'text')
+      .map((el) => ({ el, key: KEYS.find((k) => ownText(el) === k) }))
+      .filter((c): c is { el: Element; key: ComparisonAxisKey } => c.key !== undefined);
+
+  const titleOf = (el: Element) =>
+    [...el.children].find((c) => c.tagName.toLowerCase() === 'title');
+
+  it('hangs a title off every caption, as a child of the text itself', () => {
+    const { container } = render(<ComparisonRadar view={view()} />);
+
+    const caps = captions(container);
+    expect(caps).toHaveLength(10);
+
+    for (const { el } of caps) {
+      const title = titleOf(el);
+      // Present, and parented to the caption rather than to the group around
+      // it — the structural half, which is what a browser tooltip depends on.
+      expect(title).toBeDefined();
+      expect(title!.parentElement).toBe(el);
+      expect(title!.textContent?.length ?? 0).toBeGreaterThan(25);
+    }
+  });
+
+  it('carries the same sentence the values table does', () => {
+    const { container } = render(<ComparisonRadar view={view()} />);
+
+    // One source, so a caption and its table row cannot drift.
+    for (const { el, key } of captions(container)) {
+      expect(titleOf(el)!.textContent).toBe(axisDefinition(key));
+    }
+  });
+
+  it('does not simply restate the caption', () => {
+    const { container } = render(<ComparisonRadar view={view()} />);
+
+    // The failure this whole step exists to prevent: a tooltip echoing the
+    // abbreviation it hangs off explains nothing while looking like it works.
+    for (const { el } of captions(container)) {
+      expect(titleOf(el)!.textContent).not.toBe(ownText(el));
+    }
   });
 });

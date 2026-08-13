@@ -1,6 +1,6 @@
 import type { AxisThreshold } from '../types/fpl';
 import { fmtNum } from '../types/fpl';
-import { TRACE_COLORS, type ComparisonView } from '../lib/comparison';
+import { TRACE_COLORS, axisDefinition, type ComparisonView } from '../lib/comparison';
 import {
   FLOOR_MARKER_R,
   RINGS,
@@ -319,6 +319,21 @@ function AxisLabel({
     ...floors.map((f) => ({ ...f, glyph: '\u25BC' })),
   ];
 
+  /*
+   * The caption's definition, hover-reachable.
+   *
+   * **SVG `<text>` takes no `title` ATTRIBUTE** — the SVG-native tooltip is a
+   * `<title>` CHILD, which is the pattern the clip and floor markers in this
+   * file already use. It also becomes the element's accessible name, so a
+   * caption announces the full sentence rather than `DCH/St`, which is the
+   * point rather than a side effect.
+   *
+   * Same source as the table row beside it: `axisDefinition` reads
+   * `PLAYER_COLUMNS`, so a label and its explanation cannot drift between the
+   * two surfaces. No fallback to the label — see `axisDefinition`.
+   */
+  const definition = axisDefinition(axis.axis);
+
   return (
     <g>
       <text
@@ -327,6 +342,7 @@ function AxisLabel({
         textAnchor={anchor}
         className="fill-muted-foreground text-[11px] font-medium"
       >
+        {definition !== null && <title>{definition}</title>}
         {axis.label}
       </text>
       {lines.map((line, i) => (

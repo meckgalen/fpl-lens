@@ -138,7 +138,18 @@ function renderPage(bootstrap: BootstrapData = season(LATER)) {
  * they say so.
  */
 const spokeLabels = () =>
-  [...document.querySelectorAll('svg text')].map((t) => t.textContent ?? '');
+  [...document.querySelectorAll('svg text')].map((t) =>
+    // The caption's OWN text, not its descendants'. Item 18 hung a `<title>`
+    // child off each caption for the hover definition, and a `<title>` is an
+    // element — so `textContent` folds the whole sentence in front of the label
+    // and `toContain('xGI')` stops matching. Direct text nodes are what "the
+    // caption reads xGI" has always meant; the definition is asserted on its
+    // own terms in `ComparisonRadar.test.tsx`.
+    [...t.childNodes]
+      .filter((n) => n.nodeType === Node.TEXT_NODE)
+      .map((n) => n.textContent ?? '')
+      .join('')
+  );
 
 /** Waits for the radar itself, which is what "the page is ready" means here. */
 const drawn = async () => {

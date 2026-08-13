@@ -312,7 +312,11 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
               {cols.map((c) => (
                 <TableHead
                   key={c.key}
-                  title={c.title}
+                  // The definition where one exists, the short name otherwise.
+                  // The fallback is right HERE and deliberately absent on the
+                  // comparison chart, whose captions have no table around them
+                  // — see `axisDefinition`.
+                  title={c.description ?? c.title}
                   className={`text-right sticky top-0 ${Z_HEADER} ${
                     sortCol?.key === c.key ? 'text-foreground' : ''
                   }`}

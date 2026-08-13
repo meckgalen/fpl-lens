@@ -1,5 +1,5 @@
 import { NO_VALUE, fmtNum } from '../types/fpl';
-import { TRACE_COLORS, traceKey, type ComparisonView } from '../lib/comparison';
+import { TRACE_COLORS, axisDefinition, traceKey, type ComparisonView } from '../lib/comparison';
 
 /**
  * The numbers behind the chart: one row per axis, one column per trace, plus
@@ -48,7 +48,16 @@ export function ComparisonTable({ view }: { view: ComparisonView }) {
         <tbody>
           {view.axes.map((axis) => (
             <tr key={axis.axis} className="border-t border-border/60">
-              <td className="py-1 pr-4 text-foreground whitespace-nowrap">{axis.label}</td>
+              {/* The same definition the radar caption carries, from the same
+                  source — `PLAYER_COLUMNS`, reached by the axis key, which IS a
+                  column key. The label stays the server's: a spoke and a table
+                  row have different width budgets. */}
+              <td
+                className="py-1 pr-4 text-foreground whitespace-nowrap"
+                title={axisDefinition(axis.axis) ?? undefined}
+              >
+                {axis.label}
+              </td>
               <td className="py-1 pr-4 text-right text-muted-foreground">
                 {cell(view.band?.[axis.axis] ?? null)}
               </td>

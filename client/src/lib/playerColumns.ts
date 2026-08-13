@@ -32,6 +32,23 @@ export interface PlayerColumn {
   /** The long name, for the picker. The heading alone does not teach. */
   title: string;
   /**
+   * The definition, for hover. A sentence, where `title` is a noun phrase.
+   *
+   * **A separate field rather than a longer `title`, because `title` is
+   * rendered as VISIBLE text** by `ColumnPicker` — a definition-length string
+   * there would blow out every row of the picker. So the two are different
+   * jobs: `title` names the stat in a list, this explains it in a tooltip.
+   *
+   * **Optional here, required in practice for the eleven comparison axes.** A
+   * radar spoke captioned `DCH/St` has no picker and no header row beside it to
+   * give it context, so an unexplained abbreviation is all the reader gets;
+   * those eleven are enforced by `COMPARISON_AXES` in `lib/comparison.ts` and
+   * its test. The remaining columns fall back to `title` on the Players list,
+   * where a header sits inside a table that already names the season and the
+   * player — see `docs/roadmap.md` for filling the rest.
+   */
+  description?: string;
+  /**
    * Whether the underlying column can be NULL in some season (rule 6). Only a
    * nullable column can ever be unavailable, so this is what the season-level
    * empty state disables and what the availability matrix is consulted for.
@@ -142,6 +159,8 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     key: 'pts',
     label: 'Pts',
     title: 'Total points',
+    description:
+      'Every point the player scored across the season — appearances, goals, assists, clean sheets, bonus and deductions, as FPL awarded them.',
     nullable: false,
     value: (p) => p.total_points,
     render: (p) => String(p.total_points),
@@ -158,6 +177,8 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     key: 'minutes',
     label: 'Min',
     title: 'Minutes played',
+    description:
+      'Total minutes on the pitch across the season. The denominator behind most rate stats, and the quickest read on whether a player actually starts.',
     nullable: false,
     value: (p) => p.minutes,
     render: (p) => String(p.minutes),
@@ -166,6 +187,8 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     key: 'goals',
     label: 'G',
     title: 'Goals scored',
+    description:
+      'Goals scored across the season, as FPL recorded them.',
     nullable: false,
     value: (p) => p.goals_scored,
     render: (p) => String(p.goals_scored),
@@ -174,6 +197,8 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     key: 'assists',
     label: 'A',
     title: 'Assists',
+    description:
+      'Assists across the season, on FPL’s own definition — which is not always the same as the match broadcaster’s.',
     nullable: false,
     value: (p) => p.assists,
     render: (p) => String(p.assists),
@@ -182,6 +207,8 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     key: 'clean_sheets',
     label: 'CS',
     title: 'Clean sheets',
+    description:
+      'Matches where the player was on the pitch for at least 60 minutes and his side conceded nothing. Scores points for goalkeepers and defenders, and one point for midfielders.',
     nullable: false,
     value: (p) => p.clean_sheets,
     render: (p) => String(p.clean_sheets),
@@ -190,6 +217,8 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     key: 'bonus',
     label: 'Bon',
     title: 'Bonus points',
+    description:
+      'Bonus points, the 3-2-1 awarded after each match to the top performers by FPL’s Bonus Points System. Already included in total points.',
     nullable: false,
     value: (p) => p.bonus,
     render: (p) => String(p.bonus),
@@ -198,6 +227,8 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     key: 'pts_per_now',
     label: 'Pts/£',
     title: 'Points per £m, at the current price',
+    description:
+      'Total points divided by the player’s current price in £m — what a buyer would pay today. The sibling Pts/£s divides by the price the season opened at instead, so the two answer different questions on any player whose price moved.',
     nullable: false,
     value: (p) => perMillion(p.total_points, p.now_cost),
     render: (p) => fmtPpg(perMillion(p.total_points, p.now_cost)),
@@ -218,6 +249,8 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     key: 'ppm',
     label: 'PPM',
     title: 'Points per match appeared in',
+    description:
+      'Points per match appeared in — not points per million. Total points divided by the matches the player played at least a minute of, so blank gameweeks and unused-substitute rounds are not in the denominator. The two value columns spell out the per-million sense instead.',
     nullable: false,
     value: (p) => p.points_per_game,
     render: (p) => fmtPpg(p.points_per_game),
@@ -234,6 +267,8 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     key: 'expected_goal_involvements',
     label: 'xGI',
     title: 'Expected goal involvements',
+    description:
+      'Expected goals plus expected assists — the chances created and taken, weighted by how likely each was to be scored. Recorded from 2022-23 only.',
     nullable: true,
     value: (p) => p.expected_goal_involvements,
     render: (p) => fmtNum(p.expected_goal_involvements, 2),
@@ -302,6 +337,8 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     key: 'defcon_hits_per_start',
     label: 'DCH/St',
     title: 'Defensive contribution hits per start',
+    description:
+      'Defensive contribution hits divided by starts. A hit is a match clearing the positional threshold (DEF 10 CBIT; MID and FWD 12 CBIRT; goalkeepers have no threshold and so no hits). A value above 1 is meaningful rather than an error: hits won off the bench count in the numerator, while only starts count in the denominator.',
     nullable: true,
     dependsOn: ['defensive_contribution', 'starts'],
     value: (p) => hitsPerStart(p),
@@ -311,6 +348,8 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     key: 'saves',
     label: 'S',
     title: 'Saves',
+    description:
+      'Shots saved by a goalkeeper across the season. Every third save scores a point.',
     nullable: false,
     value: (p) => p.saves,
     render: (p) => String(p.saves),

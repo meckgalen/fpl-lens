@@ -18,9 +18,67 @@ import type {
   ComparisonData,
   ComparisonPosition,
 } from '../types/fpl';
+import { columnByKey } from './playerColumns';
 
 /** The four the chart draws, in the order the page tabs them. */
 export const COMPARISON_POSITIONS: ComparisonPosition[] = ['GK', 'DEF', 'MID', 'FWD'];
+
+/**
+ * Every axis key, as a runtime list — which `ComparisonAxisKey` alone cannot be,
+ * being a type.
+ *
+ * It exists so `axisDefinition` below can be *proved* total over the union
+ * rather than assumed to be, and it is guarded in **both directions** because
+ * the two clauses catch opposite mistakes:
+ *
+ *   - `satisfies` rejects a typo'd or invented key **in this array**.
+ *   - `_exhaustive` rejects a union member **missing from it**: a non-empty
+ *     `Exclude` makes the annotation `never`, and `true` is not assignable to
+ *     `never`.
+ *
+ * **An unused `type _Exhaustive = … extends never ? true : never` would be
+ * inert** — a type alias evaluating to `never` compiles perfectly happily, so
+ * the guard has to be something that fails to *construct*. Both clauses were
+ * mutation-checked when written; a guard that cannot fail is worse than none,
+ * because it advertises a protection nobody re-checks.
+ */
+export const COMPARISON_AXES = [
+  'pts',
+  'clean_sheets',
+  'goals',
+  'minutes',
+  'ppm',
+  'defcon_hits_per_start',
+  'assists',
+  'pts_per_now',
+  'expected_goal_involvements',
+  'bonus',
+  'saves',
+] as const satisfies readonly ComparisonAxisKey[];
+
+const _exhaustive: Exclude<ComparisonAxisKey, (typeof COMPARISON_AXES)[number]> extends never
+  ? true
+  : never = true;
+void _exhaustive;
+
+/**
+ * The definition of an axis, for hover — and **deliberately with no fallback**.
+ *
+ * The Players list renders `col.description ?? col.title`, which is right there:
+ * a header sits in a table that already names the season and the player, so the
+ * short name is a reasonable degraded state.
+ *
+ * Here it would not be. A radar spoke captioned `DCH/St` has nothing beside it,
+ * and a tooltip reading "Defensive contribution hits per start" over a caption
+ * reading `DCH/St` **looks like a working tooltip while explaining nothing** —
+ * a silent no-op, which is the exact failure item 18 set out to fix. So a
+ * missing description yields `null` and no tooltip at all, and
+ * `comparison.axes.test.ts` proves the null branch is unreachable for the
+ * eleven. Do not "fix" this into symmetry with the Players list.
+ */
+export function axisDefinition(axis: ComparisonAxisKey): string | null {
+  return columnByKey(axis)?.description ?? null;
+}
 
 /**
  * The one place `element_type` and a comparison position are translated.
