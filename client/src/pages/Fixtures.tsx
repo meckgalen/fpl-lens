@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card } from '../components/ui/Card';
-import { FDRBadge, FDRBar } from '../components/PosBadge';
+import { FDRBadge } from '../components/PosBadge';
 import { fetchFixtures } from '../services/api';
 import type { Fixture } from '../types/fpl';
 import { useBootstrap } from '../lib/bootstrap';
@@ -16,8 +16,12 @@ const FDR_LABELS: Record<number, string> = { 1: 'Very Easy', 2: 'Easy', 3: 'Medi
  * **Measured rather than chosen.** Left to fill the card, a difficulty bar
  * rendered **956px** wide on a 2327px viewport and its rating sat **478px** from
  * the club it belongs to — the number and its name so far apart that stacking
- * them stopped meaning anything. Capped, each half is ~300px and the rating sits
- * under its own club.
+ * them stopped meaning anything. The cap halved that, to a 344px bar and 172px.
+ *
+ * The cap is no longer what attaches a rating to its club: the chip is a fixed
+ * width aligned to the club's own inner edge, so the distance is a constant few
+ * pixels at any row width. What the cap still does is hold the two CLUBS a
+ * readable distance apart, which is a property of the row and not of the chip.
  *
  * Applied to the results row too: the two tabs are two views of ONE round now,
  * and letting them disagree about geometry would make them look unrelated. The
@@ -299,26 +303,40 @@ export default function Fixtures() {
 
                 /*
                   The restack. Each side is a vertical stack — club name over its
-                  own difficulty bar — with the kickoff time between them.
+                  own difficulty chip — with the kickoff time between them.
 
-                  The old row was `{h} [1] vs [3] {a}`, structurally identical to
-                  the results row above it, so two difficulty ratings either side
-                  of a centre read as a scoreline. Nothing here puts a number
-                  beside another number.
+                  Item 18 established the stack: the old row was
+                  `{h} [1] vs [3] {a}`, structurally identical to the results row
+                  above it, so two ratings either side of a centre read as a
+                  scoreline. Nothing here puts a number beside another number.
+
+                  What item 18 left is the chip's own width. The rating sat on a
+                  `w-full` bar, so its width tracked the container rather than the
+                  rating — every rating the same width, magnitude apparently
+                  encoded and in fact not — and centring the number inside that
+                  bar parked it half a bar-width from the club it describes. The
+                  cap narrowed the gap without removing its cause.
+
+                  So the chip is a FIXED width and both sides align it to the
+                  same inner edge the club code uses: `items-end` for home,
+                  `items-start` for away, mirroring around the kickoff time. The
+                  club and its rating now sit in one column each, and the leftover
+                  room falls to the OUTSIDE of the row rather than between a club
+                  and its own number.
                 */
                 return (
                   <div key={m.id} className={`px-5 py-3 hover:bg-muted/40 transition-colors ${divider}`}>
                     <div className={`${ROW} gap-3`}>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-foreground text-right mb-1">{h}</div>
-                        <FDRBar value={m.team_h_difficulty} />
+                      <div className="flex-1 min-w-0 flex flex-col items-end gap-1">
+                        <div className="text-sm font-medium text-foreground">{h}</div>
+                        <FDRBadge value={m.team_h_difficulty} size="row" />
                       </div>
                       <span className="w-14 shrink-0 text-center text-[11px] text-muted-foreground tabular-nums">
                         {formatTime(m.kickoff_time) ?? 'vs'}
                       </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-foreground mb-1">{a}</div>
-                        <FDRBar value={m.team_a_difficulty} />
+                      <div className="flex-1 min-w-0 flex flex-col items-start gap-1">
+                        <div className="text-sm font-medium text-foreground">{a}</div>
+                        <FDRBadge value={m.team_a_difficulty} size="row" />
                       </div>
                     </div>
                   </div>
@@ -333,10 +351,11 @@ export default function Fixtures() {
           <span className="text-[10.5px] font-semibold uppercase tracking-[.06em] text-muted-foreground">FDR</span>
           {[1, 2, 3, 4, 5].map((n) => (
             <div key={n} className="flex items-center gap-1.5">
-              {/* The badge, not the bar: the legend is a key to the colours, and
-                  a full-width bar in a legend row would be a different shape
-                  from the thing it explains. Same `FDR` map either way. */}
-              <FDRBadge value={n} />
+              {/* `size="row"`, the same chip the rows draw. A legend is a key,
+                  so it has to key against the identical object — same component,
+                  same width, same colour map — rather than against something
+                  merely similar to it. */}
+              <FDRBadge value={n} size="row" />
               <span className="text-xs text-muted-foreground">{FDR_LABELS[n]}</span>
             </div>
           ))}

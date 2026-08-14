@@ -276,7 +276,7 @@ fpl-lens/
 │   │       ├── StatsTable.tsx
 │   │       ├── StatsTable.test.tsx # rule 6: null renders —, zero renders 0
 │   │       ├── StatsTable.sort.test.tsx  # sorting without a mouse
-│   │       ├── PosBadge.tsx   # PosBadge, StatusDot, FDRBadge, FDRBar, PlayerAvatar
+│   │       ├── PosBadge.tsx   # PosBadge, StatusDot, FDRBadge, PlayerAvatar
 │   │       ├── ClubFilter.tsx # the club dropdown, on Players AND Comparison
 │   │       ├── Countdown.tsx
 │   │       └── PlayerSearch.tsx  # UNUSED: nothing imports it
@@ -1259,6 +1259,9 @@ One item per session, committed between each. **The record of every item is
       say what they withhold. The Fixtures round rule reads the deadline, never
       `finished`: `bool_and` skips a partly played round, which no stored season
       can expose. A compile-time guard that is an unused type alias is inert.
+      Step 4a: a width that tracks the container encodes nothing while occupying
+      the channel magnitude is read in — capping it halves the symptom and keeps
+      the cause.
 
 ## Deferred
 

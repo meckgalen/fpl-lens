@@ -206,3 +206,10 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       alias is **inert**; it has to fail to construct. Two pre-committed gates
       are recorded as mis-calibrated rather than raised, and every apparent
       renderer freeze was `requestAnimationFrame` throttling in a hidden tab.
+
+      **Step 4a**, a follow-up: the FDR bar it shipped was `w-full`, so width
+      tracked the container and was **identical for a 1 and a 5** — the channel a
+      reader reads magnitude in, occupied and answering something else. A cap
+      halves that distance; only a fixed-width chip aligned to the club's own
+      edge removes its cause. `FDRBar` deleted so the legend and the row are one
+      component, since a legend has to key against the identical object.

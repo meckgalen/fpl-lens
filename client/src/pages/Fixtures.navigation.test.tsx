@@ -230,6 +230,36 @@ describe('the difficulty row', () => {
     expect(screen.getByText(/^\d{1,2}[:.]\d{2}/)).toBeInTheDocument();
   });
 
+  /**
+   * The legend and the rows draw ONE object, not two similar ones.
+   *
+   * Not a layout assertion — it names no width and no colour, and would survive
+   * any change to either as long as both sides changed together. What it pins is
+   * that a single component renders both, which is the whole reason the
+   * follow-up to item 18 deleted `FDRBar`: a legend is a key, so a reader
+   * matching a row's chip against it has to be matching the same thing. Two
+   * components that merely agree today is the state that drifts.
+   *
+   * Mutation-checked: passing a different `size` at either call site turns this
+   * red, and nothing else in the suite notices.
+   */
+  it('draws the legend chip and the row chip from one component', async () => {
+    renderAt(covidSeason());
+    await waitFor(() => expect(fixturesMock).toHaveBeenCalled());
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Difficulty' }));
+
+    // ARS is the home club, rated 2. The legend also has a chip reading 2 — the
+    // ambiguity the test above works around, and here the thing being compared.
+    const home = (await screen.findByText('ARS')).parentElement as HTMLElement;
+    const rowChip = within(home).getByText('2');
+
+    const legend = screen.getByText('Easy').closest('div')?.parentElement as HTMLElement;
+    const legendChip = within(legend).getByText('2');
+
+    expect(legendChip).not.toBe(rowChip);
+    expect(legendChip.className).toBe(rowChip.className);
+  });
+
   it('renders a rated round without ever showing a made-up 3', async () => {
     // 2016-17 and 2017-18 have no fixtures.csv upstream and so no ratings. The
     // bar shows the no-value marker rather than inventing "medium".

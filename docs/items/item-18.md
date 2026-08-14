@@ -1,7 +1,7 @@
 # Item 18 — Pre-deployment fixes
 
 Five defects found in a browser pass, all of them things a first-time visitor
-hits within a minute. Four steps, one commit each.
+hits within a minute. Four steps, one commit each, plus one follow-up session.
 
 | Step | Commit |
 | --- | --- |
@@ -9,6 +9,7 @@ hits within a minute. Four steps, one commit each.
 | 2. Axis definitions on hover, from one source | `bd7db8e` |
 | 3. Both lists reach the whole roster | `54f80cc` |
 | 4. Gameweek navigation, and FDR that is not a scoreline | `492490a` |
+| 4a. The FDR chip: a width that encoded nothing (follow-up) | see below |
 
 CLAUDE.md was **102,196** characters at item start (85% of the 120,000 budget)
 and the tree was clean.
@@ -359,6 +360,131 @@ At a **390px** phone width the row shrinks to 280px with **zero** horizontal
 overflow, and the type holds at 10px (rating), 14px (club), 11px (time). Item
 16's SVG-scaling failure cannot apply to plain HTML — checked rather than
 assumed.
+
+---
+
+## Step 4a — the chip, and the width that encoded nothing
+
+A follow-up session, its own commit. Scope was the difficulty view only; the
+Results view, the tab model, the initial-round rule and the server were untouched.
+CLAUDE.md was **99,823** characters at start (83%) and the tree was clean.
+
+### What step 4 left
+
+Step 4 fixed the *scoreline* reading and stopped there. What it shipped in place
+of it was `FDRBar` — `w-full`, so the chip's width was a function of its
+container. Two consequences, and only the second was noticed at the time:
+
+1. **Width encoded nothing while looking like it did.** A rating of 1 and a
+   rating of 5 both drew a 344px block. The one visual channel a reader reaches
+   for first was fully occupied and answering a different question — the
+   container's width, not the datum's magnitude.
+2. **Centring the number in that block parked it half a bar-width from its own
+   club.** Step 4's `max-w-3xl` cap treated this: 956px/478px became 344px/172px.
+   But a cap divides the distance, it does not remove the reason there is one.
+   The cause is a full-width bar with a centred number, and that survived.
+
+### The fix, and what it merged
+
+Fixed-width chip, `w-10` (2.5rem), aligned to the same inner edge the club code
+uses — `items-end` for home, `items-start` for away, so the two sides mirror
+around the kickoff time. `FDRBar` is **deleted**: the legend and the row now draw
+one component at one size, so a reader matching a row's chip against the legend
+is matching the identical object rather than something similar to it.
+
+`FDRBadge` gained a `size` variant instead of a second component being kept
+alive. `compact` (`w-7`) is the player page's upcoming strip, which stays as it
+was — six chips side by side is a genuinely different density, and that is the
+whole of the difference between the two entries. **The compact path's class set
+is character-for-character identical to before, only reordered**, which is what
+makes "PlayerDetail is untouched" a proof rather than a claim.
+
+### Measurements
+
+Browser, foregrounded tab. The window was maximized at 2560×1440 and refused
+both `resize_window` and `resizeTo`, so the three widths were driven through a
+**same-origin iframe** sized exactly — a real layout viewport, media queries and
+all. The baseline reproduced step 4's recorded **172px** exactly, which is what
+justifies trusting the harness for the after-numbers.
+
+Distances are between the club's and the rating's **glyph** boxes (a `Range` over
+the text), so chip padding cannot inflate them. `innerEdge` is step 4's own
+metric — the club's inner edge to the rating's centre — kept for continuity.
+
+| Viewport | | Chip | Club→rating (centres) | innerEdge |
+| --- | --- | --- | --- | --- |
+| 1440 | before | 344×16 | 155.6–161.8px | 172px |
+| | **after** | **40×20** | **3.6–9.8px** | **20px** |
+| 1366 | before | 344×16 | 155.6–161.8px | 172px |
+| | **after** | **40×20** | **3.6–9.8px** | **20px** |
+| 1280 | before | 344×16 | 155.6–161.8px | 172px |
+| | **after** | **40×20** | **3.6–9.8px** | **20px** |
+
+**Identical at all three widths, before and after, and that is the finding.**
+The `max-w-3xl` cap binds at 1280 already, so the row is 768px at every one of
+them and its geometry is viewport-independent above ~810px. The three
+measurements are one measurement; reporting them as three would suggest a
+robustness that was never tested. The residual 20px is exactly half the chip —
+the number is centred in a 40px chip flush to the club's edge — and the 3.6–9.8px
+spread is the varying width of the three-letter codes.
+
+Coloured area fell from 5,504px² to 800px², a **–85%** change, which is what the
+contrast check was asked for.
+
+### Unused horizontal room — reported, not acted on
+
+Deliberately left alone; the three-letter-code question is the user's to decide.
+
+| Viewport | Slack per side, inside the row | Room outside the row |
+| --- | ---: | ---: |
+| 1440 | 304px | 337.7px |
+| 1366 | 304px | 264px |
+| 1280 | 304px | 177.7px |
+
+Each side is a 344px column whose widest content is now the 40px chip. The slack
+**inside** the row is the number that bears on full club names, and it is 304px
+per side at every width — the outside room varies with the viewport and is a
+different quantity. "Wolverhampton Wanderers" at the row's 14px is well inside
+304px, so the cap is not what would constrain that change.
+
+### Contrast, both themes
+
+Measured as WCAG ratios from computed styles, not eyeballed — the number now sits
+on 15% of the area it did. The colours themselves are unchanged, so **the ratios
+are unchanged too**; what was actually at risk was legibility at 10px bold on a
+40×20 chip, and the check confirms the palette had margin to spare either way.
+
+| Rating | Dark | Light |
+| --- | ---: | ---: |
+| 1 | 8.55 | 6.49 |
+| 2 | 7.40 | 6.52 |
+| 3 | 6.97 | 6.37 |
+| 4 | 6.92 | 6.38 |
+| 5 | **5.84** | 6.80 |
+
+All ten pass AA (4.5:1); eight of ten clear AAA (7:1) or sit within 0.2 of it.
+The worst case is dark-theme rating 5 at 5.84.
+
+2016-17 was checked too, since it has no `fixtures.csv` upstream: all 20 row
+chips render `—` on muted at 40px and the legend still keys 1-5. No made-up 3.
+
+### The one test
+
+Rendered dimensions are invisible to jsdom, so the chip width and the alignment
+are the browser pass above and nothing else — no class-string assertion was
+written and called a layout test.
+
+One thing here *is* code-contradictable and got a test: that the legend chip and
+the row chip are one component. It asserts the two `className`s are **equal to
+each other**, naming no width and no colour, so it survives any change both sides
+make together and goes red only if they diverge. Mutation-checked by dropping
+`size="row"` from the legend: **exactly that test red, the other 303 green** —
+nothing else in the suite notices, which is the reason it exists.
+
+HMR checked per the working agreement, since `PosBadge.tsx` gained a type export:
+`hmr update /src/components/PosBadge.tsx` with no `invalidate` and no Fast
+Refresh warning. Type exports are erased, so Fast Refresh still sees a
+components-only module.
 
 ---
 

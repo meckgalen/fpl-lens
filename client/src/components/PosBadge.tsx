@@ -39,10 +39,12 @@ export function StatusDot({ status }: { status: 'fit' | 'doubt' | 'out' | 'unkno
  * at all. Index 0 is a deliberate empty slot so `FDR[1]`..`FDR[5]` line up with
  * the ratings and no `- 1` appears at either call site.
  *
- * Hoisted out of `FDRBadge` in item 18 so the badge and the bar read the SAME
- * map: two copies of a five-colour scale is two things that can drift, and a
- * legend drawn from one while rows are drawn from the other is a legend that
- * lies.
+ * Hoisted out of `FDRBadge` in item 18, when the row and the legend were two
+ * components, so both read the SAME map: two copies of a five-colour scale is
+ * two things that can drift, and a legend drawn from one while rows are drawn
+ * from the other is a legend that lies. They are one component now, which makes
+ * the map shared by construction rather than by discipline — the bar it was
+ * hoisted for is gone.
  */
 const FDR = [
   '',
@@ -54,60 +56,45 @@ const FDR = [
 ];
 
 /**
+ * The two widths the difficulty chip is drawn at, as complete class pairs.
+ *
+ * **A width, never a scale.** Item 18's `FDRBar` was `w-full`, which made the
+ * chip's width a function of the container and *constant across all five
+ * ratings* — a 1 and a 5 drew the same 344px block. Width that varies with the
+ * layout and not with the datum is a false affordance: it occupies the channel a
+ * reader expects magnitude in and answers a different question. Both entries
+ * here are fixed, so width encodes nothing and is not offering to.
+ *
+ * Two sizes rather than one because the surfaces differ in density, and this is
+ * the whole of the difference between them — one component, one colour map, one
+ * shape template. `row` is the 2.5rem chip the Fixtures difficulty row and its
+ * own legend both draw, so the legend keys against the identical object rather
+ * than against something merely similar.
+ */
+const FDR_CHIP_WIDTH = {
+  /** The upcoming-fixtures strip on the player page: six chips side by side. */
+  compact: 'w-7',
+  /** The Fixtures difficulty row, and the legend that explains it. */
+  row: 'w-10',
+} as const;
+
+export type FdrChipSize = keyof typeof FDR_CHIP_WIDTH;
+
+/**
  * Fixture difficulty, 1-5. Null for 2016-17 and 2017-18, which have no
  * fixtures.csv upstream and therefore no ratings — rendered neutral rather than
  * as a made-up 3, which would read as "medium" for a match nobody rated.
- */
-export function FDRBadge({ value }: { value: number | null }) {
-  if (value === null) {
-    return (
-      <span className="inline-flex items-center justify-center w-7 h-5 rounded text-[10px] font-bold font-display flex-shrink-0 bg-muted text-muted-foreground">
-        {NO_VALUE}
-      </span>
-    );
-  }
-  return (
-    <span
-      className={`inline-flex items-center justify-center w-7 h-5 rounded text-[10px] font-bold font-display flex-shrink-0 ${
-        FDR[value] || FDR[3]
-      }`}
-    >
-      {value}
-    </span>
-  );
-}
-
-/**
- * The same difficulty, as a bar under a team name rather than a chip beside it.
  *
- * **This shape exists because the old one read as a scoreline.** The difficulty
- * row was laid out exactly like the results row one tab away — `flex-1` |
- * centre | `flex-1`, with the centre between two adjacent numbers — so
- * `BOU 1 vs 3 LEI` parsed as a 1-3 defeat rather than as two difficulty
- * ratings. Stacking the rating *under* its own club, full width, means no number
- * ever flanks another number and each rating is visibly attached to one side.
- *
- * The number stays on the bar. Colour alone would put the whole meaning in a
- * channel some readers do not have, and the 1-5 legend would have nothing to
- * key against.
+ * The number stays on the colour. Colour alone would put the whole meaning in a
+ * channel some readers do not have, and the 1-5 legend would have nothing to key
+ * against.
  */
-export function FDRBar({ value }: { value: number | null }) {
+export function FDRBadge({ value, size = 'compact' }: { value: number | null; size?: FdrChipSize }) {
+  const shape = `inline-flex items-center justify-center h-5 rounded text-[10px] font-bold font-display flex-shrink-0 ${FDR_CHIP_WIDTH[size]}`;
   if (value === null) {
-    return (
-      <span className="block w-full h-4 rounded text-[10px] font-bold font-display leading-4 text-center bg-muted text-muted-foreground">
-        {NO_VALUE}
-      </span>
-    );
+    return <span className={`${shape} bg-muted text-muted-foreground`}>{NO_VALUE}</span>;
   }
-  return (
-    <span
-      className={`block w-full h-4 rounded text-[10px] font-bold font-display leading-4 text-center ${
-        FDR[value] || FDR[3]
-      }`}
-    >
-      {value}
-    </span>
-  );
+  return <span className={`${shape} ${FDR[value] || FDR[3]}`}>{value}</span>;
 }
 
 export function PlayerAvatar({ size = 22 }: { size?: number }) {
