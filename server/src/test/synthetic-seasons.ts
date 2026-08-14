@@ -32,6 +32,7 @@ const RESERVED = {
   'ingest/live-season.test.ts': '2099-00',
   'repositories/defcon.test.ts': '2098-99',
   'comparison/cohort.test.ts': '2097-98',
+  'repositories/hauls.test.ts': '2096-97',
 } as const;
 
 export type SuiteWithSyntheticSeason = keyof typeof RESERVED;

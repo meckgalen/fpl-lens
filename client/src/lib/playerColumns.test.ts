@@ -336,6 +336,60 @@ describe('hits per start', () => {
   });
 });
 
+describe('hauls and floors per start', () => {
+  /**
+   * The same three guards as DCH/St above, reached through the same `perStart`
+   * helper — these columns are what collapsed the two copies into one.
+   *
+   * **What differs is the numerator, and only the numerator.** These read
+   * `hauls_started` / `floors_started`, which the server gates on `starts = 1`,
+   * so unlike DCH/St they cannot exceed 1.00. Both descriptions say so on
+   * screen, which is what makes the bound a promise rather than a detail; it is
+   * pinned server-side across every season in `repositories/hauls.test.ts`.
+   */
+  const h = columnByKey('hauls_per_start')!;
+  const f = columnByKey('floors_per_start')!;
+  const player = (over: Partial<Player>) => ({ ...aPlayer(), ...over }) as Player;
+
+  it('divides the started count by starts, at two places', () => {
+    expect(h.render(player({ hauls_started: 5, starts: 30 }))).toBe('0.17');
+    expect(f.render(player({ floors_started: 12, starts: 30 }))).toBe('0.40');
+  });
+
+  it('reads the gated numerator, not the ungated count beside it', () => {
+    // The bug the gate exists to prevent, and the reason the factory gives
+    // `hauls` and `hauls_started` different values: reusing `hauls` here would
+    // read 0.24 rather than 0.20, which is wrong and entirely plausible.
+    expect(h.render(player({ hauls: 6, hauls_started: 5, starts: 25 }))).toBe('0.20');
+  });
+
+  it('renders the placeholder rather than 0.00 when the player never started', () => {
+    // Onyeka in 2025-26 is the real case: 38 appearances, 0 starts, 2 floors.
+    expect(f.render(player({ floors_started: 0, starts: 0 }))).toBe(NO_VALUE);
+    expect(f.value(player({ floors_started: 0, starts: 0 }))).toBeNull();
+  });
+
+  it('renders the placeholder rather than 0.00 when the gated count is unmeasured', () => {
+    // `null / 5` is 0 in JavaScript. Reachable wherever `starts` is holed, which
+    // is every season before 2022-23 and part of that one.
+    expect(h.render(player({ hauls_started: null, starts: 5 }))).toBe(NO_VALUE);
+    expect(f.render(player({ floors_started: null, starts: 5 }))).toBe(NO_VALUE);
+    expect(h.value(player({ hauls_started: null, starts: 5 }))).toBeNull();
+  });
+
+  it('keeps a real zero, which is a different statement', () => {
+    // He started twenty and hauled in none of them. A measurement, and it
+    // renders — 43.3% of qualifying defenders are exactly this.
+    expect(h.render(player({ hauls_started: 0, starts: 20 }))).toBe('0.00');
+  });
+
+  it('renders a perfect record as 1.00 and can never exceed it', () => {
+    // The bound the description promises. It is reachable at the top —
+    // a player who returned 4+ in every start — and unreachable above.
+    expect(f.render(player({ floors_started: 12, starts: 12 }))).toBe('1.00');
+  });
+});
+
 describe('points per million', () => {
   /**
    * The client half of the cross-language guard on the two quotients the

@@ -122,30 +122,46 @@ const perMillion = (points: number, cost: number | null): number | null =>
 const int = (v: number | null) => fmtNum(v, 0);
 
 /**
- * Defensive contribution hits per start, or null where the question has no
- * answer.
+ * A count divided by starts, or null where the question has no answer.
  *
- * **All three null tests are required, and `hits === null` is the one that is
- * easy to drop.** `null / 5` is `0` in JavaScript, not `NaN`, so omitting it
- * renders a confident `0.00` for a player whose hit count was never measured —
- * rule 6 defeated by a coercion, in a cell indistinguishable from a real zero.
+ * **The one place the client divides by `starts`**, shared by `DCH/St`, `H/St`
+ * and `F/St`. Item 19 wrote a second copy of these guards for its two ratios
+ * before collapsing them into this: two implementations of one null rule is
+ * where one gets fixed and the other does not. **The gated/ungated difference
+ * between those columns lives entirely in the numerator passed in**, never in
+ * the guards, so sharing them is exact rather than approximate.
  *
- * It is probably unreachable today, because the availability layer withholds
- * this column on every season where `defcon_hits` can be null. That is not a
- * reason to leave it out: the server's guard exists precisely so the value
+ * **All three null tests are required, and `numerator === null` is the one that
+ * is easy to drop.** `null / 5` is `0` in JavaScript, not `NaN`, so omitting it
+ * renders a confident `0.00` for a count that was never measured — rule 6
+ * defeated by a coercion, in a cell indistinguishable from a real zero.
+ *
+ * Each is probably unreachable today, because the availability layer withholds
+ * these columns on every season where the numerator can be null. That is not a
+ * reason to leave them out: the server's guards exist precisely so the value
  * *can* be null, this is the only place the client divides by it, and a column
  * whose correctness rests on a different module's filter is one refactor from
  * being wrong.
  *
  * **A zero denominator returns null rather than 0.00**, so "he made no starts"
- * and "he hit none of his starts" stay distinguishable. 367 of 2025-26's 841
- * players have no starts at all, so this is the common case rather than the
+ * and "he cleared none of his starts" stay distinguishable. 367 of 2025-26's
+ * 841 players have no starts at all, so this is the common case rather than the
  * edge one.
  */
-const hitsPerStart = (p: Player): number | null =>
-  p.defcon_hits === null || p.starts === null || p.starts === 0
-    ? null
-    : p.defcon_hits / p.starts;
+const perStart = (numerator: number | null, starts: number | null): number | null =>
+  numerator === null || starts === null || starts === 0 ? null : numerator / starts;
+
+/** Ungated numerator: a hit won off the bench counts, so this can exceed 1. */
+const hitsPerStart = (p: Player): number | null => perStart(p.defcon_hits, p.starts);
+
+/**
+ * Gated numerators — only fixtures the player STARTED — so unlike `hitsPerStart`
+ * above these cannot exceed 1.00. That bound is stated in both descriptions and
+ * is therefore a promise on screen; it is pinned across all eleven seasons in
+ * `hauls.test.ts`.
+ */
+const haulsPerStart = (p: Player): number | null => perStart(p.hauls_started, p.starts);
+const floorsPerStart = (p: Player): number | null => perStart(p.floors_started, p.starts);
 
 /**
  * Every column the payload can answer, in the order they render.
@@ -344,6 +360,67 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     dependsOn: ['defensive_contribution', 'starts'],
     value: (p) => hitsPerStart(p),
     render: (p) => fmtQuotient(hitsPerStart(p), 2),
+  },
+  {
+    // How a total was arrived at, which the total itself cannot say. Two
+    // players on 120 points are not the same asset: one returns 6 most weeks,
+    // the other blanks repeatedly and then scores 15.
+    //
+    // **nullable: false, and that is what keeps it offered on 2026-27.** It
+    // counts over total_points, which is NOT NULL in every season, so there is
+    // no unmeasured state — a roster that has played nothing has hauled zero
+    // times in the same sense that it has scored zero goals, and Goals renders
+    // 0 there for the same reason (rule 6).
+    key: 'hauls',
+    label: 'Hauls',
+    title: 'Matches of 10 or more points',
+    description:
+      'How many fixtures the player scored 10 or more points in. The unit is the fixture and not the gameweek, so a double gameweek can contribute two. 10 is the conventional haul line rather than a number FPL publishes, and what it represents shifts when FPL changes its scoring: 2025-26 records far more high-scoring matches than earlier seasons because defensive contribution points arrived that season.',
+    nullable: false,
+    value: (p) => p.hauls,
+    render: (p) => int(p.hauls),
+  },
+  {
+    // Inclusive of hauls, not a 4-to-9 band, so Floors >= Hauls on every row.
+    key: 'floors',
+    label: 'Floors',
+    title: 'Matches of 4 or more points',
+    description:
+      'How many fixtures the player scored 4 or more points in — a returning week rather than a big one. Hauls are included, so this is never smaller than the Hauls column. Counted per fixture, so a double gameweek can contribute two.',
+    nullable: false,
+    value: (p) => p.floors,
+    render: (p) => int(p.floors),
+  },
+  {
+    // The numerator counts only STARTED fixtures, so this is bounded at 1.00 —
+    // the opposite of DCH/St above, whose numerator is ungated and which can
+    // exceed 1. The two look like the same fragment and are not; the server
+    // computes them from separate expressions for exactly this reason.
+    //
+    // dependsOn is ['starts'] alone: the count itself derives from a NOT NULL
+    // column, so starts is the only input that can be unmeasured. That gets
+    // 2022-23's "Only recorded from GW16" and 2026-27's "No matches recorded"
+    // for free.
+    key: 'hauls_per_start',
+    label: 'H/St',
+    title: 'Hauls per start',
+    description:
+      'Hauls in started fixtures divided by starts — how often a start turns into a 10-point return. Unlike DCH/St this cannot exceed 1.00: a haul off the bench raises the Hauls column but is excluded from this numerator, because it was not a start. Blank where the player made no starts, which is not the same as a rate of zero.',
+    nullable: true,
+    dependsOn: ['starts'],
+    value: (p) => haulsPerStart(p),
+    render: (p) => fmtQuotient(haulsPerStart(p), 2),
+  },
+  {
+    key: 'floors_per_start',
+    label: 'F/St',
+    title: 'Floors per start',
+    description:
+      'Floors in started fixtures divided by starts — how often a start turns into a returning week of 4 or more points. Hauls count towards it, so it is never below H/St. Like H/St it counts only started fixtures and so cannot exceed 1.00, and it is blank where the player made no starts.',
+    nullable: true,
+    dependsOn: ['starts'],
+    value: (p) => floorsPerStart(p),
+    render: (p) => fmtQuotient(floorsPerStart(p), 2),
   },
   {
     key: 'saves',

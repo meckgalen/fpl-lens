@@ -88,6 +88,16 @@ export function aPlayer(overrides: Partial<Player> = {}): Player {
     // hits-per-start bug read as 1.00 and look plausible.
     defcon_hits: 9,
 
+    // Five distinct values, none equal to `starts` and none equal to each
+    // other. `hauls_started` differs from `hauls` on purpose: reusing the
+    // ungated count as the H/St numerator is the exact bug the gate exists to
+    // prevent, and with these numbers it reads 0.24 instead of 0.20 rather than
+    // agreeing. Floors exceed hauls, as they must on every real row.
+    hauls: 6,
+    floors: 14,
+    hauls_started: 5,
+    floors_started: 12,
+
     appearances: 31,
     points_per_game: 5.1,
 

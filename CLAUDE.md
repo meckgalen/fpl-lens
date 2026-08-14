@@ -730,7 +730,7 @@ is already there.
 `npm run verify:columns` checks that the column picker offers exactly what the
 data can answer: it asks the **shipped** code what it would offer and compares
 against a truth query written for the check alone, which counts NULLs directly
-rather than reusing the availability predicate. **Read-only.** **275 cells**
+rather than reusing the availability predicate. **Read-only.** **319 cells**
 across eleven seasons; exits
 non-zero on any mismatch, which it does not today.
 
@@ -752,6 +752,17 @@ distribution, computed in SQL before `defcon.ts` existed and frozen as literals:
 **compared** rather than printed, because a printed number nobody diffs is not a
 check. Exits non-zero on either. Full output:
 `docs/items/item-14-starts-and-defcon-hits.md`.
+
+`npm run verify:haul` checks the haul and floor counts the same two ways, and
+its part 2 is **itself in two halves that must stay two**. **Read-only.** Part A
+freezes the ungated per-season counts, which pin both thresholds and the
+inclusive relation and pin **nothing about the `starts = 1` gate**; part B
+freezes the started/bench split, where `bench_hauls` is the load-bearing column
+— drop the gate and 18/12/9 all become 0, which is plausible enough to pass
+unnoticed with no frozen number beside it. Both halves read `listPlayerTotals`
+rather than re-deriving in SQL, because a check that restates the query instead
+of calling it compares the database to itself and cannot fail for the reason it
+exists. Full output: `docs/items/item-19-hauls-and-floors.md`.
 
 `npm run verify:thresholds` checks the 35 frozen comparison thresholds and also
 prints **two results that are never merged**, for a different reason than
@@ -1262,6 +1273,14 @@ One item per session, committed between each. **The record of every item is
       Step 4a: a width that tracks the container encodes nothing while occupying
       the channel magnitude is read in — capping it halves the symptom and keeps
       the cause.
+- [x] **19. Hauls and floors on the Players list.** — the ratio numerators are
+      gated on `starts = 1`, so unlike `DCH/St` they cannot exceed 1.00; the two
+      fragments look alike and must not be shared. `sum() over zero rows is
+      NULL` does **not** null out an empty player-season — the LEFT JOIN gives
+      it one null-extended row and the `ELSE 0` makes that a hard zero, so the
+      count guard is needed after all. A frozen ungated distribution pins the
+      thresholds and pins nothing about the gate. One invariant ships that no
+      mutation can currently redden, deliberately and recorded.
 
 ## Deferred
 
@@ -1482,6 +1501,15 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
   the defender distribution at 2025-26, so the comparison ceilings pool ten
   seasons while the band is computed per season. Pooling both would have put the
   typical modern defender permanently above his own average.
+
+  **That break is DEF-only on season totals and reaches MID on rate statistics,
+  and which one a new axis is measuring decides whether MID is affected.** Item
+  19 measured it: median season points move 73.5 to 95.0 for DEF and 92.0 to
+  95.5 for MID — inside MID's own noise — while median points per match move
+  2.58 to 3.19 for DEF **and 2.84 to 3.29 for MID**, and median floors per start
+  +30% for both. GK and FWD move on neither, and they are exactly the two
+  positions FPL awards no DC points to. So a rate axis added to the chart has to
+  expect two positions to have shifted, not one.
 - **Trace a claim to the code before repeating it.** Two entries in Known Issues
   were false when audited in step 7, one of them written by the previous session
   and planned around by the next. An issue list that is not re-checked is worse

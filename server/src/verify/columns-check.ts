@@ -84,6 +84,12 @@ const DB_COLUMNS: Record<string, string[]> = {
   defensive_contribution: ['defensive_contribution'],
   defcon_hits: ['defensive_contribution'],
   defcon_hits_per_start: ['defensive_contribution', 'starts'],
+  // Item 19's ratios. `starts` alone: the counts themselves derive from
+  // `total_points`, which is NOT NULL in every season and so can never be the
+  // restrictive input. The two count columns are non-nullable and need no row
+  // here — `main` only demands a mapping for nullable picker keys.
+  hauls_per_start: ['starts'],
+  floors_per_start: ['starts'],
 };
 
 async function main(): Promise<void> {

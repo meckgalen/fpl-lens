@@ -27,6 +27,7 @@ import type {
   UpcomingFixture,
 } from '../types/domain.js';
 import { defconHitSql } from './defcon.js';
+import { POINT_THRESHOLDS, pointCountSql } from './hauls.js';
 import { num, numArray, numOrNull, type DbNumeric } from './parse.js';
 
 /** Rule 10's mapping, run backwards for the wire format. */
@@ -239,6 +240,22 @@ interface PlayerTotalsDbRow {
    * played.
    */
   defcon_hits: number | null;
+  /**
+   * `number`, not `number | null`, and the COALESCE in the query is the whole
+   * reason — a haul count over zero match rows is a real 0, like `goals_scored`
+   * beside it. Typing these nullable to match their `_started` siblings below
+   * would break the raw pass-through against a non-null domain field, and the
+   * reflexive fix for that is a `!` asserting away a null that cannot occur.
+   */
+  hauls: number;
+  floors: number;
+  /**
+   * Genuinely nullable, unlike the pair above: NULL wherever `starts` is not
+   * measured across the whole player-season, and on a player with no match rows
+   * at all. Cast to int in the query, so a number rather than an int8 string.
+   */
+  hauls_started: number | null;
+  floors_started: number | null;
   photo: string;
 }
 
@@ -279,6 +296,13 @@ function toPlayerSeasonTotals(r: PlayerTotalsDbRow): PlayerSeasonTotals {
     // Already a number or null: cast to int in the query. Passed through rather
     // than sent via numOrNull, so no parse is claimed where none happened.
     defcon_hits: r.defcon_hits,
+
+    // All four are ::int in the query, so they pass through for the same reason
+    // defcon_hits does: numOrNull would claim a parse that did not happen.
+    hauls: r.hauls,
+    floors: r.floors,
+    hauls_started: r.hauls_started,
+    floors_started: r.floors_started,
 
     appearances: r.appearances,
     points_per_game: num(r.points_per_game, 'points_per_game'),
@@ -372,6 +396,63 @@ export async function listPlayerTotals(
                    AND ${fullyMeasured('defensive_contribution')}
                   THEN count(*) FILTER (WHERE ${defconHitSql('pg', 'ps')} = 1)
              END)::int AS defcon_hits,
+
+            -- Hauls and floors: how many fixtures reached 10 and 4 points. The
+            -- rule is stated once, in repositories/hauls.ts. Here rather than in
+            -- SEASON_AGGREGATE for the same reason defcon_hits is -- the career
+            -- table is out of item 19's scope and has no availability machinery.
+            --
+            -- **COALESCEd to 0, unlike defcon_hits above, and that is the whole
+            -- difference between them.** defcon_hits reads NULL on 2026-27
+            -- because defensive_contribution is genuinely unmeasured there.
+            -- total_points is NOT NULL in every season, so a haul count has no
+            -- unmeasured state: a player with no match rows has hauled zero
+            -- times, exactly as he has scored zero goals, and goals_scored above
+            -- COALESCEs for that reason. Rule 6 -- 0 is a measurement.
+            COALESCE(${pointCountSql('pg', POINT_THRESHOLDS.HAUL, { startedOnly: false })}, 0)::int
+              AS hauls,
+            COALESCE(${pointCountSql('pg', POINT_THRESHOLDS.FLOOR, { startedOnly: false })}, 0)::int
+              AS floors,
+
+            -- The ratio numerators, gated on starts = 1 so H/St and F/St are
+            -- bounded at 1.00. DCH/St above is deliberately NOT gated and can
+            -- exceed 1; do not unify these.
+            --
+            -- (No backticks in these comments: this SQL is a template literal.)
+            --
+            -- **fullyMeasured('starts') is load-bearing and is not the same
+            -- guard defcon_hits uses.** pg.starts = 1 where starts IS NULL is
+            -- NULL, so the CASE falls to ELSE 0 and the count silently
+            -- undercounts instead of erroring -- on 2022-23, whose starts begin
+            -- at round 16, an unguarded count reads fourteen rounds of real
+            -- appearances as bench appearances (measured: 166 phantom bench
+            -- hauls that season).
+            --
+            -- **count(pg.fixture_id) > 0 is required here too, and the reason it
+            -- looked unnecessary is worth writing down.** The argument that
+            -- talked item 19 out of it: defcon_hits needs the guard because
+            -- count(*) FILTER over zero rows is 0, whereas sum() over zero rows
+            -- is NULL, so a sum-based count should null out by itself.
+            --
+            -- That is true of sum() and false here, because there are not zero
+            -- rows. This is a LEFT JOIN, so a player with no match rows
+            -- null-extends to exactly ONE grouped row, and sum(CASE ... ELSE 0)
+            -- over one null row is a hard 0. Measured before the guard went in:
+            -- all 564 players of 2026-27 read hauls_started = 0, which asserts
+            -- they started no 10-point fixture rather than that nothing was
+            -- played.
+            --
+            -- So it is item 13's vacuous-truth hole in a THIRD place, and the
+            -- shape to remember is that the ELSE, not the aggregate, is what
+            -- defeats the null. A sum with no ELSE would have nulled out.
+            (CASE WHEN count(pg.fixture_id) > 0
+                   AND ${fullyMeasured('starts')}
+                  THEN ${pointCountSql('pg', POINT_THRESHOLDS.HAUL, { startedOnly: true })}
+             END)::int AS hauls_started,
+            (CASE WHEN count(pg.fixture_id) > 0
+                   AND ${fullyMeasured('starts')}
+                  THEN ${pointCountSql('pg', POINT_THRESHOLDS.FLOOR, { startedOnly: true })}
+             END)::int AS floors_started,
 
             p.fpl_code || '.jpg' AS photo
        FROM player_seasons ps

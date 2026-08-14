@@ -116,6 +116,34 @@ export interface PlayerSeasonTotals {
   defcon_hits: number | null;
 
   /**
+   * How many FIXTURES reached 10 and 4 points — see `repositories/hauls.ts` for
+   * the rule and for why the counts are not freely comparable across seasons.
+   * The unit is the fixture and not the round, so a double gameweek can
+   * contribute two (rule 13).
+   *
+   * **Never null, unlike `defcon_hits` beside them.** They count over
+   * `total_points`, which is NOT NULL in every season, so there is no
+   * unmeasured state to represent: a player with no match rows has hauled zero
+   * times in the same sense that he has scored zero goals, and `goals_scored`
+   * above is 0 for him too. Rule 6 — 0 is a measurement.
+   */
+  hauls: number;
+  floors: number;
+  /**
+   * The same two counts restricted to fixtures the player STARTED — the
+   * numerators of `H/St` and `F/St`, and the reason those ratios are bounded at
+   * 1.00 where `DCH/St` is not.
+   *
+   * NULL where `starts` is not measured across the whole player-season (every
+   * season before 2022-23, and any 2022-23 player with a row before round 16),
+   * and on a player with no match rows. No column renders these directly; they
+   * exist so the division happens on the client, once, beside every other
+   * quotient.
+   */
+  hauls_started: number | null;
+  floors_started: number | null;
+
+  /**
    * Matches the player actually appeared in (minutes > 0), not rounds in the
    * season. Rule 13 makes the distinction mandatory rather than pedantic: a
    * double gameweek is two matches in one round and a blank is none.

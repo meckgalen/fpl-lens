@@ -18,6 +18,7 @@
     "verify:ppg": "tsx src/verify/ppg-check.ts",
     "verify:columns": "tsx src/verify/columns-check.ts",
     "verify:defcon": "tsx src/verify/defcon-check.ts",
+    "verify:haul": "tsx src/verify/haul-check.ts",
     "verify:thresholds": "tsx src/verify/thresholds-check.ts"
   },
   "dependencies": {

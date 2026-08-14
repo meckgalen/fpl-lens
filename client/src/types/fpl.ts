@@ -72,6 +72,28 @@ export interface Player {
    */
   defcon_hits: number | null;
 
+  /**
+   * How many FIXTURES reached 10 and 4 points. The unit is the fixture, not the
+   * gameweek, so a double gameweek can contribute two. Floors include hauls, so
+   * `floors >= hauls` always.
+   *
+   * **Never null, unlike `defcon_hits` above.** They count over `total_points`,
+   * which the server holds NOT NULL on every season, so there is no unmeasured
+   * state — 0 on a season nobody has played is a real zero, exactly as
+   * `goals_scored` is.
+   */
+  hauls: number;
+  floors: number;
+  /**
+   * The same counts restricted to fixtures the player STARTED — the numerators
+   * of H/St and F/St, and why those are bounded at 1.00 where DCH/St is not.
+   *
+   * null where `starts` is unmeasured across the player-season, or no match was
+   * played. Nothing renders these directly; the division happens in `perStart`.
+   */
+  hauls_started: number | null;
+  floors_started: number | null;
+
   /** Matches with minutes > 0. Not rounds — a double gameweek is two matches. */
   appearances: number;
   /** total_points / appearances. */

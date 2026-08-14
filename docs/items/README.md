@@ -213,3 +213,22 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       halves that distance; only a fixed-width chip aligned to the club's own
       edge removes its cause. `FDRBar` deleted so the legend and the row are one
       component, since a legend has to key against the identical object.
+
+- [x] **19. Hauls and floors on the Players list.** → [`item-19-hauls-and-floors.md`](item-19-hauls-and-floors.md)
+
+      Four columns following item 14's shape. The ratio numerators are **gated
+      on `starts = 1`**, so `H/St` and `F/St` cannot exceed 1.00 where `DCH/St`
+      can — near-identical fragments that must not be shared, and the one
+      definition this item got wrong twice. **`sum()` over zero rows is NULL and
+      that does not help here**: the LEFT JOIN gives a player with no matches
+      one null-extended row, and the `ELSE 0` makes it a hard zero, so all 564
+      players of 2026-27 read a confident 0 until the count guard went back in —
+      item 13's vacuous truth in a third place. The counts themselves are **0
+      rather than NULL** on the unplayed season, matching `goals_scored` beside
+      them, because `total_points` is NOT NULL and has no unmeasured state.
+      Frozen distribution in two halves, because the ungated one pins the
+      thresholds and pins **nothing** about the gate. A mutation caught the
+      *check* rather than the code: part 2B restated its SQL inline, so it
+      compared the database to itself and stayed green. Holds the 20 supplied
+      findings re-derived against the shipped statistic, and the DEF/MID
+      totals-versus-rates split.

@@ -85,6 +85,27 @@ files, one of which touches no database — see `comparison/thresholds.test.ts`:
   in parallel, and two transactions inserting the same
   `(season, fpl_fixture_id)` deadlocked on the unique index (Postgres 40P01).
 
+- `server/src/repositories/hauls.test.ts` — the haul and floor counts, on its
+  own, for the same reasons: a scoring rule the app computes for itself, and
+  load-bearing for four columns. Synthetic season `'2096-97'`. Synthetic rows
+  cover both thresholds either side (9/10/11 and 3/4/5), the inclusive relation,
+  a **bench haul** — the seed must contain one or the gate test passes
+  vacuously — a double gameweek counted as two fixtures rather than one round, a
+  partly measured `starts` yielding NULL rather than an undercount, and the two
+  cases that look alike and are not: a registered player with no matches
+  (`hauls_started` NULL) against a player with matches and no starts
+  (`hauls_started` a real 0, blanked on the client by `perStart`).
+
+  **`describe('the 1.00 bound')` contains an assertion no current mutation can
+  redden, and that is deliberate.** `hauls_started <= starts` is what the `H/St`
+  description promises on screen, but no player in any season out-hauls his
+  start count, so only the `floors_started` twin fires under the obvious
+  mutation. The witness counts are in the test's own doc comment and in
+  `docs/items/item-19-hauls-and-floors.md`; do not delete the clause for lacking
+  a failing mutation. It also asserts its filtered set is non-empty per season
+  and freezes 2022-23 at 117, since the "both non-null" filter excludes seven
+  seasons outright and could otherwise pass on nothing.
+
 - `server/src/ingest/holes.test.ts` — the hole detector, on its own, because it
   is the load-bearing rule in two ingests and a regression in it would otherwise
   surface as a confusing failure somewhere else. Runs against a temp table
@@ -188,7 +209,15 @@ files, one of which touches no database — see `comparison/thresholds.test.ts`:
 makes `DCH/St` name DC's seasons rather than `starts`', and the three nulls in
 hits-per-start including the `null / 5 === 0` coercion);
 `Players.columns.test.tsx` gained the two picker entries; `StatsTable.test.tsx`
-gained `St`/`DCH` and the assertion that `St` is **not** averaged. Components
+gained `St`/`DCH` and the assertion that `St` is **not** averaged.
+
+Item 19 added four more picker entries and the case that pulls in two
+directions on one screen: on 2026-27 `Hauls` and `Floors` stay **enabled** and
+render `0` while `H/St` and `F/St` are **disabled** — the counts read a NOT NULL
+column and have no unmeasured state, the ratios divide by `starts` and do. Note
+`Players.columns.test.tsx`'s GW16 count went from four entries to **six**, and
+that number is meant to move whenever a column starts depending on `starts`;
+it is the signal, not the maintenance cost. Components
 are rendered and the API
 is mocked at `services/api.ts`, not at `fetch`: mocking the transport would
 additionally pin URL shapes and `res.ok` handling, which the server suite
@@ -238,6 +267,14 @@ on. Twenty-four files:
   the two together is that each is pinned to the same externally-derived
   number — item 16 step 1's psql table. Guéhi 2025-26 is 179 points at £5.1m and
   35.10 on both sides; Gabriel's `11 / 30` was already here from item 14.
+
+  Item 19 added `describe('hauls and floors per start')`, covering the same
+  three guards through the shared `perStart` — which `hitsPerStart` now
+  delegates to, so the DCH/St cases above are simultaneously the regression test
+  for that delegation. The case worth knowing is **"reads the gated numerator,
+  not the ungated count beside it"**: `hauls` and `hauls_started` differ in the
+  factory precisely so reusing the wrong one reads 0.24 instead of 0.20 rather
+  than agreeing. Plus the 1.00 bound rendering as `1.00`.
 
 - `client/src/pages/Comparison.test.tsx` — the comparison page's fetching and
   state (item 16 step 4). Twenty-six tests over three properties a chart cannot

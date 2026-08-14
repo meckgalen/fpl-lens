@@ -21,6 +21,7 @@
     "verify:history-past": "cd server && npm run verify:history-past --",
     "verify:columns": "cd server && npm run verify:columns --",
     "verify:defcon": "cd server && npm run verify:defcon --",
+    "verify:haul": "cd server && npm run verify:haul --",
     "verify:thresholds": "cd server && npm run verify:thresholds --"
   },
   "devDependencies": {

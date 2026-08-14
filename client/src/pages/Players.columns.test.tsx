@@ -182,10 +182,13 @@ describe('availability decides what renders', () => {
     // A partial column has no honest season total — the reason names the round
     // rather than merely refusing.
     expect(entry('Expected goals')).toBeDisabled();
-    // Four columns share this season's boundary, so four entries carry the same
+    // Six columns share this season's boundary, so six entries carry the same
     // sentence — `getAllByText` rather than `getByText`, and the count is the
-    // assertion: 2022-23 holes exactly the expected family plus `starts`.
-    expect(screen.getAllByText('Only recorded from GW16 in 2022-23.')).toHaveLength(4);
+    // assertion: 2022-23 holes the expected family plus `starts`, plus item
+    // 19's two starts-denominated ratios. It was four before H/St and F/St,
+    // and this number is meant to move when a column starts depending on
+    // `starts` — that is the signal, not the maintenance cost.
+    expect(screen.getAllByText('Only recorded from GW16 in 2022-23.')).toHaveLength(6);
     expect(headers()).not.toContain('xG');
   });
 
@@ -279,6 +282,86 @@ describe('availability decides what renders', () => {
     // because "made no starts" and "hit none of his starts" are different.
     expect(screen.getByText('0.37')).toBeInTheDocument();
     expect(screen.queryByText('0.00')).not.toBeInTheDocument();
+  });
+
+  it('offers all four haul columns where starts is measured', async () => {
+    const user = userEvent.setup();
+    renderAt(bootstrapFor('2025-26'));
+    await openPicker(user);
+
+    // `entryExact` on the counts: their titles are prefixes of nothing, but the
+    // picker concatenates title and label with no separator, so an unanchored
+    // match is a habit worth not forming here.
+    expect(entryExact('Matches of 10 or more points', 'Hauls')).not.toBeDisabled();
+    expect(entryExact('Matches of 4 or more points', 'Floors')).not.toBeDisabled();
+    expect(entryExact('Hauls per start', 'H/St')).not.toBeDisabled();
+    expect(entryExact('Floors per start', 'F/St')).not.toBeDisabled();
+  });
+
+  it('keeps the haul counts on an unplayed season while withholding the ratios', async () => {
+    // **Item 19's central availability decision, and the two halves pull in
+    // opposite directions on the same screen.** Hauls and Floors count over
+    // `total_points`, which is NOT NULL, so a roster that has played nothing has
+    // hauled zero times — a measurement, exactly as Goals reads 0 there
+    // (rule 6), and withholding them would be the overreach in the other
+    // direction. H/St and F/St divide by `starts`, which genuinely is
+    // unmeasured, so they are withheld and say why.
+    const user = userEvent.setup();
+    renderAt(
+      aBootstrap({
+        season: '2026-27',
+        seasons: SEASONS,
+        players: [aPlayer({ id: 1, web_name: 'Unplayed', team: 3, hauls: 0, floors: 0,
+          hauls_started: null, floors_started: null, starts: null })],
+        teams,
+        columns: { season: '2026-27', measured: false, columns: [] },
+      })
+    );
+    await openPicker(user);
+
+    expect(entryExact('Matches of 10 or more points', 'Hauls')).not.toBeDisabled();
+    expect(entryExact('Matches of 4 or more points', 'Floors')).not.toBeDisabled();
+    expect(entryExact('Hauls per start', 'H/St')).toBeDisabled();
+    expect(entryExact('Floors per start', 'F/St')).toBeDisabled();
+
+    // And the count really renders its zero rather than a placeholder.
+    await user.click(entryExact('Matches of 10 or more points', 'Hauls'));
+    expect(headers()).toContain('Hauls');
+    expect(screen.getByText('0')).toBeInTheDocument();
+  });
+
+  it('renders the ratios once selected, with the placeholder for no starts', async () => {
+    const user = userEvent.setup();
+    renderAt(
+      aBootstrap({
+        season: '2025-26',
+        seasons: SEASONS,
+        players: [
+          // Watkins' real 2025-26 shape: five hauls, one of them off the bench,
+          // so the two numerators genuinely differ. 4/33 = 0.1212… → 0.12,
+          // where the ungated 5/33 would read 0.15.
+          aPlayer({ id: 1, web_name: 'Regular', team: 3, hauls: 5, hauls_started: 4, starts: 33 }),
+          // Onyeka's: appearances but no starts at all.
+          aPlayer({ id: 2, web_name: 'Benchwarmer', team: 3, hauls: 0, hauls_started: 0, starts: 0 }),
+        ],
+        teams,
+        columns: availability({}, { season: '2025-26' }),
+      })
+    );
+    await openPicker(user);
+    await user.click(entryExact('Hauls per start', 'H/St'));
+
+    expect(headers()).toContain('H/St');
+    expect(screen.getByText('0.12')).toBeInTheDocument();
+    expect(screen.queryByText('0.15')).not.toBeInTheDocument();
+    expect(screen.queryByText('0.00')).not.toBeInTheDocument();
+  });
+
+  it('does not render any of the four by default', async () => {
+    renderAt(bootstrapFor('2025-26'));
+    for (const label of ['Hauls', 'Floors', 'H/St', 'F/St']) {
+      expect(headers()).not.toContain(label);
+    }
   });
 
   it('states an unplayed season once, in the season’s own words', async () => {
