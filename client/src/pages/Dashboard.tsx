@@ -211,7 +211,21 @@ export default function Dashboard({
         </Card>
       </div>
 
-      <div className="grid grid-cols-2 gap-3.5 mb-3.5">
+      {/*
+        The two ranking cards stack below `lg`, and the three stat cards above
+        them deliberately do not.
+
+        Measured rather than assumed. At 380 a two-column grid gives each card
+        163px against 313px of content, and the club/position/price line inside
+        (`flex-1 min-w-0`) collapses to **2px** holding 113px of text — a row
+        rendering on top of itself. The three stat cards at 105px each were
+        measured in the same pass and overflow nothing, so they keep their row.
+
+        This is not the responsive variant item 22 declined. That one was for
+        four zero-width player buttons, a symptom the shell change dissolved on
+        its own; this is the squeezed club line, which survived it.
+      */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5 mb-3.5">
         <Card>
           <CardHeader>
             <CardTitle>Top Performers · Total points</CardTitle>

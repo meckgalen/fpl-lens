@@ -71,7 +71,21 @@ export default function ColumnPicker({
   const shown = selected.length;
 
   return (
-    <div className="relative" ref={root}>
+    /*
+      Full width below `lg`, which is what keeps the panel on screen.
+
+      The panel is `absolute left-0` against this wrapper. In the wrapping filter
+      bar at 380 the wrapper landed at x=148, so a 320px panel ran to x=468 —
+      **88px past the viewport**, reachable only by scrolling the page sideways,
+      which is not a thing anyone does to read a popover.
+
+      Taking the whole line puts the wrapper at the bar's own left edge, so the
+      panel starts at 16 and ends at 336 inside a 380 viewport with no clamp, no
+      flipped anchor and no repositioning logic. Anchoring `right-0` instead does
+      not work: it would hang the panel off the LEFT edge whenever the button
+      sits near the start of the bar.
+    */
+    <div className="relative max-lg:w-full" ref={root}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -116,8 +130,12 @@ export default function ColumnPicker({
                       accessible name is the column's long title rather than its
                       two-letter heading. No aria-label anywhere: there is
                       nothing that can drift out of agreement with the text. */}
+                  {/* The row is the target, not the box. The checkbox itself
+                      renders 13x22 at the UA default and the label row was 36px
+                      tall; below `lg` the row carries a 44px minimum so the
+                      thing you actually aim at is the thing you can hit. */}
                   <label
-                    className={`flex gap-2.5 px-2 py-1.5 rounded-md ${
+                    className={`flex gap-2.5 px-2 py-1.5 rounded-md max-lg:min-h-11 max-lg:items-center ${
                       disabled ? 'opacity-70' : 'cursor-pointer hover:bg-muted/60'
                     }`}
                   >

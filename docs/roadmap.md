@@ -121,10 +121,59 @@ every hour, and needs somewhere to put them and a policy for how often.
   expected points work above** — without it there is no per-fixture projection
   to captain on, and the live sync, for form and ownership.
 - **LLM scouting reports.**
-- **Deploy on karpuz-prod** alongside TechRelative (Docker Compose, Nginx), responsive
-  design, README with screenshots.
+- **Deploy on karpuz-prod** alongside TechRelative (Docker Compose, Nginx),
+  README with screenshots. ~~responsive design~~ — **done in item 22**, in the
+  containment sense rather than the redesign sense: every surface reachable and
+  operable at 380px, degrading into horizontal scroll where the columns genuinely
+  need the width. The three entries above are what item 22 deliberately left.
 - ~~A season selector in the UI.~~ **Done — Phase 1 item 8.** It carried the
   `detailPlayer` snapshot fix with it, as this entry said it would.
+- **The comparison radar at narrow widths is a scrolling window onto a shape,
+  and that is a known limitation rather than a defect.** After item 22 the radar
+  sits in a 302px pane holding its fixed 580px SVG — a 1.92× scroll, the same
+  ratio a wide table degrades to. **It is not the same quality of scroll.** A
+  table is read column by column, so a window over it loses nothing; a radar is
+  read as a **single shape**, and seeing half of it at a time degrades the one
+  thing the chart exists to do — compare outlines at a glance.
+
+  **Do not reach for the viewBox.** Every fix that makes the whole shape fit at
+  380 scales the SVG, and the captions scale with it: that is item 16's hazard,
+  where 11px text rendered at **7.3px**, and the fixed 580×500 in an
+  `overflow-x: auto` wrapper is the fix for it. Item 22 confirmed it still holds
+  (`shrunk: 0` at every width). A real answer needs the captions decoupled from
+  the geometry — fixed-size text positioned against a scaled chart — which is a
+  chart change and was explicitly out of item 22's scope.
+
+  Recorded so a future reader does not discover the scroll, assume nobody
+  noticed, and re-introduce the caption bug fixing it.
+
+- **Touch targets that are small but not destructive.** Item 22 sized up only the
+  controls where a mis-tap costs something irreversible — the comparison position
+  pills and the trace remove, both of which destroy a built-up selection. Left
+  under 44px, deliberately: the Players position pills and the Fixtures tab pills
+  (~26px, a mis-tap re-filters or switches a view and is undone by tapping
+  again), the sortable column headers (40px tall, full column width), and the
+  player-name disclosure buttons (~20px tall, but the whole 62px row is also a
+  click target). All are usable; none is ideal. A pass that raises the lot is
+  worth doing as its own item, with the pill groups' geometry decided once rather
+  than per page.
+
+- **The player detail page spends about half its pane on pinned columns at
+  380px.** Two nested levels of pinning: the career table's Season column
+  (172.88px) on summary rows, and the nested gameweek table's GW + Opp (115.14px)
+  on match rows. Against a 337px pane that leaves **164.12px readable (48.7%)**
+  on the worst row and 221.86px (65.8%) on the others, with 1,895px of content
+  behind a 5.62× scroll.
+
+  **Ugly, not unreachable** — every column is reachable by scrolling, which is
+  why item 22 recorded it instead of fixing it. **The shell change cannot help
+  it**: the career card is its own scroll context at every width (measured), so
+  it is independent of the breakpoint entirely. Options if it is ever taken up:
+  unpin GW/Opp on the nested table below `lg`, narrow or unpin the Season column,
+  or accept it. Note that unpinning is not free — item 10 added the pins because
+  scrolling right lost your place, and at 380 that argument is stronger, not
+  weaker.
+
 - ~~A per-90 toggle on the averages row.~~ **Still open**, and item 12 did not
   touch it — but note that `Normalization` in `lib/averages.ts` is still the
   seam, and the footnote now has a model (`buildFootnote`) that would need a

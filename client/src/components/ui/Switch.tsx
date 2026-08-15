@@ -11,7 +11,17 @@ export function Switch({
       role="switch"
       aria-checked={checked}
       onClick={() => onCheckedChange(!checked)}
-      className={`relative inline-flex h-[18px] w-[34px] shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+      /*
+       * 18x34 painted, 44x60 to the finger below `lg`.
+       *
+       * The hit area is an invisible `::before` rather than a bigger control,
+       * because the switch's size is its design and a 44px pill would read as a
+       * different component. That trade is only safe where nothing else is
+       * within reach: this sits at the end of the strip with a text label on one
+       * side and the edge on the other, so the halo overlaps no other target.
+       * The comparison chips are the opposite case and were sized up instead.
+       */
+      className={`relative inline-flex h-[18px] w-[34px] shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-lg:before:absolute max-lg:before:-inset-[13px] max-lg:before:content-[''] ${
         checked ? 'bg-primary' : 'bg-border'
       }`}
     >

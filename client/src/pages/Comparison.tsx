@@ -345,8 +345,15 @@ export default function Comparison() {
               type="button"
               onClick={() => changePosition(p)}
               aria-pressed={position === p}
+              /* 44px below `lg`, and this one is sized by CONSEQUENCE rather
+                 than by the 26px it measured. `changePosition` clears every
+                 trace — the server refuses a player drawn on another position's
+                 axes — so a mis-tap here destroys up to four traces the reader
+                 assembled by searching. The identical-looking pills on the
+                 Players list only re-filter a table and are left alone. */
               className={cn(
                 'px-3 py-1 rounded-md text-xs font-medium transition-colors',
+                'max-lg:min-h-11 max-lg:px-4',
                 FOCUS_RING,
                 position === p
                   ? 'bg-primary text-primary-foreground'
@@ -483,8 +490,18 @@ export default function Comparison() {
                     type="button"
                     onClick={() => removeTrace(t)}
                     aria-label={`Remove ${t.web_name} ${t.season}`}
+                    /* The most destructive control on the page, and it measured
+                       the smallest: 15.97x20 at 380 before the shell change,
+                       20x20 after. It deletes a trace outright, and rebuilding
+                       one means searching the picker again.
+
+                       Sized up rather than given an expanded hit area with a
+                       pseudo-element: the chips sit in a `gap-2` wrap, so a
+                       12px invisible halo on each would overlap the neighbouring
+                       chip and trade a small target for a wrong one. */
                     className={cn(
-                      'w-5 h-5 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors',
+                      'w-5 h-5 max-lg:w-11 max-lg:h-11 rounded-full',
+                      'text-muted-foreground hover:text-foreground hover:bg-muted transition-colors',
                       FOCUS_RING
                     )}
                   >

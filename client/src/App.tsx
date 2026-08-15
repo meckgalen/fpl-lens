@@ -204,14 +204,63 @@ export default function App() {
 
   return (
     <BootstrapContext.Provider value={bootstrap}>
-      <div className="flex h-screen overflow-hidden bg-background text-foreground">
-        <aside className="w-56 flex-shrink-0 flex flex-col bg-sidebar border-r border-sidebar-border transition-colors duration-300">
-          <div className="flex items-center gap-2.5 px-5 py-5 border-b border-sidebar-border">
+      {/*
+        Two layout modes, and the breakpoint decides which element scrolls.
+
+        **At `lg` and up: unchanged.** A fixed-height flex row, the sidebar a
+        224px column, `<main>` the bounded scroll container. Item 10's sticky
+        headers on the Players list resolve against `<main>`, which is what they
+        have always done.
+
+        **Below `lg`: the shell stops being a viewport-sized box.** No
+        `h-screen`, no `overflow-hidden`, and `<main>` gives up `overflow-y`, so
+        the DOCUMENT scrolls and the sidebar — now a full-width strip — is
+        ordinary content that scrolls away with everything else.
+
+        That last property is the requirement. The strip must NOT be sticky: a
+        sticky shell above a sticky `<thead>` makes the header's top offset
+        depend on the strip's rendered height, a coupling jsdom cannot see and
+        the browser only shows mid-scroll. In flow it costs nothing once scrolled
+        past, and the sticky header resolves against the viewport at exactly 0.
+
+        **One DOM node, not two.** Rendering the nav twice behind
+        `hidden lg:flex` is the obvious alternative and it breaks: two
+        `id="season-select"` attributes, and `App.test.tsx` finds the selector by
+        its visible label, which `getByLabelText` requires to be unique. Two
+        `Countdown`s would also mean two intervals. So the markup is written once
+        and the breakpoint moves the scrollport instead.
+
+        Measured before building: at 380px the old shell left 92px of content
+        (224 sidebar + 64 padding out of 380). Both scrollports stay BOUNDED,
+        which is the property item 10 established as the actual requirement.
+      */}
+      <div className="min-h-screen lg:flex lg:h-screen lg:overflow-hidden bg-background text-foreground">
+        <aside
+          className={cn(
+            'bg-sidebar border-sidebar-border transition-colors duration-300',
+            // The strip: in document flow, wrapping, never sticky.
+            'w-full flex flex-row flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 border-b',
+            // The sidebar, exactly as it was.
+            'lg:w-56 lg:flex-shrink-0 lg:flex-col lg:flex-nowrap lg:items-stretch',
+            'lg:gap-0 lg:px-0 lg:py-0 lg:border-b-0 lg:border-r'
+          )}
+        >
+          {/* Order below `lg`: the brand and the theme switch share the first
+              row, the nav wraps onto the second. The switch is the aside's LAST
+              child in the DOM and stays there — `order` reshuffles it visually
+              without moving it, so the sidebar keeps it pinned to the bottom and
+              nothing about the markup changes between the two modes. */}
+          <div className="flex items-center gap-2.5 lg:px-5 lg:py-5 lg:border-b lg:border-sidebar-border">
             <Logo className="w-8 h-8 text-primary" />
             <span className="font-display font-semibold text-[15.5px] text-sidebar-foreground">FPL Lens</span>
           </div>
 
-          <nav className="flex-1 py-3 overflow-y-auto">
+          <nav
+            className={cn(
+              'order-2 w-full flex flex-row flex-wrap items-center gap-x-3 gap-y-1.5',
+              'lg:order-none lg:w-auto lg:flex-1 lg:flex-col lg:items-stretch lg:gap-0 lg:py-3 lg:overflow-y-auto'
+            )}
+          >
             {/* A real <select>: keyboard reach, a role and a name for free, and
                 the same control GameweekFilters already uses. The visible
                 label names it, so there is no aria-label that can drift out of
@@ -221,10 +270,14 @@ export default function App() {
                 focus to <body>, which is exactly the class of regression item 3
                 existed to remove; the busy state goes on the region whose
                 content is stale instead. */}
-            <div className="px-5 pt-3 pb-1.5">
+            <div className="flex items-center gap-1.5 lg:block lg:px-5 lg:pt-3 lg:pb-1.5">
+              {/* The label stays VISIBLE in both modes rather than being hidden
+                  below `lg`. It is the select's accessible name, and `display:
+                  none` would take it out of the accessibility tree — which is
+                  also how `App.test.tsx` finds the control. */}
               <label
                 htmlFor="season-select"
-                className="block pb-1.5 text-[9.5px] font-semibold uppercase tracking-[.12em] text-muted-foreground/70"
+                className="block text-[9.5px] font-semibold uppercase tracking-[.12em] text-muted-foreground/70 lg:pb-1.5"
               >
                 Season
               </label>
@@ -233,7 +286,7 @@ export default function App() {
                 value={requested ?? bootstrap.season}
                 onChange={(e) => setRequested(e.target.value)}
                 className={cn(
-                  'w-full rounded-md border border-sidebar-border bg-sidebar px-2 py-1.5',
+                  'rounded-md border border-sidebar-border bg-sidebar px-2 py-1.5 lg:w-full',
                   'text-[13px] text-sidebar-foreground',
                   FOCUS_RING
                 )}
@@ -246,39 +299,61 @@ export default function App() {
               </select>
             </div>
 
-            <p className="px-5 pt-3 pb-1.5 text-[9.5px] font-semibold uppercase tracking-[.12em] text-muted-foreground/70">
+            {/* A section heading for a vertical list. In a horizontal strip it
+                labels nothing, so it is dropped there rather than restyled. */}
+            <p className="hidden lg:block px-5 pt-3 pb-1.5 text-[9.5px] font-semibold uppercase tracking-[.12em] text-muted-foreground/70">
               Menu
             </p>
             {NAV.map((n) => (
               <button
                 key={n.id}
                 onClick={() => handleSelectPage(n.id)}
-                className={`w-full flex items-center gap-2.5 px-5 py-2.5 text-[13.5px] border-l-2 transition-all text-left ${
+                /* The active marker moves from the left edge to the bottom edge
+                   below `lg`, because a left rule on a horizontal pill points at
+                   nothing. Only the WIDTH classes name an edge; the colour is
+                   the all-sides `border-*`, so exactly one edge is ever visible
+                   and the two modes cannot disagree about which. */
+                className={cn(
+                  'flex items-center gap-2 text-[13.5px] transition-all text-left',
+                  'rounded-md px-2.5 py-2 border-b-2',
+                  'lg:w-full lg:gap-2.5 lg:rounded-none lg:px-5 lg:py-2.5 lg:border-b-0 lg:border-l-2',
                   page === n.id && detailCode == null
-                    ? 'border-l-sidebar-primary bg-sidebar-accent text-sidebar-accent-foreground font-medium'
-                    : 'border-l-transparent text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/40'
-                }`}
+                    ? 'border-sidebar-primary bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+                    : 'border-transparent text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/40'
+                )}
               >
                 <span className={page === n.id && detailCode == null ? 'opacity-100' : 'opacity-60'}>{n.icon}</span>
                 {n.label}
               </button>
             ))}
 
+            {/* Kept in the strip rather than dropped. It is the one block that
+                could have been hidden to save vertical space, and vertical space
+                is the axis this layout spends deliberately — the strip scrolls
+                away, so what it costs is paid once. Hiding a deadline on the
+                device most likely to be checking a deadline is the wrong trade. */}
             {next && (
               <>
-                <p className="px-5 pt-5 pb-1.5 text-[9.5px] font-semibold uppercase tracking-[.12em] text-muted-foreground/70">
+                <p className="text-[9.5px] font-semibold uppercase tracking-[.12em] text-muted-foreground/70 lg:px-5 lg:pt-5 lg:pb-1.5">
                   GW{next.id}
                 </p>
-                <div className="px-5 pb-3">
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-[.08em] mb-1.5">Deadline</p>
+                <div className="flex items-center gap-2 lg:block lg:px-5 lg:pb-3">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-[.08em] lg:mb-1.5">Deadline</p>
                   <Countdown target={deadlineTs} />
-                  {deadlineLabel && <p className="text-[10px] text-muted-foreground mt-1">{deadlineLabel}</p>}
+                  {deadlineLabel && (
+                    <p className="hidden lg:block text-[10px] text-muted-foreground lg:mt-1">{deadlineLabel}</p>
+                  )}
                 </div>
               </>
             )}
           </nav>
 
-          <div className="px-5 py-4 border-t border-sidebar-border flex items-center justify-between">
+          <div
+            className={cn(
+              'order-1 ml-auto flex items-center gap-2',
+              'lg:order-none lg:ml-0 lg:px-5 lg:py-4 lg:border-t lg:border-sidebar-border lg:justify-between'
+            )}
+          >
             <span className="text-xs text-muted-foreground">{dark ? 'Dark' : 'Light'} mode</span>
             <Switch checked={dark} onCheckedChange={setDark} />
           </div>
@@ -299,10 +374,15 @@ export default function App() {
           rest, which is why this reads as a no-op and is not one.
         */}
         <main
-          className={cn('flex-1 overflow-y-auto transition-opacity', switching && 'opacity-60')}
+          // `overflow-y-auto` only at `lg`. Below it the document is the
+          // scrollport, which is what lets the strip above scroll away.
+          className={cn('lg:flex-1 lg:overflow-y-auto transition-opacity', switching && 'opacity-60')}
           aria-busy={switching}
         >
-          <div className="p-8">
+          {/* 64px of padding is 17% of a 380px viewport, so it halves below
+              `lg`. Page chrome containment in the plainest sense: 32px back for
+              one class, with nothing rearranged to get it. */}
+          <div className="p-4 lg:p-8">
             {detailCode != null ? (
               <PlayerDetail code={detailCode} player={detailPlayer} onBack={() => setDetailCode(null)} />
             ) : (

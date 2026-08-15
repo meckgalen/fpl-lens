@@ -277,3 +277,22 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       Also: a summary line generalising over cases must be true of **every** case
       — the first framing line was false for two of the five live tags — and
       `entryExact`'s matcher had been silently mis-escaping since it was written.
+- **22. Narrow viewports: containment, not responsiveness.** →
+      `item-22-narrow-viewports.md` — a `w-56` sidebar left **92px of content** at
+      380px, so the shell was fixed first and everything else re-measured against
+      it. Below `lg` the strip goes into document flow and **the scrollport
+      moves** to the document; it must not be sticky, or the sticky `<thead>`'s
+      top offset would depend on the strip's height. One DOM node, because
+      `getByLabelText('Season')` requires a unique visible label — and
+      `App.test.tsx` needing no edit was the pre-stated signal the structure was
+      right. Blast radius measured, not assumed: only the Players list resolves
+      against `<main>`; the career card is its own scroll context at every width.
+      `lg` fires at **1025, not 1024** — the document's 5px scrollbar is excluded
+      from the media-query width — and the closed mode↔scrollbar loop was tested
+      **by path** (fresh, descending, ascending, oscillating) rather than by
+      repetition, which cannot detect bistability. Two levers were **measured and
+      rejected**: the pinned column is already at min-content at 380 (`width:
+      min-content` reproduces 932px and 123.59px exactly, so `w-44` is inert),
+      and `rootMargin` buys the same ~9.7 rows at both widths. The audit caught
+      **four faults in itself**, one of them after being reported as fact, which
+      is the argument for the checked-in instrument.
