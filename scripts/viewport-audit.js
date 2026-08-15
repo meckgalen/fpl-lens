@@ -220,6 +220,22 @@ window.__VPAUDIT = (function () {
 
   /* ------------------------------------------------------- (a) overflow */
 
+  /**
+   * Horizontal overflow, split by whether the element was meant to scroll.
+   *
+   * **One known finding is expected and is NOT a defect — do not go fixing it.**
+   * Below `lg` the theme `Switch` reports as unintended overflow at roughly
+   * `cw=30 sw=43`, on every page, at 380/768/1024. That 13px is its own
+   * `::before` hit area: the control paints 18x34 and takes 44x60 to the finger,
+   * which item 22 added deliberately because the switch's size is its design and
+   * a 44px pill would read as a different component. A pseudo-element that
+   * extends past its box is exactly what that technique looks like from here.
+   * Nothing is clipped and nothing is unreachable.
+   *
+   * It is called out at the point the finding is PRODUCED, rather than only in
+   * `docs/items/item-22-narrow-viewports.md`, so the next session does not spend
+   * an hour investigating its predecessor's fix.
+   */
   function overflow(win, doc, viewportW) {
     const intended = [];
     const unintended = [];

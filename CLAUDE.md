@@ -1328,10 +1328,14 @@ One item per session, committed between each. **The record of every item is
       document flow, so the scrollport is the document rather than `<main>`** —
       which is why the strip must never be made sticky, and why only the Players
       list is affected: the career card is its own scroll context at every width.
-      **`lg` fires at 1025, not 1024**, because below it the document's 5px
-      scrollbar is excluded from the media-query width; tested by path, not
-      bistable. Two levers were measured and **rejected**: the pinned column is
-      already at min-content at 380, and `rootMargin` is viewport-independent.
+      **The effective boundary is `1024 + whatever gutter the engine reserves`** —
+      1025 in Chrome, where a classic 5px scrollbar is excluded from the
+      media-query width, and exactly 1024 where scrollbars overlay (mobile
+      Safari, Chrome Android). A 1024px viewport is therefore strip in Chrome and
+      **sidebar** on an iPad; both are usable and it is one pixel wide. Tested by
+      path, not bistable. Two levers were measured and **rejected**: the pinned
+      column is already at min-content at 380, and `rootMargin` is
+      viewport-independent.
 
 ## Deferred
 

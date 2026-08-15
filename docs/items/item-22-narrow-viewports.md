@@ -130,11 +130,13 @@ no way to scroll to it.
 
 ---
 
-## `lg` fires at 1025, not 1024
+## The effective boundary is engine-dependent: 1025 in Chrome, 1024 elsewhere
 
-Below `lg` the document scrolls, and its 5px `::-webkit-scrollbar` is **excluded
-from the media-query width**. So a 1024px viewport evaluates as 1019 and stays in
-strip mode.
+Below `lg` the document scrolls, and a **classic** scrollbar reserves gutter that
+the media query excludes. This project sets `::-webkit-scrollbar` to 5px, so in
+Chrome a 1024px viewport evaluates as 1019 and stays in strip mode.
+
+Measured in Chrome:
 
 | Viewport | `documentElement.clientWidth` | `matchMedia(min-width:1024px)` | Mode |
 | ---: | ---: | --- | --- |
@@ -142,6 +144,27 @@ strip mode.
 | **1024** | **1019** | **false** | **strip** |
 | 1025 | 1025 | true | sidebar |
 | 1026+ | = viewport | true | sidebar |
+
+**This is a Chrome fact, not a CSS one, and the earlier flat "fires at 1025" was
+wrong to state it as universal.** The offset is exactly the reserved gutter, so
+the boundary is `1024 + gutter`:
+
+| Scrollbar behaviour | Gutter | Boundary | At a 1024px viewport |
+| --- | ---: | ---: | --- |
+| Overlay (mobile Safari, Chrome Android, Firefox on macOS) | 0 | **1024** | **sidebar** |
+| This project's `::-webkit-scrollbar` (Chrome/Blink) | 5px | **1025** | **strip** |
+| A platform default classic bar (Firefox on Windows/Linux, which ignores the `-webkit-` rule) | ~12–17px | ~1036–1041 | strip |
+
+**So the outcome at exactly 1024 does differ by engine** — strip in Chrome,
+sidebar where scrollbars overlay — because `min-width: 1024px` is **inclusive**
+and an overlay engine's query sees the full 1024. It is a one-pixel-wide
+disagreement and benign either way: 1024 yields 960px of content as a strip and
+736px as a sidebar, both usable. It is recorded because "the outcome is the same
+everywhere" is the kind of reassurance that stops the next reader checking.
+
+The width it actually matters at is **iPad landscape, 1024**, which gets the
+sidebar on iOS Safari — the plain `lg` behaviour, and the one the breakpoint was
+chosen for.
 
 **The loop is closed** — mode decides document scroll, scroll decides the
 scrollbar, the scrollbar decides the query width, the query decides the mode — so
@@ -299,6 +322,37 @@ SVG in its `overflow-x: auto` wrapper does exactly what it was built to do.
   with the sticky header at 0; Dashboard ranking card full-width with the club
   line intact and squeezed containers **0** (was 3); comparison chips stacking
   with visible 44px removes; light and dark both correct.
+
+## What this item did NOT verify
+
+**Every measurement here was taken in desktop Chrome, through a same-origin
+iframe. No phone or tablet browser was involved at any point.** That is sound for
+layout, which is what the item was about — an iframe at 380 CSS px lays out
+exactly as a 380 CSS px viewport does, and the pre-flight proves the instrument
+against a recorded number. Three things sit outside it, and the record should not
+be read as covering them.
+
+**The iOS `100vh` claim is reasoned from source, not observed.** 3a's comment says
+dropping `h-screen`/`overflow-hidden` below `lg` frees the theme switch from under
+the URL bar. `100vh` is the *large* viewport and an `overflow-hidden` box that
+size genuinely cannot be scrolled to reveal what the bar covers, so the reasoning
+holds — but **an iframe has no URL bar**, so nothing here observed it. The claim
+stays; it is labelled unverified.
+
+**Engine differences beyond the boundary arithmetic.** The 1024/1025 table above
+is Chrome-measured with the overlay-engine column derived, not run. Nothing in
+this item was opened in Safari, Firefox or any mobile browser.
+
+**Touch behaviour, entirely.** None of this was tested with a finger:
+
+- whether momentum scrolling feels right on a document that is now the scrollport
+- the **double-scroll** case — a horizontally scrolling table inside a vertically
+  scrolling document — which is the interaction most likely to feel wrong on
+  Players at 380 and which a mouse wheel does not reproduce
+- whether the 44px targets actually land under a thumb, as opposed to measuring
+  44px. A control can be the right size and still be in the wrong place.
+
+The 44px figure is a convention this item applied, not a result it validated.
 
 ### The audit script's disposal
 
