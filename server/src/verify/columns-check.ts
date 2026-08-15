@@ -324,20 +324,17 @@ const EXPECTED_UNPLAYED = new Set(['2026-27']);
  */
 async function partTwo(seasons: string[]): Promise<number> {
   console.log('\n\nPart 2 — do the withheld fields actually arrive empty?');
-  console.log(
-    `${seasons.length} seasons x ${Object.keys(PAYLOAD_FIELDS).length} payload fields ` +
-      `(${MEASURED_FIELDS.length} measured, ${ALWAYS_FIELDS.length} always, ` +
-      `${Object.keys(PAYLOAD_FIELDS).length - MEASURED_FIELDS.length - ALWAYS_FIELDS.length} skipped)\n`
-  );
 
   let compared = 0;
   let checkedNullCells = 0;
+  let playerSeasons = 0;
   const failures: string[] = [];
   const perSeason: string[] = [];
 
   for (const season of seasons) {
     const payload: PlayerSeasonTotals[] = await listPlayerTotals(pool, season);
     const truth = await truthPerPlayer(season);
+    playerSeasons += payload.length;
 
     let seasonChecked = 0;
     let seasonMismatched = 0;
@@ -433,6 +430,19 @@ async function partTwo(seasons: string[]): Promise<number> {
     if (seasonMismatched > 0)
       failures.push(`   ${season}  ${seasonMismatched} field values disagree with the rows`);
   }
+
+  // Printed after the loop rather than before it, because the player-season
+  // count is derived from the payloads rather than written down — and a header
+  // whose factors do not multiply out to the total beneath it is worse than no
+  // header. The skipped fields are named but excluded: they are not compared.
+  const checkedFields = MEASURED_FIELDS.length + ALWAYS_FIELDS.length;
+  const allFields = Object.keys(PAYLOAD_FIELDS).length;
+  console.log(
+    `${seasons.length} seasons, ${playerSeasons} player-seasons x ${checkedFields} ` +
+      `checked fields = ${playerSeasons * checkedFields} cells\n` +
+      `(${MEASURED_FIELDS.length} measured, ${ALWAYS_FIELDS.length} always; ` +
+      `${allFields - checkedFields} of ${allFields} skipped)\n`
+  );
 
   console.log('Per season:');
   for (const line of perSeason) console.log(line);

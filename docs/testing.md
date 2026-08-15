@@ -15,12 +15,19 @@ restated as rules here. What follows is the catalogue.
 
 ---
 
-## The counts
+## The two suites
 
-`npm test` runs **two suites on two runners**: **155 server tests** and **314
-client tests**, all passing. They are counted separately on purpose — two
-runners print two summaries, and a combined figure would be maintained by hand
-against neither of them.
+`npm test` runs **two suites on two runners**, and they report separately on
+purpose — two runners print two summaries, and a combined figure would be
+maintained by hand against neither of them.
+
+**Neither total is written down here.** The figures that used to sit in this
+paragraph drifted across several items and were wrong by 13 and 60 when item 20
+measured them — while sitting directly under a sentence explaining why the
+counts are kept apart, which lent them an authority they had not earned. The
+number informs no decision: what a reader needs from this file is that there are
+two suites, what each covers, and why. Read the counts off the runners, which
+are the only thing that can be right about them.
 
 ---
 

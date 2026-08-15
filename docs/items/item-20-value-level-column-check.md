@@ -32,8 +32,15 @@ Per season, per player row, per payload field:
   direction that stops the opposite overreach, since `hauls` and `floors`
   correctly read `0` on 2026-27 and nulling them would be the symmetric bug.
 
-**197,550 cells compared** (7,902 player-seasons × 25 classified fields), of
+**197,550 cells compared** — 7,902 player-seasons × **25 checked** fields — of
 which **45,985** must be null. Part 1 is unchanged at **319**.
+
+The run's own header says exactly that, and it is printed **after** the season
+loop so the player-season count is derived from the payloads rather than written
+down. It first read `11 seasons x 34 payload fields`, which does not multiply out
+to the total printed four lines beneath it: 34 counts the nine skipped fields,
+which are named but never compared. A header whose factors disagree with its own
+total is worse than no header.
 
 ### Driven off the payload, not the picker
 
@@ -254,6 +261,41 @@ And its corollary, which part 2 has to obey itself:
   which the suite does not guarantee beyond its own synthetic seasons.
 - **No browser pass**: nothing rendered changed.
 
-`docs/testing.md`'s suite counts were corrected in passing — 142/254 to the
-measured **155 server / 314 client**. They had drifted, which is the failure
-item 15 recorded and the only reason a count lives in that file at all.
+## 10. Runtime, measured
+
+`verify:columns` is the check most likely to be run casually, and part 2 added
+eleven `listPlayerTotals` calls and 197,550 comparisons to it. Three runs,
+in-process timers around each part:
+
+| | part 1 | part 2 | in-process total | wall |
+| --- | --- | --- | --- | --- |
+| range over 3 runs | 1,236-1,279 ms | 1,294-1,361 ms | 2,573-2,613 ms | 3.18-3.34 s |
+
+**Part 2 does not dominate — it roughly doubles the check, costing about what
+part 1 costs.** That is not a coincidence: part 1's `seasonAvailability` already
+calls `listPlayerTotals` once per season, so both parts pay for eleven of them
+and part 2's extra work is its own truth query plus the comparisons, which are
+cheap. Wall time carries roughly 0.6s of `tsx` startup on top.
+
+No optimisation: ~3.2s for a read-only check run by hand is not a number worth
+spending anything on. Recorded so a later session knows what it is paying for
+rather than re-measuring.
+
+## 11. The counts that were removed from `docs/testing.md`
+
+That file opened with "142 server tests and 254 client tests". They were wrong by
+**13 and 60** when this item measured them, having drifted across several items —
+item 19 edited the file and did not touch them — while sitting directly beneath a
+sentence explaining that the two counts are kept separate on purpose.
+
+They are now **gone rather than corrected**, because correcting them only resets
+the clock. The number informs no decision; deriving it would mean parsing runner
+output into a document to keep true a figure nobody acts on, and asserting it in a
+test would redden on every new test by design.
+
+> **A hand-maintained figure sitting under a comment explaining why it is
+> hand-maintained is worse than no figure, because the comment lends it
+> authority.**
+
+Same class as the defects these two items added checks for — a claim that looks
+verified, is not, and is believed for that reason. In prose instead of SQL.
