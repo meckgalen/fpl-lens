@@ -599,3 +599,12 @@ on. Twenty-four files:
   Eight cases (`null`/`light`/`dark`/`system` × both device states) plus a ninth
   for an unrecognised value, asserted on the resulting class rather than on not
   throwing, since the script's catch-all would swallow a broken rule.
+
+**What no client test reaches, and must not be assumed from one.**
+`App.theme.test.tsx` dispatches a synthetic `change` on the suite's own
+`matchMedia` stub. That pins the **handler wiring** and says nothing about
+whether a real `MediaQueryList` emits — a distinct property, checked in the
+browser through CDP `Emulation.setEmulatedMedia` and recorded in
+`docs/items/item-23-system-theme.md`. Treating the stub test as covering it is a
+mistake this item made once. The same shape applies to anything else the stub
+stands in for.

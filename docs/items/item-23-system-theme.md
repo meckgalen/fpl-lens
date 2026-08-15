@@ -216,14 +216,41 @@ resolving dark would leak the class into every test after it.
   `test/prepaint.test.ts`, 10 in `App.theme.test.tsx` (`App.test.tsx` unchanged).
 - `client/src/components/ui/Switch.tsx` deleted — one importer, no test.
 
-## Not done, and why
+### The live device flip, against a real MediaQueryList
 
-**The live OS flip was not performed.** Confirming that the app follows a
-`prefers-color-scheme` change without a reload means changing the desktop's
-appearance setting, which is the user's own system configuration rather than
-something this session should alter unilaterally. The mechanism is pinned by the
-mutation table above — the subscription, the ignore branch and the teardown all
-have a test that reddens without them — but the end-to-end OS check is
-outstanding and is a two-minute manual step: open the app under System, flip the
-OS theme, confirm it follows; then pick Light and flip again, confirming it does
-not.
+**This is a property the suite structurally cannot reach, and the first pass of
+this item wrongly treated the unit test as covering it.** `App.theme` #6
+dispatches a synthetic `change` on our own stub, so it pins the **handler
+wiring** — that a listener is attached and does the right thing when called. It
+says nothing about whether a real `MediaQueryList` emits. The production
+first-visit check proved `THEME_QUERY` **matches at load**, which is a third,
+different property.
+
+Driven through CDP `Emulation.setEmulatedMedia` — the method DevTools' Rendering
+panel calls for "Emulate CSS `prefers-color-scheme`" — against headless Chrome on
+the dev server, so the renderer re-evaluates the query and dispatches genuine
+events. **11/11.**
+
+The instrument is gated before any app assertion, and **the gate caught a fault
+in it**: the first run counted one event across two flips and stopped. Headless
+had inherited this machine's dark OS setting, so the opening `emulate('dark')`
+was a no-op emitting nothing — the count was right and the expectation was wrong.
+Forcing a light baseline first makes every later flip a real transition.
+
+| Leg | Observed |
+| --- | --- |
+| System, device dark → light | class `dark` → `""`, `color-scheme` dark → light, bg `rgb(27,26,24)` → `rgb(245,243,239)` |
+| System, suffix | `System · Dark` → `System · Light` |
+| Explicit Light, device → dark | class **stayed `""`** with `matchMedia` reporting dark |
+| Explicit Light, suffix | still tracked the device, `System · Dark` → `System · Light` |
+
+Two guards make those readings mean something. A **load token** stamped on
+`window` was unchanged throughout, so nothing was a reload. And an
+**independent listener** on the real `MediaQueryList`, separate from the app's,
+counted **4 → 6** across the explicit-Light leg — proving the device genuinely
+flipped while the theme did not move. Without that count the negative assertion
+would be satisfied by an absence of stimulus, which is the same vacuity that
+change 1 removed from the unit test.
+
+That last row also confirms change 1 end to end: the suffix keeps tracking the
+device under an explicit pick **because** the subscription is unconditional.

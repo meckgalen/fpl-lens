@@ -311,3 +311,6 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       copy — over eight cases plus an unrecognised value, gated on a non-empty
       extraction so a stale regex cannot pass on nothing. jsdom has no
       `matchMedia` at all, so the stub gated all 14 existing `App.test.tsx` tests.
+      The live device flip is checked through CDP `Emulation.setEmulatedMedia`,
+      **not** by the stub test, which pins handler wiring rather than that a real
+      `MediaQueryList` emits; its instrument gate caught a fault in itself.
