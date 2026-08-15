@@ -6,6 +6,7 @@ import { BootstrapContext, nextGameweek } from './lib/bootstrap';
 import { FOCUS_RING, cn } from './lib/cn';
 import { Switch } from './components/ui/Switch';
 import { Countdown } from './components/Countdown';
+import { Logo } from './components/Logo';
 import Dashboard from './pages/Dashboard';
 import Players from './pages/Players';
 import Fixtures from './pages/Fixtures';
@@ -206,9 +207,7 @@ export default function App() {
       <div className="flex h-screen overflow-hidden bg-background text-foreground">
         <aside className="w-56 flex-shrink-0 flex flex-col bg-sidebar border-r border-sidebar-border transition-colors duration-300">
           <div className="flex items-center gap-2.5 px-5 py-5 border-b border-sidebar-border">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-display font-bold text-[13px] tracking-tight flex-shrink-0">
-              FL
-            </div>
+            <Logo className="w-8 h-8 text-primary" />
             <span className="font-display font-semibold text-[15.5px] text-sidebar-foreground">FPL Lens</span>
           </div>
 

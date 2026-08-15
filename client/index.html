@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FPL Lens</title>
+
+    <!--
+      The lens mark at tab size. The SVG is the 16px variant — no highlight,
+      thickened strokes — and carries its own prefers-color-scheme rule, since a
+      favicon has no element to inherit the theme's indigo from.
+
+      The PNG is the 48px variant rasterised, because iOS ignores SVG favicons
+      and does not composite a transparent one onto anything sensible.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 
