@@ -313,4 +313,8 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       `matchMedia` at all, so the stub gated all 14 existing `App.test.tsx` tests.
       The live device flip is checked through CDP `Emulation.setEmulatedMedia`,
       **not** by the stub test, which pins handler wiring rather than that a real
-      `MediaQueryList` emits; its instrument gate caught a fault in itself.
+      `MediaQueryList` emits; its instrument gate caught a fault in itself, and
+      it is checked in as `scripts/theme-emulation-check.mjs`, manual like item
+      22's audit. The native-dropdown check is recorded as a **proxy**: the popup
+      is drawn by the OS outside the page, so computed `color-scheme` is the
+      ceiling for automated evidence.

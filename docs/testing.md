@@ -603,8 +603,34 @@ on. Twenty-four files:
 **What no client test reaches, and must not be assumed from one.**
 `App.theme.test.tsx` dispatches a synthetic `change` on the suite's own
 `matchMedia` stub. That pins the **handler wiring** and says nothing about
-whether a real `MediaQueryList` emits — a distinct property, checked in the
-browser through CDP `Emulation.setEmulatedMedia` and recorded in
-`docs/items/item-23-system-theme.md`. Treating the stub test as covering it is a
-mistake this item made once. The same shape applies to anything else the stub
-stands in for.
+whether a real `MediaQueryList` emits — a distinct property. The production
+first-visit check proves `THEME_QUERY` **matches at load**, which is a third
+property again. Item 23 collapsed all three into the stub test once; treating
+that test as covering the others is the mistake to avoid, and the same shape
+applies to anything else a stub stands in for.
+
+## Manual instruments — deliberately NOT in `npm test`
+
+Two checked-in scripts measure things the runners cannot, and **neither is wired
+into the suite, by design**. Both need a browser; one also needs a debugging port
+and a running dev server. Wiring either into `npm test` makes the suite depend on
+Chrome, which fails in any environment that has none — and the repair that
+follows a red suite is usually to delete the check, losing the only evidence for
+a property nothing else covers.
+
+- `scripts/viewport-audit.js` — item 22's narrow-viewport audit. Pasted into a
+  tab and driven from the console. `preflight()` must pass first: it asserts
+  media queries resolve against the iframe rather than the host window, and
+  reproduces item 13's recorded 1440 figures. A divergence there is an
+  **instrument fault**, not a finding.
+
+- `scripts/theme-emulation-check.mjs` — item 23's theme check, driving CDP
+  `Emulation.setEmulatedMedia` (the method DevTools' Rendering panel calls) so a
+  real `MediaQueryList` emits real events. **Requires Chrome started with
+  `--remote-debugging-port=9222` and a dev server on :5199**; the usage block in
+  the file has the exact commands, and both are overridable by env var. Exit 0
+  pass, 1 assertion failed, **2 instrument fault**. Its gate is not a formality:
+  headless inherits the host's OS appearance, so on a dark machine an opening
+  `emulate('dark')` is a silent no-op and the event count reads low — which is
+  how the trap was found. A low count means suspect the baseline before
+  suspecting the app.

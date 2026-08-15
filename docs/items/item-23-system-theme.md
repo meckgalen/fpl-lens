@@ -156,6 +156,24 @@ Dev server for the interaction, production preview for first paint.
   device — requirement 4, no migration.
 - All four pages in dark, `pgOverflow` 0 on each.
 
+### The native-control check is a PROXY, and did not pass as written
+
+The stated check was "open the season `<select>` in dark mode and confirm the
+native dropdown renders dark". **What was actually measured is `color-scheme`
+computing to `dark` on `<html>`** — which is the *input* to the native behaviour,
+not the behaviour.
+
+The distinction is not pedantry: the popup is drawn by the OS **outside the
+page**, so it is in no screenshot, no DOM query and no CDP evaluation. There is
+no automated observation of it available at any effort, which makes the computed
+value the **ceiling for automated evidence** here rather than a shortcut taken.
+
+So: `color-scheme: dark` is confirmed to reach the element, and everything
+downstream of that is Chrome's and the platform's. If the dropdown ever renders
+light under a dark page, this record should not be read as having ruled it out —
+confirming the rendering itself takes a human looking at an open dropdown, which
+is a two-second check nobody has done.
+
 ### Item 22's boundary does not move
 
 `color-scheme: dark` can change native scrollbar metrics, and item 22's `lg`
@@ -229,7 +247,15 @@ different property.
 Driven through CDP `Emulation.setEmulatedMedia` — the method DevTools' Rendering
 panel calls for "Emulate CSS `prefers-color-scheme`" — against headless Chrome on
 the dev server, so the renderer re-evaluates the query and dispatches genuine
-events. **11/11.**
+events. **11/11.** Checked in as `scripts/theme-emulation-check.mjs`, beside
+item 22's audit and manual for the same reasons; `docs/testing.md` records what
+it needs so nobody wires it into `npm test`.
+
+**What it reaches and what it does not.** Real events on real `MediaQueryList`
+objects, which is the layer the app touches. It does **not** exercise the
+OS-to-browser link — how Chrome learns the desktop changed — which is Chrome's
+own code and correctly out of scope. Written down so the emulation reads as the
+right instrument for this layer rather than as a compromise.
 
 The instrument is gated before any app assertion, and **the gate caught a fault
 in it**: the first run counted one event across two flips and stopped. Headless
