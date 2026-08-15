@@ -6,6 +6,46 @@
     <title>FPL Lens</title>
 
     <!--
+      The theme, applied before first paint.
+
+      Without this the `dark` class lands in React's first effect, so a dark user
+      sees a light page on every reload. Adding a `system` default made that
+      worse rather than better: a dark device would flash light on a FIRST visit
+      too, having never chosen anything.
+
+      What it buys depends on the build, which is worth knowing before measuring
+      it. `index.css` is imported from `main.tsx`, so in dev Vite injects it
+      through JavaScript and a flash remains whatever this script does. The
+      production build extracts it to a render-blocking `<link>` in this head,
+      and only there is the class already on `<html>` when the first paint
+      happens. Check it against `npm run build && npm run preview`.
+
+      THE RULE BELOW IS DUPLICATED from `readStoredMode` and `resolveTheme` in
+      `src/lib/theme.ts`. It has to be: this runs before any module loads and so
+      cannot import. Change one side and change the other —
+      `src/test/prepaint.test.ts` extracts this script from this file and fails
+      if the two disagree on any case.
+
+      The unrecognised-value fallback is the `raw === …` chain, not the catch.
+      The catch is for localStorage being unavailable at all (private mode,
+      cookies disabled), which is a different failure: a throw here would leave
+      the document with no class and no error anyone would think to look for.
+    -->
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem('fpl-theme');
+          var mode = raw === 'light' || raw === 'dark' || raw === 'system' ? raw : 'system';
+          var dark =
+            mode === 'system'
+              ? window.matchMedia('(prefers-color-scheme: dark)').matches
+              : mode === 'dark';
+          document.documentElement.classList.toggle('dark', dark);
+        } catch (e) {}
+      })();
+    </script>
+
+    <!--
       The lens mark at tab size. The SVG is the 16px variant — no highlight,
       thickened strokes — and carries its own prefers-color-scheme rule, since a
       favicon has no element to inherit the theme's indigo from.

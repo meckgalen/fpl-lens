@@ -570,3 +570,32 @@ on. Twenty-four files:
   because the only club available there is the previously selected season's.
   That is the stale-snapshot bug the partial header exists to prevent, arriving
   as an image; it has its own test and its own mutation.
+- `client/src/lib/theme.test.ts` — the resolution rule, away from React. The
+  load-bearing case is the one that can only fail in one direction:
+  `resolveTheme('light', true) === 'light'`. An implementation that ignored the
+  mode and always returned the device's answer agrees with the `system` cases on
+  both rows, so the explicit-mode pair has to be exercised rather than trusted to
+  fall out of the happy path. Plus `readStoredMode(null) === 'system'` — the
+  first-visit default — and the structural fallback for an unrecognised value.
+- `client/src/App.theme.test.tsx` — the three modes at shell level: what only the
+  shell can show, which is that the **mode** reaches localStorage rather than
+  what it resolved to, that the device subscription is live, and that it is torn
+  down. Two of its ten are shaped by traps. *stores system itself* seeds an
+  explicit `light` **before** clicking System, because starting from nothing
+  stored makes the click a no-op and the assertion reads the mount. And *does not
+  follow an OS change once a theme is picked explicitly* is only a real test
+  because `App` subscribes unconditionally — detached, `prefersDark` never moves
+  and it passes against the mutation it exists to catch. Unsubscription is
+  asserted as `listenerCount() === 0`, the property, not a spy on
+  `removeEventListener`, which would go green for the right listener removed from
+  the wrong object.
+- `client/src/test/prepaint.test.ts` — the inline pre-paint script in
+  `client/index.html` against `lib/theme.ts`. The duplication is forced (a script
+  running before any module cannot import one), so this is what stops it drifting
+  silently. **The script is extracted from the shipped HTML at run time and never
+  pasted** — a pasted copy pins the copy. The non-empty extraction is asserted in
+  `beforeAll`, before any case runs: a regex that stops matching would otherwise
+  leave every case running nothing and reporting passes for a file it never read.
+  Eight cases (`null`/`light`/`dark`/`system` × both device states) plus a ninth
+  for an unrecognised value, asserted on the resulting class rather than on not
+  throwing, since the script's catch-all would swallow a broken rule.

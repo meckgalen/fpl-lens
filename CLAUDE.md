@@ -1044,11 +1044,12 @@ around it.
   seasons**: there is nothing on the other side to compare them to.
 - `Player` carries no `birth_date` and `Team` no `code`, both of which exist in
   the database. They are not in any response because nothing renders them.
-- The UI has a working light/dark toggle, but neither theme is the one in Design
-  Decisions: light is cream (`36 22% 95%`), dark is a warm near-black
-  (`30 5% 10%`), and the accent is indigo (`228 36% 42%`) rather than
+- The UI has a working light/dark/system theme control, but neither theme is the
+  one in Design Decisions: light is cream (`36 22% 95%`), dark is a warm
+  near-black (`30 5% 10%`), and the accent is indigo (`228 36% 42%`) rather than
   `#0f0f23`/`#00ff87`. Reconcile the spec with the build before any styling work
-  — the decision of which one wins is still open.
+  — the decision of which one wins is still open. Item 23 changed **which** theme
+  applies and never what the tokens are, so this is untouched by it.
 - **The Players list shows the 2026-27 roster with zero in every stat column**,
   which is honest and is not what the page is for. The recorded intent is a
   labelled split — this season's price and ownership beside the last completed
@@ -1336,6 +1337,17 @@ One item per session, committed between each. **The record of every item is
       path, not bistable. Two levers were measured and **rejected**: the pinned
       column is already at min-content at 380, and `rootMargin` is
       viewport-independent.
+- [x] **23. A "System" option on the theme toggle.** — the persisted value is the
+      **mode**, never what it resolved to: storing `dark` where the user picked
+      System paints identically and silently stops the app tracking the device.
+      The media query is subscribed **unconditionally**, not only under `system`
+      — detached, the explicit-pick test passes because nothing moved, against
+      the very mutation it exists to catch, and both designs were measured.
+      Persistence lives in the click handler, not an effect, or "nothing stored"
+      is unreachable after the first load. `color-scheme` needs `:root.dark` to
+      beat `:root` on specificity rather than source order. The pre-paint script
+      must duplicate the rule, so a test extracts it from the shipped
+      `index.html` rather than a pasted copy, gated on a non-empty extraction.
 
 ## Deferred
 

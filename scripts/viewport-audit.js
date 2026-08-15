@@ -223,18 +223,23 @@ window.__VPAUDIT = (function () {
   /**
    * Horizontal overflow, split by whether the element was meant to scroll.
    *
-   * **One known finding is expected and is NOT a defect — do not go fixing it.**
-   * Below `lg` the theme `Switch` reports as unintended overflow at roughly
-   * `cw=30 sw=43`, on every page, at 380/768/1024. That 13px is its own
-   * `::before` hit area: the control paints 18x34 and takes 44x60 to the finger,
-   * which item 22 added deliberately because the switch's size is its design and
-   * a 44px pill would read as a different component. A pseudo-element that
-   * extends past its box is exactly what that technique looks like from here.
-   * Nothing is clipped and nothing is unreachable.
+   * **Item 22's expected residual is GONE as of item 23, and that is not a fix
+   * to go looking for.** It used to report the theme `Switch` as unintended
+   * overflow at roughly `cw=30 sw=43` on every page — the 13px of its `::before`
+   * hit area, a deliberate 44x60 target on an 18x34 control. Item 23 replaced
+   * that switch with a three-segment theme control and deleted the component, so
+   * the pseudo-element and its finding went with it. The segments are ordinary
+   * buttons that report `cw === sw`.
    *
-   * It is called out at the point the finding is PRODUCED, rather than only in
+   * Measured at 380 on Players after the change: `pgOv` 569 and worst 590, both
+   * exactly item 22's recorded figures, with `unint` 2 -> 1. The one that
+   * remains is the Players table overflowing its card by 590px, which is item
+   * 10's deliberate no-overflow Card scrolling the document.
+   *
+   * Kept at the point the finding is PRODUCED, rather than only in
    * `docs/items/item-22-narrow-viewports.md`, so the next session does not spend
-   * an hour investigating its predecessor's fix.
+   * an hour investigating its predecessor's fix — or, now, hunting for a
+   * residual that is supposed to be absent.
    */
   function overflow(win, doc, viewportW) {
     const intended = [];

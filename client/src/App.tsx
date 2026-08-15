@@ -4,7 +4,8 @@ import { ApiError, fetchBootstrap } from './services/api';
 import type { BootstrapData, Player } from './types/fpl';
 import { BootstrapContext, nextGameweek } from './lib/bootstrap';
 import { FOCUS_RING, cn } from './lib/cn';
-import { Switch } from './components/ui/Switch';
+import { THEME_KEY, THEME_LABELS, THEME_MODES, THEME_QUERY, readStoredMode, resolveTheme } from './lib/theme';
+import type { ThemeMode } from './lib/theme';
 import { Countdown } from './components/Countdown';
 import { Logo } from './components/Logo';
 import Dashboard from './pages/Dashboard';
@@ -65,7 +66,14 @@ const NAV: { id: PageId; label: string; icon: ReactNode }[] = [
 export default function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [dark, setDark] = useState(() => localStorage.getItem('fpl-theme') === 'dark');
+  /**
+   * The theme is a MODE, not a boolean, and the two pieces of state below are
+   * the choice and the device — deliberately separate. `resolveTheme` is the
+   * only thing that combines them; see `lib/theme.ts` for why persisting the
+   * combination instead would silently end the feature.
+   */
+  const [mode, setMode] = useState<ThemeMode>(() => readStoredMode(localStorage.getItem(THEME_KEY)));
+  const [prefersDark, setPrefersDark] = useState(() => window.matchMedia(THEME_QUERY).matches);
   const [page, setPage] = useState<PageId>(() => (localStorage.getItem('fpl-page') as PageId) || 'dashboard');
 
   /**
@@ -99,10 +107,52 @@ export default function App() {
    */
   const [detailCode, setDetailCode] = useState<number | null>(null);
 
+  /**
+   * Track the device, **unconditionally and not only under `'system'`**.
+   *
+   * Subscribing only while the mode is `'system'` is the obvious shape and it
+   * is wrong, for a testing reason that is really a correctness reason. With
+   * the listener detached under an explicit pick, the device flipping leaves
+   * `prefersDark` frozen at whatever it was — so "an explicit Light does not
+   * follow the device" holds because nothing *moved*, not because anything
+   * ignored it. The test for it then passes against an implementation that
+   * always reads the device, which is the exact mutation it exists to catch.
+   *
+   * Keeping the subscription live makes `prefersDark` genuinely flip under an
+   * explicit mode, and `resolveTheme` ignoring it is then a real branch being
+   * exercised rather than a value that never changed. It also keeps the
+   * `System · Dark` hint on the third segment honest at all times.
+   *
+   * The cleanup is still what runs on unmount, which is the other half of the
+   * requirement and is asserted directly by listener count.
+   */
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark);
-    localStorage.setItem('fpl-theme', dark ? 'dark' : 'light');
-  }, [dark]);
+    const query = window.matchMedia(THEME_QUERY);
+    setPrefersDark(query.matches);
+    const onChange = (e: MediaQueryListEvent) => setPrefersDark(e.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+
+  /**
+   * Paint the resolved theme. **This effect does not persist anything.**
+   *
+   * Writing the key here would write it on mount, which makes "nothing stored"
+   * unreachable after the very first load: every returning visitor would carry
+   * an explicit record of a default they never chose. It would also fire again
+   * on an OS flip, rewriting a key whose value — the *choice* — did not change.
+   * Persistence belongs to the click that makes the choice, and lives in
+   * `selectTheme` below.
+   */
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', resolveTheme(mode, prefersDark) === 'dark');
+  }, [mode, prefersDark]);
+
+  /** The only writer of the theme key: a choice was made, so record it. */
+  const selectTheme = (next: ThemeMode) => {
+    setMode(next);
+    localStorage.setItem(THEME_KEY, next);
+  };
 
   useEffect(() => {
     localStorage.setItem('fpl-page', page);
@@ -354,8 +404,49 @@ export default function App() {
               'lg:order-none lg:ml-0 lg:px-5 lg:py-4 lg:border-t lg:border-sidebar-border lg:justify-between'
             )}
           >
-            <span className="text-xs text-muted-foreground">{dark ? 'Dark' : 'Light'} mode</span>
-            <Switch checked={dark} onCheckedChange={setDark} />
+            {/*
+              A segmented control rather than a switch or a cycling button,
+              because with three modes the control has to show which is
+              SELECTED and that is not the same as which is applied: `system`
+              on a dark device and an explicit `dark` paint identically, and a
+              control showing only the result cannot tell them apart.
+
+              `aria-pressed` toggle buttons rather than `role="radio"`. A
+              radiogroup carries arrow-key expectations and a roving tabindex;
+              three plain buttons are each Tab-reachable with a real accessible
+              name, which is what item 3 argued for. The switch this replaces
+              had no accessible name at all.
+            */}
+            <div role="group" aria-label="Theme" className="flex items-center gap-0.5">
+              {THEME_MODES.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  aria-pressed={mode === m}
+                  onClick={() => selectTheme(m)}
+                  className={cn(
+                    'rounded-md px-2 py-1 text-[11px] transition-colors',
+                    FOCUS_RING,
+                    mode === m
+                      ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+                      : 'text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/40'
+                  )}
+                >
+                  {/* The system segment names where the device currently lands,
+                      so `system` is legible as a standing instruction rather
+                      than as a third colour. It reads the same whichever
+                      segment is selected — it describes the device, not the
+                      choice — which is only true because the subscription
+                      above is unconditional.
+
+                      Written out rather than left to a `capitalize` class: this
+                      text IS the button's accessible name, and a CSS transform
+                      would make the name and the visible label two different
+                      strings that only agree in a browser. */}
+                  {THEME_LABELS[m](prefersDark)}
+                </button>
+              ))}
+            </div>
           </div>
         </aside>
 

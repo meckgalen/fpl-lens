@@ -296,3 +296,18 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       and `rootMargin` buys the same ~9.7 rows at both widths. The audit caught
       **four faults in itself**, one of them after being reported as fact, which
       is the argument for the checked-in instrument.
+- **23. A "System" option on the theme toggle.** →
+      `item-23-system-theme.md` — the persisted value is the **mode**, never what
+      it resolved to: store `dark` where the user picked System and the page
+      paints identically while the app silently stops tracking the device.
+      Subscribing to the media query **unconditionally** rather than only under
+      `system` is what makes the explicit-pick test real — detached, it passes
+      because nothing moved, against the very mutation it exists to catch, and
+      that was **measured** both ways. Persistence sits in the click handler, not
+      the effect, or "nothing stored" is unreachable after the first load.
+      `color-scheme` needs `:root.dark` to beat `:root` on specificity rather
+      than on source order. The pre-paint script duplicates the rule because it
+      must, and a test extracts it from the shipped `index.html` — never a pasted
+      copy — over eight cases plus an unrecognised value, gated on a non-empty
+      extraction so a stale regex cannot pass on nothing. jsdom has no
+      `matchMedia` at all, so the stub gated all 14 existing `App.test.tsx` tests.

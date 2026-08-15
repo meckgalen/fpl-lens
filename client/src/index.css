@@ -24,6 +24,18 @@
     --input: 33 13% 87%;
     --ring: 228 36% 42%;
     --radius: 0.75rem;
+    /*
+     * The native half of the theme: scrollbars, form controls, and the season
+     * `<select>`'s dropdown, none of which read our tokens. Without this the
+     * dropdown opens white over a dark page and Firefox — which gets none of
+     * the `::-webkit-scrollbar` rules below — keeps a light scrollbar throughout.
+     *
+     * Driven by the same `.dark` class as everything else rather than set as an
+     * inline style from JavaScript. An inline style outranks the stylesheet
+     * permanently, so it would have to be rewritten on every theme change to
+     * avoid going stale — a third place the rule lives.
+     */
+    color-scheme: light;
     /* Table row surfaces. See the block below `.dark` for why these are four
        opaque tokens rather than an alpha on `muted`. */
     --row: 36 50% 99%;
@@ -72,6 +84,23 @@
     --row-alt: 30 5% 16.5%;
     --row-hover: 30 6% 20%;
     --row-head: 30 6% 23%;
+  }
+
+  /*
+   * `:root.dark`, not `.dark`, and the extra `:root` is load-bearing.
+   *
+   * `:root` and `.dark` are both specificity 0-1-0, so a bare `.dark` would beat
+   * the `color-scheme: light` above only by source order — the same
+   * equal-specificity race as the two shadow utilities in `lib/rowSurface.ts`,
+   * where every class the test asserts is present and one silently loses in the
+   * browser. 0-2-0 here means the winner is decided by the cascade rather than
+   * by which rule Tailwind happened to emit second.
+   *
+   * Only `color-scheme` is raised. The token block above keeps its own
+   * arrangement, which predates this item.
+   */
+  :root.dark {
+    color-scheme: dark;
   }
 
   /*
