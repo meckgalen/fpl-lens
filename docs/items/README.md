@@ -258,3 +258,22 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       whether the set is empty and the aggregate never sees the join. Also
       holds an open question, with two coherent readings, about
       `points_per_game` reading `0` for a player who never appeared.
+
+- [21. Column naming, and one field that was doing two jobs.](item-21-column-naming.md)
+      — `Hauls`/`Floors` became `Pts10+`/`Pts4+`, labels only: the **keys are the
+      persisted selection**, so renaming one silently discards that column from
+      every stored choice. Trimming the descriptions collided with the radar
+      guard (7 of 11 axes would have fallen under its floor), so the hover
+      **split** — `gloss` for the Players header, `description` for the spoke,
+      which has no header row and must teach rather than expand. `description` is
+      now bounded to the eleven axes **in both directions**; the converse clause
+      is the half that makes it an invariant, since after the split a stray
+      `description` is read by no surface at all and cannot be seen to be wrong.
+      The picker's reasons compress to tags produced in the **same branch** as
+      the sentence, and three of six branches decline a tag rather than say
+      something false — `Own%`'s sentence is about our pipeline, not FPL's data.
+      A finding that changed the browser check: the non-monotonic defensive trio
+      has **no live picker entry**, so its range-list tag is unit-tested only.
+      Also: a summary line generalising over cases must be true of **every** case
+      — the first framing line was false for two of the five live tags — and
+      `entryExact`'s matcher had been silently mis-escaping since it was written.

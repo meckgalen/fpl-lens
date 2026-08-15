@@ -104,8 +104,8 @@ files, one of which touches no database — see `comparison/thresholds.test.ts`:
   (`hauls_started` a real 0, blanked on the client by `perStart`).
 
   **`describe('the 1.00 bound')` contains an assertion no current mutation can
-  redden, and that is deliberate.** `hauls_started <= starts` is what the `H/St`
-  description promises on screen, but no player in any season out-hauls his
+  redden, and that is deliberate.** `hauls_started <= starts` is what the
+  `Pts10+/St` gloss promises on screen, but no player in any season out-hauls his
   start count, so only the `floors_started` twin fires under the obvious
   mutation. The witness counts are in the test's own doc comment and in
   `docs/items/item-19-hauls-and-floors.md`; do not delete the clause for lacking
@@ -219,8 +219,8 @@ hits-per-start including the `null / 5 === 0` coercion);
 gained `St`/`DCH` and the assertion that `St` is **not** averaged.
 
 Item 19 added four more picker entries and the case that pulls in two
-directions on one screen: on 2026-27 `Hauls` and `Floors` stay **enabled** and
-render `0` while `H/St` and `F/St` are **disabled** — the counts read a NOT NULL
+directions on one screen: on 2026-27 `Pts10+` and `Pts4+` stay **enabled** and
+render `0` while `Pts10+/St` and `Pts4+/St` are **disabled** — the counts read a NOT NULL
 column and have no unmeasured state, the ratios divide by `starts` and do. Note
 `Players.columns.test.tsx`'s GW16 count went from four entries to **six**, and
 that number is meant to move whenever a column starts depending on `starts`;
@@ -259,8 +259,12 @@ on. Twenty-four files:
 - `client/src/lib/playerColumns.test.ts` — how the picker describes the seasons
   a column *is* recorded in, which is prose generated from data and so is wrong
   in ways a type checker cannot see. Two shapes have to stay distinguishable:
-  **"recorded from X"** (arrived and still being recorded) and **"recorded X to
-  Y"** (recorded, then stopped). Holds the unplayed-newest-season case that
+  **"from X"** (arrived and still being recorded) and **"X to Y"** (recorded,
+  then stopped). Since item 21 `describeRecordedIn` returns the phrase **without
+  a verb** and the two consumers add what they need — the sentence writes
+  `· recorded {phrase}.`, the picker's tag renders it bare — so the file also
+  pins the tag branches, and above all the three that decline a tag rather than
+  compress into something false. Holds the unplayed-newest-season case that
   shipped wrong — no handwritten fixture catches it, because a handwritten
   fixture stops at a season with data — its opposite, and the
   recorded/dropped/recorded-again shape that the defensive trio really has and
@@ -443,6 +447,14 @@ on. Twenty-four files:
   items 13 and 14 settled for the two derived axes. The null-not-fallback case is
   the clause that stops someone tidying `axisDefinition` into symmetry with the
   Players list.
+
+  **Item 21 added the converse, and it is a different kind of clause**: no
+  `PLAYER_COLUMNS` entry outside `COMPARISON_AXES` may carry a `description` at
+  all. The others ask whether each axis is explained; that one bounds the field.
+  After item 21 moved the Players header hover to `gloss`, a `description` on a
+  non-axis column is read by **no surface**, so it cannot be seen to be wrong and
+  duplicates the `gloss` beside it — the two-fields-one-fact drift the split
+  exists to prevent, arriving through the door the split opened.
 
 - `client/src/lib/fixtures.test.ts` — where the Fixtures page opens, and how it
   steps. Every stepping test uses 2019-20 or 2022-23, because a `1..38` loop and

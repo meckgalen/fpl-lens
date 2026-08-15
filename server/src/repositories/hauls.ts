@@ -81,7 +81,7 @@ export type PointThreshold = (typeof POINT_THRESHOLDS)[keyof typeof POINT_THRESH
  *
  * **`startedOnly` gates the count on `starts = 1`, and it is the whole
  * difference between the count columns and the ratio numerators.** `Hauls`
- * counts every fixture; `H/St`'s numerator counts only started ones, which is
+ * counts every fixture; `Pts10+/St`'s numerator counts only started ones, which is
  * what bounds that ratio at 1.00. **`DCH/St` does the opposite** — its
  * numerator is ungated and it can exceed 1 — so this is deliberately not the
  * same fragment, and copying between them is a bug in either direction.

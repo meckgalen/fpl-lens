@@ -1311,6 +1311,16 @@ One item per session, committed between each. **The record of every item is
       expires degrades into passing on nothing, the same vacuous truth one layer
       up, and that is **measured**: with only the premise assertion removed it
       goes green on a season the branch no longer describes.
+- [x] **21. Column naming, and one field that was doing two jobs.** — `Hauls`
+      became `Pts10+`; the **keys did not move**, because they are the persisted
+      selection. Trimming the descriptions collided with the radar guard, so the
+      hover **split**: `gloss` for the Players header, `description` for the
+      spoke, bounded to the eleven axes **in both directions** — the converse is
+      the half that makes it an invariant rather than a description of today. The
+      picker's reasons compress to tags from the **same branch** that builds the
+      sentence, and three branches decline one rather than say something false. A
+      summary line generalising over cases must be **true of every case**: the
+      first framing line was false for two of five tags.
 
 ## Deferred
 

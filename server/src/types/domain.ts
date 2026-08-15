@@ -131,7 +131,7 @@ export interface PlayerSeasonTotals {
   floors: number;
   /**
    * The same two counts restricted to fixtures the player STARTED — the
-   * numerators of `H/St` and `F/St`, and the reason those ratios are bounded at
+   * numerators of `Pts10+/St` and `Pts4+/St`, and the reason those ratios are bounded at
    * 1.00 where `DCH/St` is not.
    *
    * NULL where `starts` is not measured across the whole player-season (every

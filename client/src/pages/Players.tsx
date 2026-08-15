@@ -382,7 +382,7 @@ export default function Players({ onOpenDetail }: { onOpenDetail: (player: Playe
                   // The fallback is right HERE and deliberately absent on the
                   // comparison chart, whose captions have no table around them
                   // — see `axisDefinition`.
-                  title={c.description ?? c.title}
+                  title={c.gloss ?? c.title}
                   className={`text-right sticky top-0 ${Z_HEADER} ${
                     sortCol?.key === c.key ? 'text-foreground' : ''
                   }`}

@@ -414,7 +414,7 @@ export async function listPlayerTotals(
             COALESCE(${pointCountSql('pg', POINT_THRESHOLDS.FLOOR, { startedOnly: false })}, 0)::int
               AS floors,
 
-            -- The ratio numerators, gated on starts = 1 so H/St and F/St are
+            -- The ratio numerators, gated on starts = 1 so Pts10+/St and Pts4+/St are
             -- bounded at 1.00. DCH/St above is deliberately NOT gated and can
             -- exceed 1; do not unify these.
             --

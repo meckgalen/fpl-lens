@@ -19,15 +19,24 @@ interface Props {
  * **Unavailable columns are disabled, not hidden**, and that is the whole point
  * of the component rather than a styling choice. Hiding them makes the app look
  * like it has never heard of expected goals when you select 2016-17; disabling
- * them with "Not recorded in 2016-17 · recorded from 2022-23" teaches the shape
- * of the data. The reason is **visible text, never a `title` attribute** — a
- * tooltip is invisible to a reader who does not think to hover, which is exactly
- * the reader the sentence is for.
+ * them with `from 2022-23` beside the name teaches the shape of the data. The
+ * reason is **visible text, never a `title` attribute** — a tooltip is invisible
+ * to a reader who does not think to hover, which is exactly the reader it is for.
  *
- * The reasons come from `resolveColumn`, which produces a complete sentence
+ * **A tag where one is true, the sentence where it is not.** On 2026-27 every
+ * nullable column is disabled at once, and a dozen full sentences saying the
+ * same thing is a wall rather than an explanation. So `resolveColumn` returns
+ * both forms from the same branch and this renders `tag ?? reason`: the short
+ * form where compressing keeps the claim true, and the sentence where it does
+ * not — the two permanently-unavailable fields, and the two branches with no
+ * season to point at. **Do not give those a tag to make the list uniform.** The
+ * point is that the entry says something true, not that every entry is short.
+ *
+ * Both forms come from `resolveColumn`, which produces a complete sentence
  * without the matrix. So there is no window in which an entry is disabled and
- * unexplained: the matrix only appends a "· recorded from …" clause, and nothing
- * already on screen changes meaning when it arrives.
+ * unexplained: the matrix only adds the "· recorded …" clause and the tag it
+ * shares a derivation with, and nothing already on screen changes meaning when
+ * it arrives.
  */
 export default function ColumnPicker({
   selected,
@@ -80,8 +89,18 @@ export default function ColumnPicker({
           // this z-index exists to avoid.
           className="absolute left-0 top-full mt-1 z-30 w-80 max-h-[26rem] overflow-y-auto rounded-lg border border-border bg-card shadow-lg p-2"
         >
+          {/* Names the season, and has to: `from GW16` is a boundary WITHIN the
+              selected season, and reads as a claim about some other season
+              without it.
+
+              An earlier draft said "a tag says when the stat is recorded;
+              anything else says why". It is false — `no matches yet` and
+              `partly recorded` are both tags and both whys — so it misdescribed
+              two of the five live tags. The split between a tag and a sentence
+              is length, not kind, and this says that instead. */}
           <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
-            Columns unavailable for {availability.season} say why.
+            Greyed-out columns can’t be shown for {availability.season}. Each says why; a few
+            need a full sentence.
           </p>
 
           <ul className="space-y-0.5">
@@ -114,11 +133,19 @@ export default function ColumnPicker({
                       <span className="ml-1.5 text-[11px] text-muted-foreground tabular-nums">
                         {col.label}
                       </span>
-                      {disabled && (
-                        <span className="block text-[11px] text-muted-foreground mt-0.5">
-                          {status.reason}
-                        </span>
-                      )}
+                      {/* A tag sits beside the label, a sentence gets its own
+                          line. Same field either way — `resolveColumn` decides
+                          which exists, and this only decides where it goes. */}
+                      {disabled &&
+                        (status.tag !== undefined ? (
+                          <span className="ml-1.5 text-[11px] text-muted-foreground italic">
+                            {status.tag}
+                          </span>
+                        ) : (
+                          <span className="block text-[11px] text-muted-foreground mt-0.5">
+                            {status.reason}
+                          </span>
+                        ))}
                     </span>
                   </label>
                 </li>

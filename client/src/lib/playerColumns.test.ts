@@ -10,12 +10,19 @@
  * Two shapes have to stay distinguishable, and the whole file is about the
  * boundary between them:
  *
- *   - **"recorded from X"** — the column arrived and is still being recorded.
- *   - **"recorded X to Y"** — the column was recorded and then stopped.
+ *   - **"from X"** — the column arrived and is still being recorded.
+ *   - **"X to Y"** — the column was recorded and then stopped.
  *
  * Getting that wrong does not produce an error or an obviously silly string. It
  * produces a sentence that reads perfectly and asserts something false about the
  * data, which is the failure mode this project keeps refusing to ship.
+ *
+ * **Since item 21 `describeRecordedIn` returns the phrase without a verb**, and
+ * the two consumers add what they need: the sentence writes
+ * `· recorded ${phrase}.`, the picker's tag renders the phrase bare. One
+ * derivation with two renderings, which is why the tag cannot come to describe a
+ * different state than the sentence beside it. The tag branches are pinned at
+ * the foot of this file.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -133,6 +140,16 @@ describe('a column recorded, dropped, and recorded again', () => {
    * The defensive trio's real shape: collected 2016-17 to 2018-19, dropped for
    * six seasons, collected again in 2025-26.
    *
+   * **The expected strings lost their `recorded ` prefix in item 21.** The
+   * function returns the phrase alone and the caller supplies the verb — the
+   * sentence writes `· recorded ${where}.`, the picker's tag uses the phrase as
+   * it stands. One derivation feeding both, rather than the tag being sliced
+   * back off the sentence.
+   *
+   * **This shape is also why the tag is not uniformly short.** It compresses to
+   * a range list and no further: `from 2025-26` would be false about the six
+   * seasons in between, so the tag runs long here and stays true.
+   *
    * "Recorded from 2016-17" would be a flat lie about the six seasons in
    * between, and it is the string a naive implementation produces — first
    * recorded season, still recorded today, so "from". The run-splitting exists
@@ -146,23 +163,23 @@ describe('a column recorded, dropped, and recorded again', () => {
     const recorded = ['2016-17', '2017-18', '2018-19', '2025-26'];
 
     expect(describeRecordedIn(recorded, ALL_SEASONS, '2025-26')).toBe(
-      'recorded 2016-17 to 2018-19, and 2025-26'
+      '2016-17 to 2018-19, and 2025-26'
     );
   });
 
   it('collapses a run of one to a bare season and keeps multi-season runs as ranges', () => {
     expect(describeRecordedIn(['2017-18', '2020-21'], ALL_SEASONS, '2025-26')).toBe(
-      'recorded 2017-18, and 2020-21'
+      '2017-18, and 2020-21'
     );
     expect(
       describeRecordedIn(['2016-17', '2017-18', '2020-21', '2021-22'], ALL_SEASONS, '2025-26')
-    ).toBe('recorded 2016-17 to 2017-18, and 2020-21 to 2021-22');
+    ).toBe('2016-17 to 2017-18, and 2020-21 to 2021-22');
   });
 
   it('lists three runs with a comma between the first two', () => {
     expect(
       describeRecordedIn(['2016-17', '2019-20', '2022-23'], ALL_SEASONS, '2025-26')
-    ).toBe('recorded 2016-17, 2019-20, and 2022-23');
+    ).toBe('2016-17, 2019-20, and 2022-23');
   });
 });
 
@@ -343,7 +360,7 @@ describe('hauls and floors per start', () => {
    *
    * **What differs is the numerator, and only the numerator.** These read
    * `hauls_started` / `floors_started`, which the server gates on `starts = 1`,
-   * so unlike DCH/St they cannot exceed 1.00. Both descriptions say so on
+   * so unlike DCH/St they cannot exceed 1.00. Both glosses say so on
    * screen, which is what makes the bound a promise rather than a detail; it is
    * pinned server-side across every season in `repositories/hauls.test.ts`.
    */
@@ -384,7 +401,7 @@ describe('hauls and floors per start', () => {
   });
 
   it('renders a perfect record as 1.00 and can never exceed it', () => {
-    // The bound the description promises. It is reachable at the top —
+    // The bound the gloss promises. It is reachable at the top —
     // a player who returned 4+ in every start — and unreachable above.
     expect(f.render(player({ floors_started: 12, starts: 12 }))).toBe('1.00');
   });
@@ -446,7 +463,164 @@ describe('describeRecordedIn, directly', () => {
     // not silently produce eleven runs of one.
     const ascending = [...ALL_SEASONS].sort();
     expect(describeRecordedIn(['2022-23', '2023-24'], ascending, '2023-24')).toBe(
-      'recorded from 2022-23'
+      'from 2022-23'
+    );
+  });
+});
+
+/**
+ * The picker's short form, and **which branches decline to produce one**.
+ *
+ * Item 21 compressed the reasons into tags because 2026-27 disables a dozen
+ * columns at once and a dozen sentences is a wall. The interesting assertions
+ * are the negatives: three branches return no tag, and a later tidy-up that
+ * gives them one to make the list uniform is the regression this pins.
+ *
+ * Both forms come off ONE call, so a tag can never describe a different state
+ * than the sentence beside it. That is asserted directly rather than assumed —
+ * each case checks the pair.
+ */
+describe('the tag beside the sentence', () => {
+  const statusOf = (key: string, a: SeasonColumnAvailability, matrix: ColumnHistoryRow[] | null) =>
+    resolveColumn(columnByKey(key)!, a, matrix, ALL_SEASONS);
+
+  const unavailable = (s: ReturnType<typeof resolveColumn>) => {
+    if (s.available) throw new Error('expected the column to be unavailable');
+    return s;
+  };
+
+  it('compresses an unplayed season, keeping the shared sentence intact', () => {
+    // The sentence must stay `noMatchesRecorded`'s: the Dashboard, Comparison
+    // and Fixtures pages render that same string, and only the picker's form is
+    // new. A tag that replaced it would fork one sentence into two.
+    const s = unavailable(
+      statusOf('expected_goals', { season: '2026-27', measured: false, columns: [] }, null)
+    );
+
+    expect(s.tag).toBe('no matches yet');
+    expect(s.reason).toBe('No matches recorded for 2026-27 yet.');
+  });
+
+  it('compresses a mid-season boundary to the round, dropping the season', () => {
+    // `from GW16` is only true because the picker's heading names the season and
+    // an entry is greyed for that season alone. It is also what keeps this
+    // distinguishable from the `from 2022-23` season tag: one is a boundary
+    // WITHIN the selected season, the other points at a different one.
+    const s = unavailable(
+      statusOf(
+        'expected_goals',
+        {
+          season: '2022-23',
+          measured: true,
+          columns: [{ key: 'expected_goals', state: 'partial', measured_from: 16 }],
+        },
+        null
+      )
+    );
+
+    expect(s.tag).toBe('from GW16');
+    expect(s.reason).toBe('Only recorded from GW16 in 2022-23.');
+  });
+
+  it('compresses an absent column to the season it arrived in', () => {
+    const matrix: ColumnHistoryRow[] = [
+      { season: '2016-17', key: 'defensive_contribution', state: 'none', measured_from: null },
+      { season: '2025-26', key: 'defensive_contribution', state: 'full', measured_from: null },
+    ];
+    const s = unavailable(
+      statusOf(
+        'defensive_contribution',
+        {
+          season: '2016-17',
+          measured: true,
+          columns: [{ key: 'defensive_contribution', state: 'none', measured_from: null }],
+        },
+        matrix
+      )
+    );
+
+    // The tag is the phrase, the sentence is the phrase with a verb in front —
+    // one derivation, which is the property that stops the two disagreeing.
+    expect(s.tag).toBe('from 2025-26');
+    expect(s.reason).toBe('Not recorded in 2016-17 · recorded from 2025-26.');
+  });
+
+  it('gives the two permanently unavailable fields NO tag', () => {
+    /*
+     * The load-bearing negative. Neither field is season-dependent, and their
+     * sentences are not interchangeable: `Own%`'s says the gap is in OUR
+     * pipeline — the raw manager count is stored for all ten seasons, the
+     * total-managers denominator is not — where `Status`' says the field
+     * describes a live game. A shared `not stored` tag collapses exactly that
+     * distinction, and it is the tidy-up this test exists to turn red.
+     */
+    const a: SeasonColumnAvailability = { season: '2025-26', measured: true, columns: [] };
+
+    const own = unavailable(statusOf('selected_by_percent', a, null));
+    expect(own.tag).toBeUndefined();
+    expect(own.reason).toBe('Ownership percentage is not stored. FPL publishes it live only.');
+
+    const status = unavailable(statusOf('status', a, null));
+    expect(status.tag).toBeUndefined();
+    expect(status.reason).toBe('Live-game field, not stored for a completed season.');
+  });
+
+  it('gives no tag where there is no season to point at', () => {
+    // `none` with no matrix. The sentence is complete and there is nothing for a
+    // tag to say; `not recorded` would be the greying restated.
+    const s = unavailable(
+      statusOf(
+        'expected_goals',
+        {
+          season: '2016-17',
+          measured: true,
+          columns: [{ key: 'expected_goals', state: 'none', measured_from: null }],
+        },
+        null
+      )
+    );
+
+    expect(s.tag).toBeUndefined();
+    expect(s.reason).toBe('Not recorded in 2016-17.');
+  });
+
+  it('keeps a multi-run tag truthful rather than short', () => {
+    /*
+     * The one shape that does NOT compress to a few characters, and the reason
+     * the tag is allowed to run long. A column recorded 2016-17 to 2018-19 and
+     * again in 2025-26 would be described by `from 2025-26` as a lie about six
+     * seasons — so the tag carries the whole range list.
+     *
+     * Reached here through `defensive_contribution` because the real
+     * non-monotonic columns (`tackles` and its two siblings) sit on the career
+     * aggregate rather than the bootstrap and so are not offered columns at all.
+     * Unit tested rather than left to a browser pass that cannot reach it.
+     */
+    const seasons = ['2016-17', '2017-18', '2018-19', '2025-26'];
+    const matrix: ColumnHistoryRow[] = [
+      ...seasons.map((season) => ({
+        season,
+        key: 'defensive_contribution',
+        state: 'full' as const,
+        measured_from: null,
+      })),
+      { season: '2019-20', key: 'defensive_contribution', state: 'none', measured_from: null },
+    ];
+    const s = unavailable(
+      statusOf(
+        'defensive_contribution',
+        {
+          season: '2019-20',
+          measured: true,
+          columns: [{ key: 'defensive_contribution', state: 'none', measured_from: null }],
+        },
+        matrix
+      )
+    );
+
+    expect(s.tag).toBe('2016-17 to 2018-19, and 2025-26');
+    expect(s.reason).toBe(
+      'Not recorded in 2019-20 · recorded 2016-17 to 2018-19, and 2025-26.'
     );
   });
 });

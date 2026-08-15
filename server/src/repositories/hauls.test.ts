@@ -191,7 +191,7 @@ describe('the started-only gate on the ratio numerators', () => {
     await withRollback(async (db) => {
       // **The seed must contain a bench haul or this passes vacuously.** That
       // is the whole case: a substitute who scores 12 raises Hauls and must not
-      // raise H/St, because he did not start.
+      // raise Pts10+/St, because he did not start.
       await seed(db, [
         { code: 960020, matches: [
           { points: 12, starts: 0 },
@@ -350,7 +350,7 @@ describe('against the real database', () => {
 describe('the 1.00 bound', () => {
   /**
    * **This is the only claim in item 19 that a reader is shown as a promise.**
-   * Both ratio descriptions say H/St and F/St cannot exceed 1.00, and that
+   * Both ratio glosses say Pts10+/St and Pts4+/St cannot exceed 1.00, and that
    * rests entirely on `numerator <= starts` — the inclusive relation and
    * `hauls_started <= hauls` compare a numerator to another numerator and imply
    * nothing about the denominator.

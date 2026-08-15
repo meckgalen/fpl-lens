@@ -104,13 +104,24 @@ const openPicker = async (user: ReturnType<typeof userEvent.setup>) => {
 const entry = (title: string) => screen.getByRole('checkbox', { name: new RegExp(title) });
 
 /**
- * The same, for a title that is a prefix of another one.
+ * Every regex metacharacter escaped, not just the one that had bitten us.
+ *
+ * `entryExact` used to inline `label.replace('/', '\\/')` — one un-anchored
+ * `replace`, so it escaped the FIRST slash of one label and nothing else. Item
+ * 21's labels broke it: `Pts10+` compiles as "Pts1" followed by one-or-more
+ * "0", which matches the wrong thing silently rather than throwing.
+ */
+const rx = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+
+/**
+ * The picker's checkbox, for a title that is a prefix of another one.
  *
  * "Defensive contribution hits" is a prefix of "Defensive contribution hits per
  * start", so a substring regex matches two checkboxes and `getByRole` throws.
- * The accessible name is `title` then `label`, so naming both disambiguates —
- * and the label is the thing actually rendered in the header, so pinning it
- * here is not redundant.
+ * Item 21 added a second such pair — "Matches of 10 or more points" is a prefix
+ * of "…, per start". The accessible name is `title` then `label`, so naming both
+ * disambiguates — and the label is the thing actually rendered in the header, so
+ * pinning it here is not redundant.
  */
 const entryExact = (title: string, label: string) =>
   screen.getByRole('checkbox', {
@@ -118,9 +129,10 @@ const entryExact = (title: string, label: string) =>
     // accessible name is "Defensive contribution hitsDCH" — concatenated, not
     // spaced. Asserted here rather than assumed: it was assumed first, and the
     // matcher found nothing.
-    // No trailing anchor: a DISABLED entry appends its reason sentence to the
-    // same label, so `$` matches only while the column is available.
-    name: new RegExp(`^${title}${label.replace('/', '\\/')}`),
+    // No trailing anchor: a DISABLED entry appends its tag or its reason
+    // sentence to the same label, so `$` matches only while the column is
+    // available.
+    name: new RegExp(`^${rx(title)}${rx(label)}`),
   });
 
 beforeEach(() => {
@@ -150,10 +162,17 @@ describe('availability decides what renders', () => {
     await openPicker(user);
 
     // Hidden would make the app look like it has never heard of expected goals.
-    // Disabled with a sentence teaches the shape of the data instead.
+    // Disabled, with where it IS recorded, teaches the shape of the data.
+    //
+    // The tag rather than the sentence since item 21: `from 2022-23` is the same
+    // derivation the sentence uses — `describeRecordedIn`'s phrase, which the
+    // sentence prefixes with a verb — so this still pins the run-splitting and
+    // not merely that some text appeared.
     const xg = entry('Expected goals');
     expect(xg).toBeDisabled();
-    expect(screen.getByText(/Not recorded in 2016-17 · recorded from 2022-23\./)).toBeInTheDocument();
+    expect(screen.getByText('from 2022-23')).toBeInTheDocument();
+    // And the long form is gone from the picker rather than rendered twice.
+    expect(screen.queryByText(/Not recorded in 2016-17/)).not.toBeInTheDocument();
   });
 
   it('names the boundary round on a partly measured season', async () => {
@@ -185,10 +204,14 @@ describe('availability decides what renders', () => {
     // Six columns share this season's boundary, so six entries carry the same
     // sentence — `getAllByText` rather than `getByText`, and the count is the
     // assertion: 2022-23 holes the expected family plus `starts`, plus item
-    // 19's two starts-denominated ratios. It was four before H/St and F/St,
+    // 19's two starts-denominated ratios. It was four before Pts10+/St and Pts4+/St,
     // and this number is meant to move when a column starts depending on
     // `starts` — that is the signal, not the maintenance cost.
-    expect(screen.getAllByText('Only recorded from GW16 in 2022-23.')).toHaveLength(6);
+    //
+    // The tag since item 21. It drops the season because the picker's heading
+    // names it, and it stays distinguishable from the `from 2022-23` season tag:
+    // this one is a boundary WITHIN the season on screen.
+    expect(screen.getAllByText('from GW16')).toHaveLength(6);
     expect(headers()).not.toContain('xG');
   });
 
@@ -292,20 +315,20 @@ describe('availability decides what renders', () => {
     // `entryExact` on the counts: their titles are prefixes of nothing, but the
     // picker concatenates title and label with no separator, so an unanchored
     // match is a habit worth not forming here.
-    expect(entryExact('Matches of 10 or more points', 'Hauls')).not.toBeDisabled();
-    expect(entryExact('Matches of 4 or more points', 'Floors')).not.toBeDisabled();
-    expect(entryExact('Hauls per start', 'H/St')).not.toBeDisabled();
-    expect(entryExact('Floors per start', 'F/St')).not.toBeDisabled();
+    expect(entryExact('Matches of 10 or more points', 'Pts10+')).not.toBeDisabled();
+    expect(entryExact('Matches of 4 or more points', 'Pts4+')).not.toBeDisabled();
+    expect(entryExact('Matches of 10 or more points, per start', 'Pts10+/St')).not.toBeDisabled();
+    expect(entryExact('Matches of 4 or more points, per start', 'Pts4+/St')).not.toBeDisabled();
   });
 
   it('keeps the haul counts on an unplayed season while withholding the ratios', async () => {
     // **Item 19's central availability decision, and the two halves pull in
-    // opposite directions on the same screen.** Hauls and Floors count over
+    // opposite directions on the same screen.** `Pts10+` and `Pts4+` count over
     // `total_points`, which is NOT NULL, so a roster that has played nothing has
     // hauled zero times — a measurement, exactly as Goals reads 0 there
     // (rule 6), and withholding them would be the overreach in the other
-    // direction. H/St and F/St divide by `starts`, which genuinely is
-    // unmeasured, so they are withheld and say why.
+    // direction. `Pts10+/St` and `Pts4+/St` divide by `starts`, which genuinely
+    // is unmeasured, so they are withheld and say why.
     const user = userEvent.setup();
     renderAt(
       aBootstrap({
@@ -319,15 +342,28 @@ describe('availability decides what renders', () => {
     );
     await openPicker(user);
 
-    expect(entryExact('Matches of 10 or more points', 'Hauls')).not.toBeDisabled();
-    expect(entryExact('Matches of 4 or more points', 'Floors')).not.toBeDisabled();
-    expect(entryExact('Hauls per start', 'H/St')).toBeDisabled();
-    expect(entryExact('Floors per start', 'F/St')).toBeDisabled();
+    expect(entryExact('Matches of 10 or more points', 'Pts10+')).not.toBeDisabled();
+    expect(entryExact('Matches of 4 or more points', 'Pts4+')).not.toBeDisabled();
+    expect(entryExact('Matches of 10 or more points, per start', 'Pts10+/St')).toBeDisabled();
+    expect(entryExact('Matches of 4 or more points, per start', 'Pts4+/St')).toBeDisabled();
 
     // And the count really renders its zero rather than a placeholder.
-    await user.click(entryExact('Matches of 10 or more points', 'Hauls'));
-    expect(headers()).toContain('Hauls');
-    expect(screen.getByText('0')).toBeInTheDocument();
+    //
+    // No click since item 21: `Pts10+` is a DEFAULT column now, so it is already
+    // on screen and clicking would take it away. Which is itself worth pinning —
+    // an unplayed season is exactly where a default that resolved as unavailable
+    // would disappear silently, and this one must not.
+    expect(entryExact('Matches of 10 or more points', 'Pts10+')).toBeChecked();
+    expect(headers()).toContain('Pts10+');
+
+    // Both counts render a real 0, and the row carries no no-value marker at
+    // all — every nullable column is withheld on this season, so a `—` anywhere
+    // would mean one of these two had fallen through to the placeholder.
+    // Scoped to the row and counted, because two 0s are expected now rather
+    // than one.
+    const row = within(screen.getByRole('row', { name: /Unplayed/ }));
+    expect(row.getAllByText('0').length).toBeGreaterThanOrEqual(2);
+    expect(row.queryByText('—')).not.toBeInTheDocument();
   });
 
   it('renders the ratios once selected, with the placeholder for no starts', async () => {
@@ -349,19 +385,49 @@ describe('availability decides what renders', () => {
       })
     );
     await openPicker(user);
-    await user.click(entryExact('Hauls per start', 'H/St'));
+    await user.click(entryExact('Matches of 10 or more points, per start', 'Pts10+/St'));
 
-    expect(headers()).toContain('H/St');
+    expect(headers()).toContain('Pts10+/St');
     expect(screen.getByText('0.12')).toBeInTheDocument();
     expect(screen.queryByText('0.15')).not.toBeInTheDocument();
     expect(screen.queryByText('0.00')).not.toBeInTheDocument();
   });
 
-  it('does not render any of the four by default', async () => {
+  it('renders the two counts by default and neither ratio', async () => {
+    /*
+     * Inverted by item 21's default swap, and the two halves are the assertion.
+     * The COUNTS joined the defaults in place of `Bon` and `Pts/£s`, because how
+     * a total was arrived at is a thing the total cannot say. The RATIOS did
+     * not: they divide by `starts`, so they are unavailable on 2026-27 and on
+     * 2022-23, and a default that vanishes on two of eleven seasons is a default
+     * that teaches the reader nothing about what the page normally shows.
+     *
+     * Thirteen columns before the swap and thirteen after, which is what keeps
+     * item 13's 1440px measurement valid — asserted, not assumed, below.
+     */
     renderAt(bootstrapFor('2025-26'));
-    for (const label of ['Hauls', 'Floors', 'H/St', 'F/St']) {
+
+    expect(headers()).toContain('Pts10+');
+    expect(headers()).toContain('Pts4+');
+    for (const label of ['Pts10+/St', 'Pts4+/St', 'Bon', 'Pts/£s']) {
       expect(headers()).not.toContain(label);
     }
+  });
+
+  it('keeps the two dropped columns available in the picker', async () => {
+    // Removed from the defaults, not from the app. Both still select and render
+    // — otherwise the swap would be a deletion wearing a reordering's clothes.
+    const user = userEvent.setup();
+    renderAt(bootstrapFor('2025-26'));
+    await openPicker(user);
+
+    const bonus = entryExact('Bonus points', 'Bon');
+    expect(bonus).not.toBeDisabled();
+    await user.click(bonus);
+    expect(headers()).toContain('Bon');
+
+    await user.click(entry('Points per £m, at the price the season opened at'));
+    expect(headers()).toContain('Pts/£s');
   });
 
   it('states an unplayed season once, in the season’s own words', async () => {
@@ -377,10 +443,10 @@ describe('availability decides what renders', () => {
     );
     await openPicker(user);
 
-    // The Dashboard's own wording, deliberately: one situation should not have
-    // two sentences in one app. And it is a claim about the DATA, not the
-    // calendar — playing the matches does not end it, ingesting them does.
-    expect(screen.getAllByText('No matches recorded for 2026-27 yet.').length).toBeGreaterThan(0);
+    // The picker's compressed form since item 21. It is a claim about the DATA,
+    // not the calendar — playing the matches does not end it, ingesting them
+    // does.
+    expect(screen.getAllByText('no matches yet').length).toBeGreaterThan(0);
     expect(entry('Expected goals')).toBeDisabled();
   });
 
@@ -481,7 +547,7 @@ describe('the sort survives losing its column', () => {
 });
 
 describe('the value columns round like every other average', () => {
-  it('uses half-to-even, not toFixed', () => {
+  it('uses half-to-even, not toFixed', async () => {
     // 98 points at £8.0m is exactly 12.25 — a binary-exact tie, which is the
     // only case where the two conventions differ. `roundHalfEven` gives 12.2;
     // `toFixed(1)`, which is not an implementation of any convention but
@@ -506,14 +572,28 @@ describe('the value columns round like every other average', () => {
       })
     );
 
-    const row = screen.getByRole('row', { name: /Tied/ });
-    expect(within(row).getByText('12.2')).toBeInTheDocument();
-    expect(within(row).queryByText('12.3')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole('row', { name: /Tied/ })).getByText('12.2')
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('row', { name: /Tied/ })).queryByText('12.3')
+    ).not.toBeInTheDocument();
 
     // And the two value columns are genuinely different numbers: 98 / 7.0 = 14.0
     // at the opening price. A column that quietly used `now_cost` for both would
     // look right on every row where the price never moved.
-    expect(within(row).getByText('14.0')).toBeInTheDocument();
+    //
+    // `Pts/£s` has to be switched on since item 21 dropped it from the defaults.
+    // Selecting it rather than deleting the assertion: the half that compares
+    // the two prices is the point of the test, and a rounding check on one
+    // column alone would not notice a sibling reading the wrong cost.
+    const user = userEvent.setup();
+    await openPicker(user);
+    await user.click(entry('Points per £m, at the price the season opened at'));
+
+    expect(
+      within(screen.getByRole('row', { name: /Tied/ })).getByText('14.0')
+    ).toBeInTheDocument();
   });
 });
 
