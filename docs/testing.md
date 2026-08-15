@@ -17,7 +17,7 @@ restated as rules here. What follows is the catalogue.
 
 ## The counts
 
-`npm test` runs **two suites on two runners**: **142 server tests** and **254
+`npm test` runs **two suites on two runners**: **155 server tests** and **314
 client tests**, all passing. They are counted separately on purpose — two
 runners print two summaries, and a combined figure would be maintained by hand
 against neither of them.

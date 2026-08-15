@@ -232,3 +232,29 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       compared the database to itself and stayed green. Holds the 20 supplied
       findings re-derived against the shipped statistic, and the DEF/MID
       totals-versus-rates split.
+
+- [x] **20. A value-level check for withheld columns.** → [`item-20-value-level-column-check.md`](item-20-value-level-column-check.md)
+
+      `verify:columns` grows a part 2: part 1 asks which columns the picker
+      **offers** and never looks at a value, which is how item 19's
+      `hauls_started = 0` sat behind a *disabled* picker entry on 2026-27 where
+      nothing could see it. Part 2 asserts both directions per player row and is
+      **driven off the `PlayerSeasonTotals` fields, not the picker keys** —
+      the field that carried the defect has no picker key, so a
+      `PLAYER_COLUMNS`-driven check would have missed exactly the bug it was
+      written for. Both sides are shipped code and that is **not** the
+      `verify:haul` 2B mistake: truth counts NULLs in `player_gameweeks`, the
+      payload comes from the aggregate, and a guard bug moves only one — argued
+      in the doc comment so it is not "fixed" into a re-derivation. The grain is
+      the **player**, which 2022-23 forces (661 of 778 lose `starts`, and xGI
+      754 rather than 661, holed at round 29 too). Ten frozen cell counts;
+      2026-27's derived from two factors and frozen as neither, since a literal
+      would redden every gameweek from 21 August. Part 2's own no-match-rows
+      premise is asserted rather than assumed — **measured**: remove only that
+      assertion and it goes green on a season whose derived count agrees with
+      itself precisely because the branch has stopped meaning anything. The
+      rule: a guard against emptiness is written against the row count, never
+      inferred from an aggregate over an empty set, because the join decides
+      whether the set is empty and the aggregate never sees the join. Also
+      holds an open question, with two coherent readings, about
+      `points_per_game` reading `0` for a player who never appeared.

@@ -727,12 +727,32 @@ ordering constraint either — it refreshes fixture state itself before reading 
 still in play are skipped, and a later run picks them up without touching what
 is already there.
 
-`npm run verify:columns` checks that the column picker offers exactly what the
-data can answer: it asks the **shipped** code what it would offer and compares
-against a truth query written for the check alone, which counts NULLs directly
-rather than reusing the availability predicate. **Read-only.** **319 cells**
-across eleven seasons; exits
-non-zero on any mismatch, which it does not today.
+`npm run verify:columns` runs **two parts, and they answer different questions**.
+**Read-only**; exits non-zero on either, which neither does today.
+
+**Part 1 — does the picker offer what the data can answer?** It asks the
+**shipped** code what it would offer and compares against a truth query written
+for the check alone, which counts NULLs directly rather than reusing the
+availability predicate. **319 cells** across eleven seasons.
+
+**Part 2 — do the withheld fields actually arrive empty?** Part 1 never looks at
+a value, which is how item 19 shipped `hauls_started = 0` on an unplayed season
+behind a disabled picker entry. Part 2 asserts both directions per player row —
+unmeasured inputs read null, measured inputs read a number — and is **driven off
+the `PlayerSeasonTotals` fields rather than the picker keys**, because the field
+that carried the defect has no picker key at all. Its map is in
+`verify/payload-fields.ts` rather than in the check, since the check is excluded
+from the tsc program and a `satisfies` there would be inert.
+
+Its two sides are both shipped code and **that is not `verify:haul` 2B's
+mistake**: the truth counts NULLs in `player_gameweeks` while the payload comes
+from the aggregate expressions, so a guard bug moves only one side. Do not
+"fix" it into reading `seasonAvailability`. The ten CSV seasons have frozen cell
+counts; **2026-27's are derived from two factors and frozen as neither**, and
+its no-match-rows premise is asserted rather than assumed — when
+`ingest:live-gameweeks` first runs, that branch fails loudly instead of passing
+on a set it has stopped checking. Full output and the mutations:
+`docs/items/item-20-value-level-column-check.md`.
 
 Its `DB_COLUMNS` maps a picker key to the **list** of database columns it reads,
 so a derived column's truth is the AND over its inputs. Those lists are
@@ -1281,6 +1301,16 @@ One item per session, committed between each. **The record of every item is
       count guard is needed after all. A frozen ungated distribution pins the
       thresholds and pins nothing about the gate. One invariant ships that no
       mutation can currently redden, deliberately and recorded.
+- [x] **20. A value-level check for withheld columns.** — `verify:columns` part
+      2, and the rule it leaves: a guard against emptiness is written against the
+      **row count**, never inferred from an aggregate's behaviour over an empty
+      set, because the join decides whether the set is empty and the aggregate
+      never sees the join. Driven off the payload fields rather than the picker
+      keys, since the field carrying item 19's defect has no picker key. Part 2's
+      **own** premise is asserted rather than assumed — a check whose premise
+      expires degrades into passing on nothing, the same vacuous truth one layer
+      up, and that is **measured**: with only the premise assertion removed it
+      goes green on a season the branch no longer describes.
 
 ## Deferred
 

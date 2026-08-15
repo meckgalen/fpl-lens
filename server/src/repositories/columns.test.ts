@@ -386,6 +386,15 @@ describe('the two derivations agree', () => {
     // and offer it in the other, with nothing on screen to say which is right.
     const matrix = await listColumnHistory(pool);
 
+    // This CASE reads 1 VACUOUSLY for a player-season with no match rows: both
+    // counts are 0, so it claims "fully measured" about a player who measured
+    // nothing. Left as it is, because neither side of the comparison ever reads
+    // it — `deriveSeasonAvailability` filters `matches > 0` before computing a
+    // state, and `listColumnHistory` groups on `player_gameweeks`, where such a
+    // player has no row at all. Confirmed against the data in item 20: zero-row
+    // player-seasons number 0 in every one of the ten CSV seasons and 564 of 564
+    // in 2026-27, so no season is even mixed today. Do not "fix" it without
+    // evidence that something reads it.
     const selects = NULLABLE_COLUMNS.map(
       (c) => `CASE WHEN count(pg.${c}) = count(pg.fixture_id) THEN 1 ELSE 0 END AS ${c}`
     ).join(', ');
