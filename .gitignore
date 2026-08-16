@@ -11,3 +11,4 @@ build/
 *.tsbuildinfo
 coverage/
 docs/LEARNING.md
+*.dump

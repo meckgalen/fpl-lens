@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist"
+  },
+  /*
+   * Wider than the base exclude, and for a different reason. The base excludes two
+   * files because they would not typecheck; this excludes three directories because
+   * the production image should not carry them. verify/ and ingest/ are run by hand
+   * with tsx against src, never from dist, and ingest deliberately stays local.
+   * Superset of the base list, so the TS6059 exclusions survive.
+   */
+  "exclude": [
+    "src/verify",
+    "src/ingest",
+    "src/test",
+    "src/**/*.test.ts"
+  ]
+}

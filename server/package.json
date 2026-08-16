@@ -1,9 +1,10 @@
 {
   "name": "fpl-lens-server",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "migrate:up": "node-pg-migrate --envPath ../.env up",
     "migrate:down": "node-pg-migrate --envPath ../.env down",

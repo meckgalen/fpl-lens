@@ -1,0 +1,60 @@
+# Production. Deployed to karpuz-prod alongside other projects.
+#
+# Differences from docker-compose.yml that are deliberate, not incidental:
+#
+#   - Postgres publishes NO host port. Only the server container reaches it,
+#     over the compose network. POSTGRES_PORT is therefore unread here.
+#   - DATABASE_URL is built from the POSTGRES_* vars rather than read from
+#     .env, because .env's copy names localhost:5434, which is a host-side
+#     address that means nothing inside the network. Building it here makes
+#     the wrong value unreachable rather than merely discouraged.
+#   - The client publishes on loopback only. The host Nginx fronts it; the
+#     container must not be reachable from the internet directly.
+name: fpl-lens-prod
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fpl-lens-db-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    volumes:
+      - fpl_lens_pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: fpl-lens-server
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: fpl-lens-client
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:3011:80'
+    depends_on:
+      - server
+
+volumes:
+  fpl_lens_pgdata_prod:
