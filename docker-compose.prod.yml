@@ -56,5 +56,28 @@ services:
     depends_on:
       - server
 
+  # Run by hand, never by `up`, hence the profile:
+  #   docker compose -f docker-compose.prod.yml --profile migrate run --rm migrate
+  #
+  # Builds from the Dockerfile's `build` stage, which has the devDependencies
+  # node-pg-migrate and tsx that the runtime stage deliberately omits. The
+  # migrations are TypeScript, so both are required.
+  #
+  # No --envPath here, unlike the local scripts: that path points above the
+  # working directory, which does not exist in the container. DATABASE_URL is
+  # injected below, the same value the server gets.
+  migrate:
+    profiles: ['migrate']
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+      target: build
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    command: ['npx', 'node-pg-migrate', 'up']
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   fpl_lens_pgdata_prod:

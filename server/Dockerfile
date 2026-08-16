@@ -5,6 +5,7 @@ RUN npm ci
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 RUN npm run build
+COPY migrations ./migrations
 
 FROM node:20-alpine AS runtime
 WORKDIR /app
