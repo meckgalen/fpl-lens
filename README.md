@@ -1,6 +1,6 @@
 # FPL Lens
 
-A Fantasy Premier League player analytics dashboard built on eleven seasons of historical data.
+A Fantasy Premier League player analytics dashboard built on eleven seasons of Fantasy Premier League data — ten complete, plus the one in progress.
 
 Live at **[fpl.karpuz.dev](https://fpl.karpuz.dev)**
 
@@ -15,10 +15,10 @@ It also refuses to relabel data. The official site prints carryover totals under
 ## Features
 
 - **Player list** with the current season roster, sortable on any visible column, filterable by club and position
-- **Selectable stat columns**: 25 available, 13 shown by default. Columns that a season never measured appear disabled with the reason attached ("Not measured before 2022-23") rather than silently missing, so the gaps in the data become something the app teaches
+- **Selectable stat columns**: 27 selectable, 13 shown by default. Columns a season has no rows for appear disabled with the reason attached ("Not recorded in 2016-17 · recorded from 2022-23.") rather than silently missing, so the gaps in the data become something the app teaches
 - **Career history** on the player detail page, every season expandable into its rounds, with per season gameweek range and venue filters
 - **Season selector** covering 2016-17 through the current season, with the availability of each stat recomputed per season
-- **Player comparison** on a radar chart, up to four traces at once, scored against fixed per axis thresholds derived from a 2,827 player season cohort, with the position's average drawn as a band underneath
+- **Player comparison** on a radar chart, up to four traces at once, scored against fixed per axis thresholds derived from a 2,827 player season cohort — smaller on the axes only the recent seasons measure — with the position's average drawn as a band underneath
 - **Derived metrics** the official site does not carry: defensive contribution hits and hits per start, 10+ point and 4+ point returns and their per start ratios, points per match computed over appearances rather than rounds
 - **Fixtures** with difficulty and results views of the same round
 - Light, dark and system themes
@@ -37,11 +37,11 @@ Postgres is the source of truth, not a cache in front of the FPL API. Ten comple
 | Table | Rows |
 | --- | --- |
 | player_gameweeks | 253,509 |
-| player_seasons | 7,338 |
-| fixtures | 3,800 |
-| players | 2,623 |
-| team_seasons | 200 |
-| teams | 34 |
+| player_seasons | 7,902 |
+| fixtures | 4,180 |
+| players | 2,690 |
+| team_seasons | 220 |
+| teams | 35 |
 
 Ten seasons of one competition is not ten copies of the same schema. A few of the things settled during ingestion, all of which the app now has to render:
 
@@ -57,12 +57,15 @@ Where a column is missing the app renders a placeholder, never a zero. Where an 
 Alongside the test suites there are read only scripts that check derived output against the source data rather than against the code that produced it. They run against a populated database and are deliberately kept out of `npm test`, since they need one:
 
 ```bash
+npm run verify:ppg            # our points-per-appearance against FPL's own published points_per_game
 npm run verify:history-past   # cross-checks season aggregates against FPL's own history_past
-npm run verify:columns        # re-derives the per season availability matrix independently
-npm run verify:defcon         # checks the defensive contribution threshold against a frozen distribution
+npm run verify:columns        # re-derives the per season availability matrix, then checks the withheld fields really arrive empty
+npm run verify:defcon         # checks the defensive contribution hit count against a frozen distribution
 npm run verify:haul           # checks the 10+ and 4+ point return counts
 npm run verify:thresholds     # re-derives the comparison chart's per axis floors and ceilings
 ```
+
+The first two reach the live FPL API as their second source; the rest need nothing but the database. `verify:history-past` caches its responses under `data/raw/`, so only the first run costs anything.
 
 The gameweek sync was validated separately by replaying an entire season offline: 29,747 of 29,747 rows equivalent to the published CSV.
 
@@ -79,19 +82,21 @@ npm install
 npm run install:all
 ```
 
-**2. Start Postgres**
+**2. Configure the environment**
+
+```bash
+cp .env.example .env
+```
+
+Before starting Postgres, not after: `docker-compose.yml` reads the same file, and the container bakes its credentials into the volume on first start. Changing `POSTGRES_PASSWORD` afterwards locks you out of your own database.
+
+**3. Start Postgres**
 
 ```bash
 docker compose up -d postgres
 ```
 
-The dev database publishes on host port 5434 to stay clear of a native Postgres on 5432.
-
-**3. Configure the environment**
-
-```bash
-cp .env.example .env
-```
+The dev database publishes on host port 5434 to stay clear of a native Postgres on 5432. `DATABASE_URL` names the same port, so change the two together.
 
 **4. Run the migrations**
 
@@ -101,15 +106,17 @@ npm run migrate:up
 
 **5. Get the historical data**
 
-The ten complete seasons are ingested from a local clone of the [vaastav/Fantasy-Premier-League](https://github.com/vaastav/Fantasy-Premier-League) dataset. Clone it anywhere and point `FPL_DATA_DIR` in your `.env` at it.
+The ten complete seasons are ingested from the [vaastav/Fantasy-Premier-League](https://github.com/vaastav/Fantasy-Premier-League) dataset. A script downloads the four files each season needs:
 
 ```bash
-git clone https://github.com/vaastav/Fantasy-Premier-League.git
+npx tsx scripts/fetch-raw-data.ts
 ```
+
+They land in `data/raw/{season}/` — `players_raw.csv`, `teams.csv`, `fixtures.csv` and `gws/merged_gw.csv` — which is where the ingest scripts look, and which is gitignored. The path is not configurable. Files already on disk are skipped, and a 404 is logged rather than fatal: the early seasons legitimately have no `teams.csv` or `fixtures.csv`.
 
 **6. Ingest**
 
-Order matters: fixtures reference teams, and gameweeks reference both.
+Order matters: fixtures reference teams, and gameweeks reference both. Each script asserts its predecessors' row counts before it starts and names the one to run first, so the order is enforced rather than trusted.
 
 ```bash
 npm run ingest:dimensions   # teams and players
@@ -117,7 +124,7 @@ npm run ingest:fixtures
 npm run ingest:gameweeks    # the fact table, ~253k rows
 ```
 
-Then pull the current season from the live API:
+Then pull the current season from the live API. Neither has an ordering constraint, and both are meant to be re-run — the first through the transfer window, the second as rounds finish. Only fixtures that have settled are written, so the second one writes nothing until a match has been played.
 
 ```bash
 npm run ingest:live
@@ -144,6 +151,8 @@ server/
   src/ingest/           CSV and live API ingestion
   src/verify/           read only cross-checks against the source data
   migrations/           node-pg-migrate
+scripts/                fetch and profile the raw CSVs, check doc size
+data/raw/               the downloaded CSVs, by season; gitignored
 docs/                   item records, testing notes, roadmap
 ```
 
@@ -165,7 +174,7 @@ Client tests mock the API at `services/api.ts` and never touch a database. Serve
 
 ## Deployment
 
-Three containers behind Nginx: Postgres, the API server, and Nginx serving the static client build and proxying `/api` so the browser sees a single origin.
+Three containers: Postgres, the API server, and an Nginx serving the static client build and proxying `/api`, so the browser sees a single origin. Only the last publishes a port, and only on loopback — the host's Nginx fronts it. Postgres publishes nothing at all; the server reaches it over the compose network.
 
 ```bash
 git pull

@@ -19,6 +19,7 @@
     "test:client": "cd client && npm test",
     "docs:size": "tsx scripts/check-doc-size.ts",
     "verify:history-past": "cd server && npm run verify:history-past --",
+    "verify:ppg": "cd server && npm run verify:ppg --",
     "verify:columns": "cd server && npm run verify:columns --",
     "verify:defcon": "cd server && npm run verify:defcon --",
     "verify:haul": "cd server && npm run verify:haul --",
