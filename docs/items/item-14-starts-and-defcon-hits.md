@@ -63,6 +63,18 @@ reworded on either move.
       table is the tripwire, and it is **frozen as literals** in `verify:defcon`
       rather than recomputed and printed.
 
+      > **SUPERSEDED BY ITEM 24.** The paragraph below records item 14's
+      > decision to share one numerator between `DCH` and `DCH/St`, and to treat
+      > a value above 1 as informative. **That is no longer what the app does.**
+      > `DCH/St`'s numerator is gated on `starts = 1` since item 24, so the
+      > ratio is bounded at 1.00 by construction; `DCH` is unchanged and still
+      > counts bench hits. What this reasoning missed is that a numerator drawn
+      > from appearances over a denominator of starts is a ratio of two
+      > populations — and that item 19 later shipped `Pts10+/St` gated, leaving
+      > two ratios under one `/St` suffix with opposite semantics. The 8 bench
+      > hits below are the same 8; they now move 8 players' ratios down instead
+      > of up. See `docs/items/item-24-dch-per-start-gated.md`.
+
       **Hits per start above 1 does not occur in 2025-26**, and the design is
       unchanged anyway. The mechanism is real — 8 hits came off the bench, the
       largest 19 DC in 67 minutes — but no player's count exceeds his starts. The
@@ -279,6 +291,8 @@ reworded on either move.
         `Not recorded in 2016-17 · recorded from 2025-26.`
       - **The 1.00 case**: Igor (BHA) 1 hit / 1 start and Colwill (CHE) 2/2, both
         rendering `1.00`, unclamped. Nothing above 1 exists in 2025-26.
+        (Item 24: still the two maxima, and now bounded rather than merely
+        unobserved — neither has a bench hit, so neither moved.)
       - **A zero-start player**: Heaton, 38 bench matches, 0 minutes — `DCH 0` (a
         measured zero, since DC exists for keepers) and **`DCH/St —`**, the
         placeholder rather than `0.00`.

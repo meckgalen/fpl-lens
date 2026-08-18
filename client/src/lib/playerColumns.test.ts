@@ -310,23 +310,50 @@ describe('hits per start', () => {
    *
    * `null / 5` is **0** in JavaScript, not NaN — so a missing hit count renders
    * a confident `0.00` unless it is tested for. That is rule 6 defeated by a
-   * coercion, in a cell indistinguishable from a real zero, and it is the only
-   * place in the client that divides by `defcon_hits`.
+   * coercion, in a cell indistinguishable from a real zero.
+   *
+   * **The numerator is `defcon_hits_started`, not `defcon_hits`** — item 24.
+   * Every case below passes a value for both, and they never agree, so a
+   * regression reading the ungated count renders a different number rather than
+   * the same one.
    */
   const col = columnByKey('defcon_hits_per_start')!;
-  const player = (defcon_hits: number | null, starts: number | null) =>
-    ({ ...aPlayer(), defcon_hits, starts }) as Player;
+  const player = (
+    defcon_hits_started: number | null,
+    starts: number | null,
+    defcon_hits: number | null = 99
+  ) => ({ ...aPlayer(), defcon_hits, defcon_hits_started, starts }) as Player;
 
-  it('divides hits by starts, at two places, rounded half to even', () => {
-    expect(col.render(player(10, 14))).toBe('0.71');
-    expect(col.render(player(11, 30))).toBe('0.37');
+  it('divides STARTED hits by starts, at two places, rounded half to even', () => {
+    // Canvot and Ballard, the two players item 24 was written from. Their
+    // ungated counts are 10 and 15, which rendered 0.71 and 0.62 — the numbers
+    // this column used to show and the reason it changed.
+    expect(col.render(player(9, 14, 10))).toBe('0.64');
+    expect(col.render(player(14, 24, 15))).toBe('0.58');
+    // Gabriel, who has no bench hit: 11/30 under either definition. He is here
+    // to show the change is not a blanket shift — a player with no bench hit
+    // reads exactly what he always did.
+    expect(col.render(player(11, 30, 11))).toBe('0.37');
+  });
+
+  it('ignores the ungated count entirely', () => {
+    // The mutation guard for the field swap. If `hitsPerStart` reads
+    // `defcon_hits`, this renders 2.00 instead of 0.50.
+    expect(col.render(player(5, 10, 20))).toBe('0.50');
   });
 
   it('renders the placeholder rather than 0.00 when the player never started', () => {
     // 367 of 2025-26's 841 players have no starts, so this is the common case.
     // "He made no starts" and "he hit none of his starts" must not collapse.
+    //
+    // The second case is the one item 24's brief called newly reachable: a
+    // player with no starts and a nonzero DCH. It was already reachable and
+    // already guarded — `perStart` tests the denominator, not the numerator —
+    // and no outfield player in 2025-26 is actually in it, so it is pinned here
+    // rather than in the browser.
     expect(col.render(player(0, 0))).toBe(NO_VALUE);
     expect(col.value(player(0, 0))).toBeNull();
+    expect(col.render(player(0, 0, 3))).toBe(NO_VALUE);
   });
 
   it('renders the placeholder rather than 0.00 when the hit count is unmeasured', () => {
@@ -344,12 +371,13 @@ describe('hits per start', () => {
     expect(col.render(player(0, 5))).toBe('0.00');
   });
 
-  it('does not clamp above 1', () => {
-    // A substitute can clear the threshold without starting, so the numerator
-    // counts all games and the denominator counts starts. No player in 2025-26
-    // actually exceeds 1 — the maximum is exactly 1.00 — but 8 hits did come
-    // off the bench, so the shape is reachable and must read as itself.
-    expect(col.render(player(3, 2))).toBe('1.50');
+  it('cannot exceed 1.00, which is what the gate buys', () => {
+    // The bound is by construction, not by luck: a started hit is a start, so
+    // the numerator can at most equal the denominator. A perfect record renders
+    // 1.00, and the pre-item-24 shape — more hits than starts, which the
+    // ungated numerator made reachable — can no longer be built from this
+    // field. Pinned across all eleven seasons in the server's `defcon.test.ts`.
+    expect(col.render(player(12, 12))).toBe('1.00');
   });
 });
 

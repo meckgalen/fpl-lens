@@ -897,16 +897,19 @@ around it.
   unique across seasons.
 - **`DCH` means two different things one click apart, and both are labelled but
   neither label mentions the other.** In the gameweek table the AVG row divides
-  by **appearances** — item 11's convention, stated by the footnote beneath it —
-  so `AVG DCH 0.3` is hits per appearance. On the Players list `DCH/St` divides
-  by **starts**, which its own name says. Gabriel 2025-26 is 0.3 on one screen
-  and 0.37 on the other, and nothing on either says why.
+  **every** hit by **appearances** — item 11's convention, stated by the footnote
+  beneath it — so `AVG DCH 0.3` is hits per appearance. On the Players list
+  `DCH/St` divides **started** hits by **starts**. Gabriel 2025-26 is 0.3 on one
+  screen and 0.37 on the other, and nothing on either says why.
+
+  **Since item 24 the two differ in numerator as well as denominator**, so a
+  player with a bench hit disagrees by more than the denominators alone explain.
+  Gabriel is not one — his two numerators are equal — which is why his pair of
+  numbers is unchanged and why he is the wrong player to reason from.
 
   Both numbers are right and both are labelled where they render. Left as is
   because the alternatives are worse: breaking item 11's convention for one
-  column, or naming a second denominator inside a footnote about the first. The
-  Players-list column cannot use appearances — a substitute who clears the
-  threshold without starting is exactly the case hits-per-start exists to show.
+  column, or naming a second denominator inside a footnote about the first.
   Recorded so the next reader knows it was seen rather than missed.
 
 - **Two elements read "Selected" on the same page, meaning different things.**
@@ -1295,8 +1298,9 @@ One item per session, committed between each. **The record of every item is
       the channel magnitude is read in — capping it halves the symptom and keeps
       the cause.
 - [x] **19. Hauls and floors on the Players list.** — the ratio numerators are
-      gated on `starts = 1`, so unlike `DCH/St` they cannot exceed 1.00; the two
-      fragments look alike and must not be shared. `sum() over zero rows is
+      gated on `starts = 1`, so they cannot exceed 1.00 where `DCH/St` then still
+      could — item 24 closed that gap by gating it too; the two fragments look
+      alike and must not be shared. `sum() over zero rows is
       NULL` does **not** null out an empty player-season — the LEFT JOIN gives
       it one null-extended row and the `ELSE 0` makes that a hard zero, so the
       count guard is needed after all. A frozen ungated distribution pins the
@@ -1348,6 +1352,18 @@ One item per session, committed between each. **The record of every item is
       beat `:root` on specificity rather than source order. The pre-paint script
       must duplicate the rule, so a test extracts it from the shipped
       `index.html` rather than a pasted copy, gated on a non-empty extraction.
+
+- [x] **24. `DCH/St` counts only hits made in starts.** — a reversal of item
+      14, which shared one numerator between the count and the ratio so that a
+      value above 1 would read as informative. The defect is not the 0.07 on
+      Canvot but that item 19 shipped `Pts10+/St` gated, leaving two ratios under
+      one `/St` suffix with opposite semantics. **The radar axis was outside the
+      brief and had to come in**: the same quantity under the same label one page
+      away. Its frozen ceilings were re-derived — ceilings round UP, floors DOWN
+      — and **did not move**, so `supersedes` stays unset rather than recording a
+      change that did not happen. A predicted blind spot in `verify:defcon` part
+      1 turned out not to exist, because its gate is stated in SQL on one side
+      and TypeScript on the other.
 
 ## Deferred
 

@@ -89,12 +89,23 @@ const AXIS_SQL: Record<ComparisonAxisKey, string> = {
         THEN sum(pg.expected_goal_involvements)
       END`,
 
-  // Hits over STARTS, both guarded. count(pg.fixture_id) > 0 is the half that
-  // is easy to miss: count(*) FILTER over no rows is 0, not NULL.
+  // Hits in STARTED fixtures, over starts. Both operands guarded, and
+  // count(pg.fixture_id) > 0 is the half that is easy to miss: count(*) FILTER
+  // over no rows is 0, not NULL.
+  //
+  // **`pg.starts = 1` in the numerator is item 24 and is the point of this
+  // entry.** The ratio counts only hits made in starts, so the population the
+  // numerator draws from is the one the denominator covers. Restated here
+  // rather than imported, like every other axis in this map — the axis values
+  // are the independent half of this check, so `defconHitCountSql`'s gate and
+  // this one have to be written twice to be able to disagree. The threshold
+  // itself still comes from `defconHitSql`, because a hand-copied 10 and 12
+  // would check the numbers rather than the rule.
   defcon_hits_per_start: `(CASE
         WHEN count(pg.fixture_id) > 0
          AND count(pg.defensive_contribution) = count(pg.fixture_id)
-        THEN count(*) FILTER (WHERE ${defconHitSql('pg', 'ps')} = 1)
+         AND count(pg.starts) = count(pg.fixture_id)
+        THEN count(*) FILTER (WHERE pg.starts = 1 AND ${defconHitSql('pg', 'ps')} = 1)
       END)::numeric
       / NULLIF(CASE WHEN count(pg.starts) = count(pg.fixture_id)
                     THEN sum(pg.starts) END, 0)`,

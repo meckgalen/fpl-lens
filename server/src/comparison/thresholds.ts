@@ -131,7 +131,29 @@ const ALL_TEN = [
  */
 const XGI_SEASONS = ['2023-24', '2024-25', '2025-26'];
 
-/** DC is 2025-26 only. One season, and the reason the rule above exists. */
+/**
+ * DC is 2025-26 only. One season, and the reason the rule above exists.
+ *
+ * **`defcon_hits_per_start` was re-derived in item 24 and its ceilings did not
+ * move.** The axis changed definition — its numerator is now gated on
+ * `starts = 1`, so every value fell — which invalidates a frozen threshold the
+ * same way a `DEFCON_THRESHOLDS` change would. It was re-derived over this same
+ * season and cohort, and both ceilings landed on the rung they were already on:
+ * DEF p99 0.705628 → 0.699820 and MID unchanged to six decimals, against rungs
+ * of 0.80 and 0.60.
+ *
+ * **So `supersedes` is deliberately unset on both**, because nothing was
+ * superseded; setting it would record a change that did not happen, and
+ * `thresholds.test.ts`'s assertion that no axis carries one stays green.
+ *
+ * That leaves this comment and `docs/items/item-24-dch-per-start-gated.md` as
+ * the only record that the re-derivation happened at all — there is no data
+ * field for "re-derived, unchanged", and inventing one for a single case would
+ * be a shape pretending to information. If the axis is redefined again, redo
+ * the derivation rather than assuming this outcome repeats: it held because the
+ * affected players sat away from the percentile, not because gating is
+ * harmless.
+ */
 const DCH_SEASONS = ['2025-26'];
 
 /**

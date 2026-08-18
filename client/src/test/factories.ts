@@ -87,6 +87,12 @@ export function aPlayer(overrides: Partial<Player> = {}): Player {
     // different quantities, and a fixture where they matched would let a
     // hits-per-start bug read as 1.00 and look plausible.
     defcon_hits: 9,
+    // And deliberately not equal to `defcon_hits` either, for the reason
+    // `hauls_started` differs from `hauls` below: since item 24 this is the
+    // DCH/St numerator, so a regression reusing the ungated count would render
+    // 0.36 where the gated one renders 0.32 — a wrong number rather than the
+    // same one.
+    defcon_hits_started: 8,
 
     // Five distinct values, none equal to `starts` and none equal to each
     // other. `hauls_started` differs from `hauls` on purpose: reusing the

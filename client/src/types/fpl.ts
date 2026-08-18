@@ -71,6 +71,15 @@ export interface Player {
    * seasons, but the null is still handled where it is divided by.
    */
   defcon_hits: number | null;
+  /**
+   * The `DCH/St` numerator: hits made in fixtures the player STARTED, which is
+   * what bounds that ratio at 1.00 (item 24). `defcon_hits` above counts bench
+   * hits too and deliberately still does — the count answers "how often did
+   * this happen", the ratio "how reliably when picked".
+   *
+   * Payload only, with no picker entry, exactly like `hauls_started` below.
+   */
+  defcon_hits_started: number | null;
 
   /**
    * How many FIXTURES reached 10 and 4 points. The unit is the fixture, not the
@@ -86,7 +95,8 @@ export interface Player {
   floors: number;
   /**
    * The same counts restricted to fixtures the player STARTED — the numerators
-   * of H/St and F/St, and why those are bounded at 1.00 where DCH/St is not.
+   * of Pts10+/St and Pts4+/St, and why those are bounded at 1.00. Since item 24
+   * DCH/St is gated the same way — see `defcon_hits_started` above.
    *
    * null where `starts` is unmeasured across the player-season, or no match was
    * played. Nothing renders these directly; the division happens in `perStart`.

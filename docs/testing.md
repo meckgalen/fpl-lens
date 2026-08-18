@@ -87,6 +87,18 @@ files, one of which touches no database — see `comparison/thresholds.test.ts`:
   self-consistently wrong: Gabriel 11, Senesi 26, Anderson 26, plus 2026-27 and
   2016-17 returning null for every player.
 
+  **Item 24 added a third describe block for `defcon_hits_started`**, the gated
+  `DCH/St` numerator. Its synthetic half pins the divergence (a bench hit the
+  count keeps and the numerator drops), the NULL-start row, the partly-measured
+  `starts` season and the unplayed player — the last two being the two guards
+  `defcon_hits` does not share. Its real-database half anchors Canvot 10/9 and
+  Ballard 15/14 with **Gabriel 11/11 as the control**, so a mutation that gates
+  nothing and one that gates everything fail on different rows; it also pins the
+  season's 8 bench hits as a sum over 744 player-seasons, and the `<= starts`
+  bound over four seasons. Every synthetic case sets both fields to values that
+  disagree, so reading the wrong one renders a wrong number rather than the same
+  one.
+
   **Its synthetic season is `'2098-99'`, not `'2099-00'`, and the reason is on
   the constant**: `live-season.test.ts` owns the latter, `node --test` runs files
   in parallel, and two transactions inserting the same

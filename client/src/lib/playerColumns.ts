@@ -199,15 +199,18 @@ const int = (v: number | null) => fmtNum(v, 0);
 const perStart = (numerator: number | null, starts: number | null): number | null =>
   numerator === null || starts === null || starts === 0 ? null : numerator / starts;
 
-/** Ungated numerator: a hit won off the bench counts, so this can exceed 1. */
-const hitsPerStart = (p: Player): number | null => perStart(p.defcon_hits, p.starts);
-
 /**
- * Gated numerators — only fixtures the player STARTED — so unlike `hitsPerStart`
- * above these cannot exceed 1.00. That bound is stated in both glosses and is
- * therefore a promise on screen; it is pinned across all eleven seasons in
- * `hauls.test.ts`.
+ * Gated numerators — only fixtures the player STARTED — so all three of these
+ * are bounded at 1.00 by construction. That bound is stated in every gloss and
+ * is therefore a promise on screen; it is pinned across all eleven seasons in
+ * `hauls.test.ts` for the two point counts and in `defcon.test.ts` for hits.
+ *
+ * **`hitsPerStart` joined them in item 24 and did not start here.** It used to
+ * divide the ungated `defcon_hits` by starts, which let a hit won off the bench
+ * inflate a ratio whose denominator never covered the bench. The DCH count
+ * column is unchanged and still counts every hit; only the ratio moved.
  */
+const hitsPerStart = (p: Player): number | null => perStart(p.defcon_hits_started, p.starts);
 const haulsPerStart = (p: Player): number | null => perStart(p.hauls_started, p.starts);
 const floorsPerStart = (p: Player): number | null => perStart(p.floors_started, p.starts);
 
@@ -448,15 +451,25 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     render: (p) => int(p.defcon_hits),
   },
   {
-    // Hits per START, and named for it rather than called a rate or a
-    // percentage, because **it can exceed 1**: a substitute who racks up twelve
-    // recoveries in half an hour has cleared the threshold without starting, so
-    // the numerator counts all games and the denominator counts starts. Rare —
-    // 8 such hits in all of 2025-26, and no player's total actually exceeds his
-    // starts — but above 1 reads as "hits more often than he starts", which is
-    // informative. Not clamped, the denominator not switched to appearances,
-    // and the numerator not restricted to started games: the count column above
-    // and this one must share one numerator.
+    // Hits per START, in the numerator as well as the denominator, so this is
+    // bounded at 1.00 — item 24, and a reversal of item 14 rather than a
+    // clarification of it.
+    //
+    // Item 14 had this share `defcon_hits`' numerator on purpose, reading a
+    // value above 1 as "hits more often than he starts" and therefore
+    // informative rather than broken. What that missed is that a numerator
+    // counting bench appearances over a denominator counting starts is a ratio
+    // of two different populations; the 8 bench hits in 2025-26 inflated 8
+    // players, Canvot 0.71 against a true 0.64. Item 19 then shipped
+    // `Pts10+/St` gated, leaving two ratios under one /St suffix with opposite
+    // semantics and nothing on screen telling them apart. That inconsistency,
+    // more than the 0.07, is what moved this.
+    //
+    // **The denominator was NOT switched to appearances**, which was the other
+    // way to make the populations agree. It mixes minute distributions and
+    // would leave this the odd one out against `Pts10+/St` instead of matching
+    // it. The count column above keeps every hit: it answers how often this
+    // happened, where the ratio answers how reliably he does it when picked.
     //
     // Availability takes the more restrictive of its two inputs.
     // `defensive_contribution` is declared first so a season that records
@@ -469,19 +482,21 @@ export const PLAYER_COLUMNS: PlayerColumn[] = [
     // expansion alone leaves "hit" undefined, and "per start" is what
     // distinguishes it from a per-game rate.
     gloss:
-      'Defensive contribution hits per start — per game STARTED, not per game played. A hit is a match clearing the positional threshold.',
+      'Defensive contribution hits per start — only started fixtures count, in the numerator as well as the denominator. A hit is a match clearing the positional threshold.',
     description:
-      'Defensive contribution hits divided by starts. A hit is a match clearing the positional threshold (DEF 10 CBIT; MID and FWD 12 CBIRT; goalkeepers have no threshold and so no hits). A value above 1 is meaningful rather than an error: hits won off the bench count in the numerator, while only starts count in the denominator.',
+      'How many of the matches this player started were defensive contribution hits. A hit is a match clearing the positional threshold (DEF 10 CBIT; MID and FWD 12 CBIRT; goalkeepers have no threshold and so no hits). Hits won off the bench count towards DCH but not towards this ratio, whose denominator covers starts only, so it cannot exceed 1.00.',
     nullable: true,
     dependsOn: ['defensive_contribution', 'starts'],
     value: (p) => hitsPerStart(p),
     render: (p) => fmtQuotient(hitsPerStart(p), 2),
   },
   {
-    // The numerator counts only STARTED fixtures, so this is bounded at 1.00 —
-    // the opposite of DCH/St above, whose numerator is ungated and which can
-    // exceed 1. The two look like the same fragment and are not; the server
-    // computes them from separate expressions for exactly this reason.
+    // The numerator counts only STARTED fixtures, so this is bounded at 1.00.
+    // Since item 24 DCH/St above is gated the same way and carries the same
+    // bound; before it, the two looked like one fragment and were not. They
+    // still come from separate server expressions — `pointCountSql` and
+    // `defconHitCountSql` — because the thresholds they compare against are
+    // different rules, but both now take the same `startedOnly` flag.
     //
     // dependsOn is ['starts'] alone: the count itself derives from a NOT NULL
     // column, so starts is the only input that can be unmeasured. That gets

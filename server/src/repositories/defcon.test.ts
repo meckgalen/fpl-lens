@@ -113,7 +113,13 @@ async function insertGameweek(
   fixtureId: number,
   gw: number,
   dc: number | null,
-  opponentTeamId: number
+  opponentTeamId: number,
+  /**
+   * 0/1/NULL, as the column really is. Defaults to 1 — a started match — so
+   * every test written before item 24 keeps the fixture it was written against
+   * and only the tests that care about the bench say so.
+   */
+  starts: number | null = 1
 ): Promise<void> {
   await db.query(
     `INSERT INTO player_gameweeks
@@ -128,8 +134,8 @@ async function insertGameweek(
              0, 0, 0, 0, 0, 0,
              0, 0, 0, 0, 0, 0,
              50, 0, 0, 0,
-             1, $6)`,
-    [playerId, fixtureId, SEASON, gw, opponentTeamId, dc]
+             $7, $6)`,
+    [playerId, fixtureId, SEASON, gw, opponentTeamId, dc, starts]
   );
 }
 
@@ -352,6 +358,151 @@ describe('the season hit count', () => {
   });
 });
 
+describe('the started-only count, item 24', () => {
+  /**
+   * A helper for the shape these tests all need: one player, several rows, each
+   * carrying its own `starts` as well as its own DC.
+   */
+  async function seedRows(
+    db: PoolClient,
+    code: number,
+    name: string,
+    position: 'GK' | 'DEF' | 'MID' | 'FWD',
+    rows: { dc: number | null; starts: number | null }[]
+  ): Promise<void> {
+    const { home, away } = await teamIds(db);
+    const { rows: p } = await db.query<{ id: number }>(
+      `INSERT INTO players (fpl_code, web_name) VALUES ($1, $2) RETURNING id`,
+      [code, name]
+    );
+    const playerId = p[0].id;
+    await db.query(
+      `INSERT INTO player_seasons (player_id, season, fpl_element_id, team_id, position, start_cost)
+       VALUES ($1, $2, 1, $3, $4, 50)`,
+      [playerId, SEASON, home, position]
+    );
+    for (const [i, row] of rows.entries()) {
+      const { rows: f } = await db.query<{ id: number }>(
+        `INSERT INTO fixtures (season, fpl_fixture_id, gw, home_team_id, away_team_id, finished)
+         VALUES ($1, $2, $3, $4, $5, true) RETURNING id`,
+        [SEASON, i + 1, i + 1, home, away]
+      );
+      await insertGameweek(db, playerId, f[0].id, i + 1, row.dc, away, row.starts);
+    }
+  }
+
+  it('diverges from the total exactly on a hit won off the bench', async () => {
+    // **The test the item exists for.** A substitute who clears the threshold
+    // is a hit — `defcon_hits` counts him — and he is not a hit in a start, so
+    // `defcon_hits_started` does not. Before item 24 there was one numerator
+    // and the ratio divided bench hits by a denominator that never covered
+    // them.
+    //
+    // Four rows for one defender: two hits started, one hit off the bench, one
+    // start below the threshold. Every number below is distinct — 3 hits, 2
+    // started, 3 starts — so no two of them can be swapped and still agree.
+    await withRollback(async (db) => {
+      await seedRows(db, 990070, 'Bencher', 'DEF', [
+        { dc: 12, starts: 1 },
+        { dc: 10, starts: 1 },
+        { dc: 11, starts: 0 },
+        { dc: 4, starts: 1 },
+      ]);
+
+      const totals = await listPlayerTotals(db, SEASON);
+      const player = totals.find((t) => t.id === 990070);
+      assert.ok(player, 'the synthetic player must appear');
+
+      assert.equal(player.starts, 3);
+      assert.equal(player.defcon_hits, 3, 'the count keeps the bench hit');
+      assert.equal(player.defcon_hits_started, 2, 'the ratio numerator drops it');
+      assert.notEqual(
+        player.defcon_hits,
+        player.defcon_hits_started,
+        'if these agree the gate is not being applied at all'
+      );
+
+      // What the two produce on screen, which is the actual defect: 1.00
+      // against a true 0.67. Asserted here rather than left implicit, because
+      // the divergence above is only interesting for what it does to the ratio.
+      assert.equal((player.defcon_hits! / player.starts!).toFixed(2), '1.00');
+      assert.equal((player.defcon_hits_started! / player.starts!).toFixed(2), '0.67');
+    });
+  });
+
+  it('does not count a NULL start as a hit in a start', async () => {
+    // `pg.starts = 1` is NULL where `starts` is NULL, so `NULL AND …` is NULL
+    // and the row falls out of the FILTER rather than into it. The season-level
+    // consequence is the next test; this one pins the per-row behaviour, and it
+    // is a `COALESCE(starts, 1)` away from being wrong.
+    //
+    // The player is otherwise all hits, so a NULL read as a start would give 2
+    // rather than 1 — a wrong number rather than a missing one.
+    await withRollback(async (db) => {
+      await seedRows(db, 990071, 'NullStart', 'DEF', [
+        { dc: 12, starts: 1 },
+        { dc: 12, starts: null },
+      ]);
+
+      const totals = await listPlayerTotals(db, SEASON);
+      const player = totals.find((t) => t.id === 990071);
+      assert.ok(player);
+      assert.equal(player.defcon_hits, 2, 'both rows cleared the threshold');
+      assert.equal(
+        player.defcon_hits_started,
+        null,
+        'and a partly measured starts column has no honest gated count'
+      );
+    });
+  });
+
+  it('is null where starts is measured on only some rows, where the total is not', async () => {
+    // **The third guard, and the one `defcon_hits` does not need.** This is the
+    // 2022-23 shape: DC measured throughout, `starts` only from round 16. The
+    // ungated count is still honest there — nothing about it reads `starts` —
+    // so the two fields differ in their NULLs as well as their values, and the
+    // assertion is that they do.
+    //
+    // Without `fullyMeasured('starts')` this reads 1: the unmeasured row falls
+    // out of the FILTER and the count silently undercounts instead of erroring.
+    await withRollback(async (db) => {
+      await seedRows(db, 990072, 'PartialStarts', 'MID', [
+        { dc: 15, starts: null },
+        { dc: 15, starts: 1 },
+      ]);
+
+      const totals = await listPlayerTotals(db, SEASON);
+      const player = totals.find((t) => t.id === 990072);
+      assert.ok(player);
+      assert.equal(player.defcon_hits, 2, 'DC is measured on both rows, so the count stands');
+      assert.equal(player.defcon_hits_started, null, 'starts is not, so the gated count does not');
+    });
+  });
+
+  it('is null, not 0, for a registered player who has played nothing', async () => {
+    // `count(pg.fixture_id) > 0`, on the new field. The LEFT JOIN gives an
+    // unplayed player one null-extended row and `count(*) FILTER` over it
+    // returns 0, not NULL — item 13's vacuous truth in a fourth place. This is
+    // every player of 2026-27, the season the app defaults to.
+    await withRollback(async (db) => {
+      const { home } = await teamIds(db);
+      const { rows: p } = await db.query<{ id: number }>(
+        `INSERT INTO players (fpl_code, web_name) VALUES (990073, 'Unplayed24') RETURNING id`
+      );
+      await db.query(
+        `INSERT INTO player_seasons (player_id, season, fpl_element_id, team_id, position, start_cost)
+         VALUES ($1, $2, 1, $3, 'DEF', 50)`,
+        [p[0].id, SEASON, home]
+      );
+
+      const totals = await listPlayerTotals(db, SEASON);
+      const player = totals.find((t) => t.id === 990073);
+      assert.ok(player);
+      assert.equal(player.defcon_hits_started, null, 'no matches is not zero started hits');
+    });
+  });
+});
+
 describe('against the real database', () => {
   it('reproduces the audit anchors for 2025-26', async () => {
     // Computed by hand in SQL during the audit, before any of this code existed
@@ -366,6 +517,71 @@ describe('against the real database', () => {
     assert.equal(by('Senesi')?.defcon_hits, 26);
     assert.equal(by('Anderson')?.defcon_hits, 26);
     assert.equal(by('Tarkowski')?.defcon_hits, 22);
+  });
+
+  it('reproduces the two players item 24 was written from', async () => {
+    // Canvot and Ballard, the worked examples in the brief, each with exactly
+    // one hit off the bench. Derived by hand in SQL against
+    // `player_gameweeks` before the aggregate was written, so this is an
+    // outside number rather than the new code describing itself.
+    //
+    // **Both fields are asserted on every player**, which is what makes this a
+    // check on the population rather than on the plumbing: the totals are
+    // unchanged from item 14 and the started counts are one lower, and a
+    // regression in either direction moves exactly one column of the four.
+    const totals = await listPlayerTotals(pool, '2025-26');
+    const by = (name: string) => totals.find((t) => t.web_name === name);
+
+    // 10 hits, 9 of them started, over 14 starts: 0.71 became 0.64.
+    assert.equal(by('Canvot')?.defcon_hits, 10);
+    assert.equal(by('Canvot')?.defcon_hits_started, 9);
+    assert.equal(by('Canvot')?.starts, 14);
+
+    // 15 hits, 14 of them started, over 24 starts: 0.62 became 0.58.
+    assert.equal(by('Ballard')?.defcon_hits, 15);
+    assert.equal(by('Ballard')?.defcon_hits_started, 14);
+    assert.equal(by('Ballard')?.starts, 24);
+
+    // Gabriel has no bench hit, so his two counts agree and his ratio did not
+    // move. He is the control: a mutation that gates nothing passes Canvot and
+    // Ballard only by making them agree too, and one that gates everything
+    // fails here.
+    assert.equal(by('Gabriel')?.defcon_hits, 11);
+    assert.equal(by('Gabriel')?.defcon_hits_started, 11);
+  });
+
+  it('counts 8 bench hits across the whole of 2025-26', async () => {
+    // The season-wide figure, from the other side of item 14's audit, which
+    // reported 8 hits won off the bench. Summing the difference between the two
+    // fields must reproduce it — a check on the gate over 744 player-seasons
+    // rather than the two the anchors above name.
+    const totals = await listPlayerTotals(pool, '2025-26');
+    const benchHits = totals
+      .filter((t) => t.defcon_hits !== null && t.defcon_hits_started !== null)
+      .reduce((n, t) => n + (t.defcon_hits! - t.defcon_hits_started!), 0);
+
+    assert.equal(benchHits, 8);
+  });
+
+  it('never lets the started count exceed starts, on any season', async () => {
+    // **The 1.00 bound, as an invariant rather than an observation.** Item 14
+    // recorded that no 2025-26 player's ungated ratio actually exceeded 1 and
+    // treated a value above 1 as legitimate; since item 24 the bound is
+    // structural, because a hit in a start is a start. Checked over every
+    // season so a future one cannot quietly break it.
+    //
+    // The pair rule 6 keeps apart: a null started count is skipped rather than
+    // read as 0, which would compare a missing number to a real one.
+    for (const season of ['2016-17', '2022-23', '2025-26', '2026-27']) {
+      const totals = await listPlayerTotals(pool, season);
+      for (const t of totals) {
+        if (t.defcon_hits_started === null || t.starts === null) continue;
+        assert.ok(
+          t.defcon_hits_started <= t.starts,
+          `${season} ${t.web_name}: ${t.defcon_hits_started} started hits > ${t.starts} starts`
+        );
+      }
+    }
   });
 
   it('gives every player of the unplayed season a null count, never 0', async () => {
@@ -385,6 +601,32 @@ describe('against the real database', () => {
   it('gives every player of a season predating DC a null count', async () => {
     const totals = await listPlayerTotals(pool, '2016-17');
     assert.ok(totals.length > 500);
+    assert.equal(totals.filter((t) => t.defcon_hits !== null).length, 0);
+  });
+
+  it('gives every player of the unplayed season a null STARTED count too', async () => {
+    // **The guard that fails silent rather than safe, at the scale it ships
+    // at.** The synthetic test above covers one unplayed player; this covers
+    // 2026-27's whole roster, which is the season the app DEFAULTS to.
+    //
+    // Worth its own assertion rather than folding into the `defcon_hits` test
+    // beside it, because the two are not equally protected by their form.
+    // `hauls_started` is built from `sum(CASE … ELSE 0)`, which the LEFT JOIN's
+    // one null-extended row still turns into a hard 0 — but a bare `sum()` over
+    // genuinely zero rows would have been NULL, so that shape at least fails in
+    // a recognisable direction. `count(*) FILTER` returns **0 over anything**,
+    // including nothing, so dropping `count(pg.fixture_id) > 0` here produces a
+    // confident "started no hit" for 564 players who have not kicked a ball,
+    // with nothing anywhere reading as an error.
+    //
+    // Both fields are asserted, so a guard removed from either one is caught.
+    const totals = await listPlayerTotals(pool, '2026-27');
+    assert.ok(totals.length > 500, 'the season should have its full roster');
+    assert.equal(
+      totals.filter((t) => t.defcon_hits_started !== null).length,
+      0,
+      'no player has played, so no player has a started-hit count'
+    );
     assert.equal(totals.filter((t) => t.defcon_hits !== null).length, 0);
   });
 

@@ -92,3 +92,38 @@ export function defconHitSql(pg: string, ps: string): string {
               WHEN ${ps}.position = 'GK' THEN 0
             END`;
 }
+
+/**
+ * How many of a player-season's fixtures were hits.
+ *
+ * **The structural mirror of `pointCountSql`, and deliberately so.** Item 24
+ * gave `DCH/St` a started-only numerator to match `Pts10+/St`, and two count
+ * fragments with the same `startedOnly` shape is what stops the two ratios
+ * drifting apart again. The threshold itself is never restated here — this
+ * wraps `defconHitSql` above, so a change to `DEFCON_THRESHOLDS` cannot reach
+ * one aggregate and miss the other.
+ *
+ * **`count(*) FILTER` rather than `pointCountSql`'s `sum(CASE … ELSE 0)`**, and
+ * the difference is not a disagreement. `sum()` over zero rows is NULL where
+ * `count(*) FILTER` is 0, but neither caller ever sees zero rows: the LEFT JOIN
+ * in `listPlayerTotals` gives a player with no match rows exactly one
+ * null-extended row, over which the `ELSE 0` and the `FILTER` both produce a
+ * hard 0. So **both forms need the caller's `count(pg.fixture_id) > 0` guard**,
+ * and each keeps the form its module already used.
+ *
+ * **`startedOnly` gates on `starts = 1`, which bounds the ratio at 1.00.** A
+ * hit won off the bench is still a hit and still counts in `DCH`; it is only
+ * excluded from the numerator of a ratio whose denominator is starts. That was
+ * the item 24 defect: 8 bench hits across 2025-26 inflating 8 players' ratios
+ * against a denominator that never covered them.
+ *
+ * **A NULL `starts` is excluded rather than counted.** `pg.starts = 1` is NULL
+ * where `starts` is NULL, so `NULL AND …` is NULL and the row is not filtered
+ * in. That is the right answer per row and still not sufficient per season —
+ * a partly measured `starts` column undercounts silently, so the caller must
+ * also guard on `fullyMeasured('starts')`. See `listPlayerTotals`.
+ */
+export function defconHitCountSql(pg: string, ps: string, opts: { startedOnly: boolean }): string {
+  const gate = opts.startedOnly ? `${pg}.starts = 1 AND ` : '';
+  return `count(*) FILTER (WHERE ${gate}${defconHitSql(pg, ps)} = 1)`;
+}

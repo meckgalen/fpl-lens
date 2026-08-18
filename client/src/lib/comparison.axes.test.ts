@@ -93,14 +93,18 @@ describe('axis definitions', () => {
     expect(strays.map((c) => c.key)).toEqual([]);
   });
 
-  it('says that DCH/St can exceed 1, and why', () => {
-    // Item 14's finding, and the single most misreadable number on the chart:
-    // hits off the bench are in the numerator, only starts in the denominator.
-    // A reader who does not know that reads a value above 1 as a bug.
+  it('says that DCH/St counts starts only, and what happens to a bench hit', () => {
+    // The inverse of what this test asserted until item 24, when the axis stopped
+    // being able to exceed 1. The bench is still the thing a reader has to be
+    // told about — it is where the DCH count and this ratio part company, and a
+    // reader who does not know that cannot reconcile the two columns.
     const d = axisDefinition('defcon_hits_per_start')!;
-    expect(d).toMatch(/above 1/i);
     expect(d).toMatch(/bench/i);
     expect(d).toMatch(/start/i);
+    expect(d).toMatch(/1\.00/);
+    // The old wording promised the opposite, so it must not survive anywhere in
+    // the sentence.
+    expect(d).not.toMatch(/above 1\b/i);
   });
 
   it('distinguishes PPM from points per million', () => {

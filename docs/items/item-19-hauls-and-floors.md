@@ -15,6 +15,13 @@ of hauls. The ratio numerators are gated on `starts = 1`, so `H/St` and `F/St`
 are bounded at 1.00 — **unlike `DCH/St`, whose numerator is ungated and which
 can exceed 1**.
 
+> **Item 24 changed the second half of that sentence.** `DCH/St` is now gated on
+> `starts = 1` too and carries the same 1.00 bound, for the reason this item
+> established: two ratios under one `/St` suffix with opposite semantics is the
+> defect. The contrast below is item 19's own reasoning and is kept as written;
+> the two fragments are still separate, because they compare against different
+> rules. See `item-24-dch-per-start-gated.md`.
+
 Scope deliberately narrow: no per-fixture 0/1 columns (points are already
 visible on every gameweek row, so a flag beside them restates the column), no
 career table, no comparison chart. The chart exclusion is argued below.

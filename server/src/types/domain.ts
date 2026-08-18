@@ -116,6 +116,24 @@ export interface PlayerSeasonTotals {
   defcon_hits: number | null;
 
   /**
+   * The same count restricted to fixtures the player STARTED — the numerator of
+   * `DCH/St`, and the reason that ratio is bounded at 1.00 (item 24).
+   *
+   * **`defcon_hits` above counts bench hits and this does not, which is the
+   * whole distinction.** The count column answers "how often did this happen";
+   * the ratio answers "how reliably does he do it when picked", and a
+   * numerator drawn from appearances over a denominator of starts answers
+   * neither. Item 14 shared one numerator between them on purpose and item 24
+   * reversed it — see `repositories/defcon.ts`.
+   *
+   * NULL for everything `defcon_hits` is NULL for, **plus** a player-season
+   * whose `starts` column is only partly measured, exactly as `hauls_started`
+   * below. No column renders it directly; it exists so the division happens on
+   * the client, once, beside every other quotient.
+   */
+  defcon_hits_started: number | null;
+
+  /**
    * How many FIXTURES reached 10 and 4 points — see `repositories/hauls.ts` for
    * the rule and for why the counts are not freely comparable across seasons.
    * The unit is the fixture and not the round, so a double gameweek can
@@ -131,8 +149,9 @@ export interface PlayerSeasonTotals {
   floors: number;
   /**
    * The same two counts restricted to fixtures the player STARTED — the
-   * numerators of `Pts10+/St` and `Pts4+/St`, and the reason those ratios are bounded at
-   * 1.00 where `DCH/St` is not.
+   * numerators of `Pts10+/St` and `Pts4+/St`, and the reason those ratios are
+   * bounded at 1.00. Since item 24 `DCH/St` is gated the same way and carries
+   * the same bound — see `defcon_hits_started` above.
    *
    * NULL where `starts` is not measured across the whole player-season (every
    * season before 2022-23, and any 2022-23 player with a row before round 16),

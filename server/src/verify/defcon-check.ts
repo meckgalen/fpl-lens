@@ -56,6 +56,47 @@ const EXPECTED = {
   GK: { players: 97, median: 0, zeroHit: 97, totalHits: 0 },
 } as const;
 
+/**
+ * The same distribution over the STARTED-ONLY count — item 24's new numerator.
+ *
+ * **A second frozen distribution rather than an edit to the one above**, and
+ * that is not a stylistic choice. The item brief expected these literals to
+ * move; they do not, because `defcon_hits` still counts every hit and item 24
+ * changed only the ratio. Editing them would have recorded a change that did
+ * not happen and lost the check on the count that did not move.
+ *
+ * **This catches a wrong population, and — measured rather than predicted —
+ * part 1 catches it too.** The expectation when this was written was that both
+ * sides of the cross-derivation would agree with themselves on the gate. They
+ * do not: the aggregate gates in SQL and the row side gates in TypeScript, so
+ * removing `defconHitCountSql`'s gate reddens part 1 with 8 disagreements as
+ * well as part 2. What part 1 still cannot see is a wrong *threshold*, since
+ * `defconHitSql` really is on both of its sides.
+ *
+ * That does not make this redundant. Part 1 compares the app to itself across a
+ * language boundary; these numbers come from outside the code entirely, which
+ * is the only thing that catches the two sides being wrong together.
+ *
+ * Derived the way the block above was: a hand-written SQL query over
+ * `player_gameweeks` joined to `player_seasons`, restating the thresholds as
+ * literals and never importing a line of shipped code. **The instrument was
+ * gated before it was trusted** — the same query reproduces all four rows of
+ * `EXPECTED` above, which were frozen in item 14 from an independent
+ * derivation, so its started-only figures beside them are not the new code
+ * paraphrasing itself.
+ *
+ * What moved and what did not, which is the check's whole content: **DEF loses
+ * 4 hits and gains a zero-hit player** (a defender whose only hit came off the
+ * bench), **MID loses 4**, and FWD and GK do not move at all. 8 bench hits in
+ * the season, which is item 14's audit figure arrived at from the other side.
+ */
+const EXPECTED_STARTED = {
+  DEF: { players: 270, median: 1, zeroHit: 130, totalHits: 817 },
+  MID: { players: 379, median: 0, zeroHit: 261, totalHits: 583 },
+  FWD: { players: 95, median: 0, zeroHit: 91, totalHits: 9 },
+  GK: { players: 97, median: 0, zeroHit: 97, totalHits: 0 },
+} as const;
+
 type Position = keyof typeof EXPECTED;
 
 const median = (sorted: number[]): number =>
@@ -92,12 +133,27 @@ async function main(): Promise<void> {
     // no flag is null. A null WOULD be a real finding, so it is counted rather
     // than swallowed — see the null tally below.
     const summed = history.reduce((n, g) => n + (g.defcon_hit ?? 0), 0);
+    // The same sum restricted to started rows: item 24's numerator, derived
+    // from the per-row flags instead of the aggregate.
+    //
+    // **Stronger than the ungated comparison above, which is the one thing in
+    // this part that is more than plumbing.** Both halves share `defconHitSql`,
+    // so neither can see a wrong threshold. But the `starts = 1` gate is
+    // written in SQL on the aggregate side and in TypeScript right here, so it
+    // is genuinely stated twice — measured: dropping the SQL gate reddens this
+    // with 8 disagreements, one per bench hit in the season.
+    const summedStarted = history.reduce(
+      (n, g) => n + (g.starts === 1 ? (g.defcon_hit ?? 0) : 0),
+      0
+    );
 
     compared++;
-    if (t.defcon_hits === summed) agree++;
+    if (t.defcon_hits === summed && t.defcon_hits_started === summedStarted) agree++;
     else
       mismatches.push(
-        `   ${String(t.id).padStart(7)} ${t.web_name.padEnd(18)} aggregate ${t.defcon_hits}, rows ${summed}`
+        `   ${String(t.id).padStart(7)} ${t.web_name.padEnd(18)} ` +
+          `aggregate ${t.defcon_hits}/${t.defcon_hits_started}, ` +
+          `rows ${summed}/${summedStarted}`
       );
   }
 
@@ -124,12 +180,16 @@ async function main(): Promise<void> {
   console.log('   before defcon.ts existed. A threshold swapped between');
   console.log('   positions moves them and nothing else would notice.\n');
 
-  const byPosition = new Map<Position, number[]>([
-    ['DEF', []],
-    ['MID', []],
-    ['FWD', []],
-    ['GK', []],
-  ]);
+  const emptyByPosition = (): Map<Position, number[]> =>
+    new Map<Position, number[]>([
+      ['DEF', []],
+      ['MID', []],
+      ['FWD', []],
+      ['GK', []],
+    ]);
+
+  const byPosition = emptyByPosition();
+  const byPositionStarted = emptyByPosition();
 
   // Position from player_seasons (rule 10), which is also what the rule reads.
   const positions = await pool.query<{ id: number; position: Position }>(
@@ -144,36 +204,51 @@ async function main(): Promise<void> {
     const position = positionOf.get(t.id);
     if (position === undefined) continue;
     byPosition.get(position)?.push(t.defcon_hits ?? 0);
+    byPositionStarted.get(position)?.push(t.defcon_hits_started ?? 0);
   }
 
-  console.log('   pos  players  median  zero-hit  total hits');
-  for (const position of ['DEF', 'MID', 'FWD', 'GK'] as Position[]) {
-    const hits = (byPosition.get(position) ?? []).slice().sort((a, b) => a - b);
-    const actual = {
-      players: hits.length,
-      median: median(hits),
-      zeroHit: hits.filter((h) => h === 0).length,
-      totalHits: hits.reduce((a, b) => a + b, 0),
-    };
-    const want = EXPECTED[position];
-    const ok =
-      actual.players === want.players &&
-      actual.median === want.median &&
-      actual.zeroHit === want.zeroHit &&
-      actual.totalHits === want.totalHits;
+  const compareDistribution = (
+    tally: Map<Position, number[]>,
+    frozen: typeof EXPECTED | typeof EXPECTED_STARTED
+  ): void => {
+    console.log('   pos  players  median  zero-hit  total hits');
+    for (const position of ['DEF', 'MID', 'FWD', 'GK'] as Position[]) {
+      const hits = (tally.get(position) ?? []).slice().sort((a, b) => a - b);
+      const actual = {
+        players: hits.length,
+        median: median(hits),
+        zeroHit: hits.filter((h) => h === 0).length,
+        totalHits: hits.reduce((a, b) => a + b, 0),
+      };
+      const want = frozen[position];
+      const ok =
+        actual.players === want.players &&
+        actual.median === want.median &&
+        actual.zeroHit === want.zeroHit &&
+        actual.totalHits === want.totalHits;
 
-    console.log(
-      `   ${position.padEnd(4)} ${String(actual.players).padStart(7)}  ${String(actual.median).padStart(6)}  ` +
-        `${String(actual.zeroHit).padStart(8)}  ${String(actual.totalHits).padStart(10)}   ${ok ? 'ok' : 'MISMATCH'}`
-    );
-    if (!ok) {
-      failures++;
       console.log(
-        `        expected players ${want.players}, median ${want.median}, ` +
-          `zero-hit ${want.zeroHit}, total hits ${want.totalHits}`
+        `   ${position.padEnd(4)} ${String(actual.players).padStart(7)}  ${String(actual.median).padStart(6)}  ` +
+          `${String(actual.zeroHit).padStart(8)}  ${String(actual.totalHits).padStart(10)}   ${ok ? 'ok' : 'MISMATCH'}`
       );
+      if (!ok) {
+        failures++;
+        console.log(
+          `        expected players ${want.players}, median ${want.median}, ` +
+            `zero-hit ${want.zeroHit}, total hits ${want.totalHits}`
+        );
+      }
     }
-  }
+  };
+
+  console.log('   every hit, the item 14 audit:');
+  compareDistribution(byPosition, EXPECTED);
+
+  // The two distributions stay two, for the reason the two PARTS do. Folding
+  // them into one table would let the count that item 24 did not change vouch
+  // for the numerator that it did.
+  console.log('\n   hits in STARTED fixtures only, the DCH/St numerator (item 24):');
+  compareDistribution(byPositionStarted, EXPECTED_STARTED);
 
   // The two results stay two results. Reporting one verdict would let part 1's
   // 100% stand in for a rule check it cannot perform.

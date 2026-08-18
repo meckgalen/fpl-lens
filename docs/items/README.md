@@ -218,7 +218,8 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
 
       Four columns following item 14's shape. The ratio numerators are **gated
       on `starts = 1`**, so `H/St` and `F/St` cannot exceed 1.00 where `DCH/St`
-      can — near-identical fragments that must not be shared, and the one
+      still could — item 24 later gated that one too, for this reason —
+      near-identical fragments that must not be shared, and the one
       definition this item got wrong twice. **`sum()` over zero rows is NULL and
       that does not help here**: the LEFT JOIN gives a player with no matches
       one null-extended row, and the `ELSE 0` makes it a hard zero, so all 564
@@ -318,3 +319,30 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       22's audit. The native-dropdown check is recorded as a **proxy**: the popup
       is drawn by the OS outside the page, so computed `color-scheme` is the
       ceiling for automated evidence.
+
+- [x] **24. `DCH/St` counts only hits made in starts.** → [`item-24-dch-per-start-gated.md`](item-24-dch-per-start-gated.md)
+
+      A deliberate reversal of item 14, which shared one numerator between the
+      `DCH` count and the `DCH/St` ratio so that a value above 1 would read as
+      informative rather than broken. What that missed is that a numerator drawn
+      from appearances over a denominator of starts is a ratio of two
+      populations — and that item 19 then shipped `Pts10+/St` **gated**, leaving
+      two ratios under one `/St` suffix with opposite semantics and nothing on
+      screen telling them apart. That inconsistency, not Canvot's 0.07, is what
+      moved it. `DCH` is unchanged and still counts bench hits; only the ratio is
+      gated, and it is now bounded at 1.00 by construction rather than by luck.
+      **The comparison radar axis was outside the brief's stated scope and had to
+      come in** — the same quantity under the same label one page away — which
+      dragged in the frozen ceilings. They were re-derived (**ceilings round UP,
+      floors DOWN**, item 16's directional-rounding rule) and **did not move**:
+      DEF p99 0.7056 → 0.6998 and MID unchanged to six decimals, both still on
+      the 0.80 / 0.60 rungs, so `supersedes` stays unset rather than recording a
+      change that did not happen. Two premises in the brief were wrong and were
+      measured rather than assumed: `verify:defcon` part 2's literals do **not**
+      move (they freeze the total, which this item leaves alone — so a second
+      distribution was added beside them), and part 1 **can** catch a lost gate
+      after all, because it states that gate in SQL on one side and TypeScript on
+      the other. The zero-start case was checked rather than assumed: the cohort
+      gate is 1,200 **minutes**, not a starts floor, so its immunity is a
+      measurement (least-started member has 13 starts) and the real guard is on
+      the denominator, in both surfaces, unchanged by this item.

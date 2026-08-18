@@ -26,7 +26,7 @@ import type {
   PlayerSeasonTotals,
   UpcomingFixture,
 } from '../types/domain.js';
-import { defconHitSql } from './defcon.js';
+import { defconHitSql, defconHitCountSql } from './defcon.js';
 import { POINT_THRESHOLDS, pointCountSql } from './hauls.js';
 import { num, numArray, numOrNull, type DbNumeric } from './parse.js';
 
@@ -241,6 +241,14 @@ interface PlayerTotalsDbRow {
    */
   defcon_hits: number | null;
   /**
+   * The DCH/St numerator: hits made in fixtures the player started.
+   *
+   * Nullable for everything `defcon_hits` is nullable for, **and one thing
+   * more** — a player-season whose `starts` column is only partly measured has
+   * no honest gated count, exactly as `hauls_started` beside it does not.
+   */
+  defcon_hits_started: number | null;
+  /**
    * `number`, not `number | null`, and the COALESCE in the query is the whole
    * reason — a haul count over zero match rows is a real 0, like `goals_scored`
    * beside it. Typing these nullable to match their `_started` siblings below
@@ -296,6 +304,7 @@ function toPlayerSeasonTotals(r: PlayerTotalsDbRow): PlayerSeasonTotals {
     // Already a number or null: cast to int in the query. Passed through rather
     // than sent via numOrNull, so no parse is claimed where none happened.
     defcon_hits: r.defcon_hits,
+    defcon_hits_started: r.defcon_hits_started,
 
     // All four are ::int in the query, so they pass through for the same reason
     // defcon_hits does: numOrNull would claim a parse that did not happen.
@@ -394,8 +403,39 @@ export async function listPlayerTotals(
             -- before the guard was written; see the comment on fullyMeasured.
             (CASE WHEN count(pg.fixture_id) > 0
                    AND ${fullyMeasured('defensive_contribution')}
-                  THEN count(*) FILTER (WHERE ${defconHitSql('pg', 'ps')} = 1)
+                  THEN ${defconHitCountSql('pg', 'ps', { startedOnly: false })}
              END)::int AS defcon_hits,
+
+            -- The DCH/St numerator, gated on starts = 1. Item 24.
+            --
+            -- **The count column above and this one no longer share a
+            -- numerator, and that reversal is the whole item.** Item 14 had
+            -- them share one deliberately, so that a value above 1 would read
+            -- as "hits more often than he starts" rather than as a bug. Item 19
+            -- then shipped Pts10+/St with a gated numerator, leaving two
+            -- ratios under the same /St suffix with opposite semantics and
+            -- nothing on screen distinguishing them. This is the one that
+            -- moved, because a numerator drawn from a population the
+            -- denominator does not cover is a ratio of two different things.
+            --
+            -- DCH itself is untouched: a hit off the bench is still a hit. It
+            -- is only excluded from a ratio whose denominator is starts.
+            --
+            -- **THREE guards, where defcon_hits needs two.** The first two are
+            -- defcon_hits' own and mean the same thing. fullyMeasured('starts')
+            -- is the third and is load-bearing for the reason hauls_started's
+            -- is: pg.starts = 1 where starts IS NULL is NULL, so the row falls
+            -- out of the FILTER and the count silently undercounts rather than
+            -- erroring. It cannot bite today -- DC is measured only in 2025-26,
+            -- where starts is measured on every row -- but it is the guard that
+            -- would be missing on a season measuring DC and holing starts, and
+            -- a guard added only once it bites is a guard added after the wrong
+            -- number shipped.
+            (CASE WHEN count(pg.fixture_id) > 0
+                   AND ${fullyMeasured('defensive_contribution')}
+                   AND ${fullyMeasured('starts')}
+                  THEN ${defconHitCountSql('pg', 'ps', { startedOnly: true })}
+             END)::int AS defcon_hits_started,
 
             -- Hauls and floors: how many fixtures reached 10 and 4 points. The
             -- rule is stated once, in repositories/hauls.ts. Here rather than in
@@ -415,8 +455,14 @@ export async function listPlayerTotals(
               AS floors,
 
             -- The ratio numerators, gated on starts = 1 so Pts10+/St and Pts4+/St are
-            -- bounded at 1.00. DCH/St above is deliberately NOT gated and can
-            -- exceed 1; do not unify these.
+            -- bounded at 1.00. Since item 24 defcon_hits_started above is gated
+            -- the same way and carries the same bound.
+            --
+            -- **Still two expressions, and they must stay two.** They compare
+            -- against different rules -- a points line here, a positional DC
+            -- threshold there -- so sharing a fragment would put one rule where
+            -- the other belongs. What they share is the startedOnly flag, which
+            -- is the part that was inconsistent and is now not.
             --
             -- (No backticks in these comments: this SQL is a template literal.)
             --

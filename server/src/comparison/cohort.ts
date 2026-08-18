@@ -94,13 +94,30 @@ export const ptsPerNow: AxisValue = (p) =>
  * his starts" stay distinguishable. Not the edge case it sounds: 367 of
  * 2025-26's 841 players have no starts at all.
  *
- * It can exceed 1 — a substitute can clear the threshold without starting — and
- * is not clamped, for the reason its picker entry gives.
+ * **Both surfaces guard that zero denominator with the same rule**, which item
+ * 24 checked rather than assumed: this returns null and `playerColumns.ts`'s
+ * `perStart` returns null, so a zero-start player breaks the radar outline over
+ * the spoke (rule 19) and renders the no-value marker in the table. The cohort
+ * cannot reach the case — but its gate is 1,200 MINUTES rather than a starts
+ * floor, so that is a measurement and not a guarantee: the least-started member
+ * of the 2025-26 DCH cohort has 13 starts, and no outfield player that season
+ * has a hit without a start. Traces are not cohort-gated at all, so the guard
+ * is what covers this rather than the gate.
+ *
+ * **The numerator is the started-only count, and it is bounded at 1.00.**
+ * Item 24: `defcon_hits` includes hits won off the bench, so dividing it by
+ * starts drew from a population the denominator did not cover. The count column
+ * on the Players list still counts every hit; only this ratio is gated.
+ *
+ * **This axis was outside item 24's stated scope and had to come in anyway.**
+ * The brief named the Players column; this is the same quantity under the same
+ * `DCH/St` label one page away, and leaving it ungated would have shipped the
+ * inconsistency the item exists to remove instead of one surface further along.
  */
 export const hitsPerStart: AxisValue = (p) =>
-  p.defcon_hits === null || p.starts === null || p.starts === 0
+  p.defcon_hits_started === null || p.starts === null || p.starts === 0
     ? null
-    : p.defcon_hits / p.starts;
+    : p.defcon_hits_started / p.starts;
 
 /**
  * How each axis is read off a row.

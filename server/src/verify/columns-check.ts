@@ -253,18 +253,31 @@ async function truthPerPlayer(season: string): Promise<Map<number, PlayerTruth>>
  * the two haul numerators), 661 lose xG and xA, **754** lose xGI — which is
  * holed at round 29 as well as through 1-15 — and all 778 lose DC. One shared
  * "the 2022-23 boundary" number would be wrong on one column in five.
+ *
+ * **Item 24 moved nine of the ten**, by adding `defcon_hits_started` to
+ * `PAYLOAD_FIELDS`. That is the check doing its job rather than a chore: a new
+ * measured field is exactly the event these numbers exist to notice.
+ *
+ * The delta was derived rather than read off the failing run, which would have
+ * been the new code setting its own expectation. `defcon_hits_started` is null
+ * wherever DC or `starts` is unmeasured, and DC is unmeasured on **every player
+ * of every season before 2025-26** — counted in SQL against `player_gameweeks`,
+ * not inferred from the payload — so each of those nine seasons gains exactly
+ * its own roster and 2025-26 gains nothing. Hence 2016-17's 5464 + 683, and so
+ * on down; the value in each row below is old + roster, and the run agreeing
+ * with it afterwards is a confirmation rather than the source.
  */
 const FROZEN_UNMEASURED_CELLS: Record<string, number> = {
-  '2016-17': 5464,
-  '2017-18': 5176,
-  '2018-19': 4992,
-  '2019-20': 5328,
-  '2020-21': 5704,
-  '2021-22': 5896,
-  '2022-23': 5615,
-  '2023-24': 1730,
-  '2024-25': 1568,
-  '2025-26': 0,
+  '2016-17': 6147, // 5464 + 683
+  '2017-18': 5823, // 5176 + 647
+  '2018-19': 5616, // 4992 + 624
+  '2019-20': 5994, // 5328 + 666
+  '2020-21': 6417, // 5704 + 713
+  '2021-22': 6633, // 5896 + 737
+  '2022-23': 6393, // 5615 + 778
+  '2023-24': 2595, // 1730 + 865
+  '2024-25': 2352, // 1568 + 784
+  '2025-26': 0, // DC and starts both measured throughout, so nothing is added
 };
 
 /**

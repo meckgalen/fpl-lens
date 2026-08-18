@@ -201,7 +201,11 @@ describe('the two quotients, whose only other implementation is on the client', 
     const [gabriel, guehi] = players;
 
     // Item 14 measured Gabriel at 11 hits in 30 starts, and the Players list
-    // renders 0.37.
+    // renders 0.37. **Unchanged by item 24's gate**, and that is why he is the
+    // right player to pin here: none of his 11 hits came off the bench, so the
+    // axis he anchors did not move when the numerator did. The players it did
+    // move — Canvot 0.71 to 0.64, Ballard 0.62 to 0.58 — are pinned in
+    // `defcon.test.ts` against the count itself.
     assert.equal(gabriel.values.defcon_hits_per_start, 11 / 30);
     assert.equal(gabriel.values.defcon_hits_per_start!.toFixed(2), '0.37');
 
@@ -213,12 +217,21 @@ describe('the two quotients, whose only other implementation is on the client', 
     // `null / 5` and `4 / null` are 0 in JavaScript, not NaN, so dropping either
     // guard renders a confident 0.00 for a player nobody measured — rule 6
     // defeated by a coercion. Item 14 found this on the client copy.
-    const base = { defcon_hits: 4, starts: 10, total_points: 100, now_cost: 50 };
+    // `defcon_hits` is set and deliberately disagrees: since item 24 the axis
+    // reads `defcon_hits_started`, so a regression reading the ungated count
+    // returns 0.9 rather than 0.4 and every assertion below moves.
+    const base = {
+      defcon_hits: 9,
+      defcon_hits_started: 4,
+      starts: 10,
+      total_points: 100,
+      now_cost: 50,
+    };
     const row = (over: Partial<PlayerSeasonTotals>) =>
       ({ ...base, ...over }) as PlayerSeasonTotals;
 
     assert.equal(hitsPerStart(row({})), 0.4);
-    assert.equal(hitsPerStart(row({ defcon_hits: null })), null);
+    assert.equal(hitsPerStart(row({ defcon_hits_started: null })), null);
     assert.equal(hitsPerStart(row({ starts: null })), null);
     // Zero starts is null rather than 0, so "made no starts" and "hit none of
     // his starts" stay distinguishable.

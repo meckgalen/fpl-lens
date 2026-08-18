@@ -108,6 +108,15 @@ export const PAYLOAD_FIELDS = {
   // Derived: the hit count is a count over `defensive_contribution`, so it is
   // unmeasured exactly where that column is.
   defcon_hits: { kind: 'measured', inputs: ['defensive_contribution'] },
+  // Derived twice over: a count over `defensive_contribution` that is also
+  // gated on `starts = 1`, so it is unmeasured wherever EITHER input is. The
+  // extra input is the whole difference from `defcon_hits` above, and it is
+  // restated here rather than read off the shipped guard for the reason this
+  // file exists — see the header.
+  defcon_hits_started: {
+    kind: 'measured',
+    inputs: ['defensive_contribution', 'starts'],
+  },
   // Derived: gated on `starts = 1`, so `starts` is the input and `total_points`
   // — being NOT NULL — can never be the restrictive one. These two are the
   // fields the defect was in.

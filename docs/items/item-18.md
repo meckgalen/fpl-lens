@@ -110,7 +110,10 @@ The two clauses catch opposite mistakes and neither alone suffices. Deleting one
 resolves to a description **not equal to** the label or the title, that `Pts/£`
 names its sibling `Pts/£s`, that `PPM` says "not points per million", and that
 `DCH/St` says a value above 1 is meaningful and why (bench hits in the numerator,
-starts only in the denominator — item 14's finding).
+starts only in the denominator — item 14's finding). **Item 24 inverted that last
+assertion**: the axis is gated on `starts = 1` and cannot exceed 1.00, so the
+test now requires the description to name the bench, the start and the 1.00
+bound, and to *not* promise a value above 1.
 
 `ComparisonRadar.test.tsx` dropped its hand-written `KEYS` array for the shipped
 list. `Comparison.test.tsx`'s `spokeLabels` now reads the caption's own text

@@ -290,8 +290,25 @@ describe('availability decides what renders', () => {
         // starts, one with none at all. 367 of 2025-26's 841 players have no
         // starts, so the placeholder is the common case rather than the edge.
         players: [
-          aPlayer({ id: 1, web_name: 'Regular', team: 3, defcon_hits: 11, starts: 30 }),
-          aPlayer({ id: 2, web_name: 'Benchwarmer', team: 3, defcon_hits: 0, starts: 0 }),
+          // Item 24: the ratio reads `defcon_hits_started`, so `defcon_hits` is
+          // set higher on purpose. Reading the ungated count would render 0.43
+          // rather than 0.37 — a wrong number rather than the same one.
+          aPlayer({
+            id: 1,
+            web_name: 'Regular',
+            team: 3,
+            defcon_hits: 13,
+            defcon_hits_started: 11,
+            starts: 30,
+          }),
+          aPlayer({
+            id: 2,
+            web_name: 'Benchwarmer',
+            team: 3,
+            defcon_hits: 2,
+            defcon_hits_started: 0,
+            starts: 0,
+          }),
         ],
         teams,
         columns: availability({}, { season: '2025-26' }),
@@ -303,6 +320,9 @@ describe('availability decides what renders', () => {
     expect(headers()).toContain('DCH/St');
     // 11/30 = 0.3666… → 0.37, and no starts is a placeholder rather than 0.00,
     // because "made no starts" and "hit none of his starts" are different.
+    // Benchwarmer also carries two hits won off the bench, which is the case
+    // item 24 asked about: the denominator is what nulls it, so it is still the
+    // placeholder rather than Infinity.
     expect(screen.getByText('0.37')).toBeInTheDocument();
     expect(screen.queryByText('0.00')).not.toBeInTheDocument();
   });
