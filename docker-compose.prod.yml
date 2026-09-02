@@ -78,6 +78,27 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        
+  # Run by cron, never by `up`, hence the profile:
+  #   docker compose -f docker-compose.prod.yml --profile ingest run --rm ingest \
+  #     npx tsx src/ingest/ingest-live-season.ts
+  #
+  # Same build stage as migrate, for the same reason: tsx is a devDependency
+  # the runtime stage omits. No `command`, because the in-season refresh is two
+  # scripts in a fixed order and the wrapper supplies each. That order is a hard
+  # dependency: ingest-live-season.ts first, or the gameweek sync rolls back on
+  # a player registered since the last run having no player_seasons row.
+  ingest:
+    profiles: ['ingest']
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+      target: build
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   fpl_lens_pgdata_prod:
