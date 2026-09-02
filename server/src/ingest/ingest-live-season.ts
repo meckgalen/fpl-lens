@@ -86,9 +86,16 @@ const FIXTURES_PER_ROUND = 10;
 const MATCHES_PER_CLUB = 38;
 const HOME_MATCHES_PER_CLUB = 19;
 
-/** A squad is 15 registered players at minimum; the ceiling is slack. */
+/**
+ * A squad is 15 registered players at minimum. The ceiling exists to catch a
+ * grouping bug that files players under the wrong club, not to police squad
+ * size: the observed spread on 3 Sep 2026, the day after the window shut, was
+ * 24 (EVE) to 43 (HUL), with TOT on 40. The previous ceiling of 40 was set
+ * pre-season and fired on real data as soon as clubs registered their squads.
+ * A real mis-grouping shows up as a club with three figures, not 45.
+ */
 const MIN_SQUAD = 15;
-const MAX_SQUAD = 40;
+const MAX_SQUAD = 50;
 
 // ------------------------------------------------------------------ parsing
 
