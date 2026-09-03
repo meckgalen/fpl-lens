@@ -1389,7 +1389,13 @@ One item per session, committed between each. **The record of every item is
       would swallow the one line in the run worth acting on; it becomes a sticky
       marker, and the sentinel is exported so the shell and the module cannot
       drift apart in the direction where the signal is lost. `--no-deps`,
-      because an unattended job must not reconcile container state.
+      because an unattended job must not reconcile container state. A fourth
+      finding, on the VPS: `exec > >(tee …)` redirects stdout and stderr and
+      leaves **stdin**, so every `docker compose run` inherited the terminal,
+      finished its work and never returned — and cron closes stdin, so the
+      scheduled run was fine while every hand-run hung. A defect that hides from
+      the path you verify with is why the fix pins stdin rather than relying on
+      cron's environment, and why the suite now **runs** the wrapper.
 
 ## Deferred
 

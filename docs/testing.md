@@ -125,6 +125,20 @@ files, one of which touches no database — see `comparison/thresholds.test.ts`:
   and freezes 2022-23 at 117, since the "both non-null" filter excludes seven
   seasons outright and could otherwise pass on nothing.
 
+- `server/src/ingest/refresh-wrapper.test.ts` — the one link between the shell
+  wrapper and this codebase, and the only place a shell script is run by the
+  suite. Needs neither the database nor any ingest. Four static assertions read
+  `scripts/refresh-prod.sh` off disk — the hole sentinel, extracted from the
+  shipped module rather than pasted; the two ingests in the order the roster
+  dependency requires; the build before the first run; and `< /dev/null` on the
+  `compose` **function**, so a redirect moved to one call site fails here. The
+  fifth **runs** the wrapper, because the four static ones passed a script that
+  hung on every hand-run: a copy in a temp tree (it derives its log directory
+  and lock file from its own location) is spawned with a stdin pipe that is
+  never closed, against a stub `docker` that blocks while its inherited stdin
+  stays open. Gated on the stub having been invoked and on the run reaching
+  `--- done`.
+
 - `server/src/ingest/holes.test.ts` — the hole detector, on its own, because it
   is the load-bearing rule in two ingests and a regression in it would otherwise
   surface as a confusing failure somewhere else. Runs against a temp table

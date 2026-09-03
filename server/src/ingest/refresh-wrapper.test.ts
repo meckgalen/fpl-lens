@@ -17,12 +17,22 @@
  * has expired degrades into passing on nothing. A moved or renamed script must
  * fail here rather than quietly assert against an empty string.
  *
- * Run: npm test   (needs neither the database nor any ingest)
+ * Since the interactive-hang finding it is also the only place the wrapper is
+ * *run*. The suite used to be entirely static and so passed a script that hung
+ * on every hand-run, which is the reason the second describe block exists: the
+ * defect was in how the wrapper hands stdin to its children, and no assertion
+ * about the text of a command can observe a process that never returns.
+ *
+ * Run: npm test   (needs neither the database nor any ingest; needs bash,
+ * flock, timeout and find, which the wrapper needs anyway)
  */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HOLE_SENTINEL } from './ingest-live-gameweeks.js';
 
@@ -76,6 +86,20 @@ describe('scripts/refresh-prod.sh', () => {
     );
   });
 
+  it('closes stdin on the compose function, so both call sites inherit it', () => {
+    const definition = code.split('\n').find((line) => /^\s*compose\(\)/.test(line));
+    assert.ok(definition, 'the wrapper no longer defines a `compose` function');
+    assert.match(
+      definition,
+      /<\s*\/dev\/null/,
+      'the `compose` function must redirect stdin from /dev/null. Without it a `docker compose ' +
+        'run` inherits the terminal that invoked the script, completes its work and then never ' +
+        'returns — and the step timeout writes a failure marker for a step that succeeded. It ' +
+        'belongs on the function rather than a call site so that no future call can be added ' +
+        'without it'
+    );
+  });
+
   it('builds before it runs, because `docker compose run` reuses a stale image', () => {
     const build = code.indexOf('compose build ingest');
     const firstRun = code.indexOf('compose run --rm');
@@ -84,6 +108,112 @@ describe('scripts/refresh-prod.sh', () => {
       build < firstRun,
       'the build must precede the first `compose run`, or the run executes whatever image ' +
         'already exists — the defect observed in production on 3 September 2026'
+    );
+  });
+});
+
+/**
+ * Stands in for `docker compose`. It models exactly ONE property of the real
+ * thing: a child that does not return while the stdin it inherited stays open.
+ *
+ * The real hang is Compose's own stream cleanup, and this reproduces neither
+ * that mechanism nor Compose's behaviour — reading stdin to EOF is simply the
+ * cheapest process with the same observable shape. That is legitimate here
+ * because the thing under test is the *wrapper's* redirection, not Compose:
+ * the stub is the environment, not the code being checked. It cannot tell us
+ * that Compose hangs — the VPS established that — only whether the wrapper
+ * hands its children a stdin that would let it.
+ *
+ * `exec`, not a plain `cat`, so that the process blocked on the read is the
+ * direct child of `timeout`. A bash parent defers SIGTERM until its foreground
+ * command finishes, so without the exec the wrapper's own step timeout could
+ * not end the hang and the mutation run would never terminate.
+ */
+const FAKE_DOCKER = `#!/usr/bin/env bash
+echo "fake docker $*"
+exec cat > /dev/null
+`;
+
+interface WrapperRun {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  output: string;
+  timedOut: boolean;
+}
+
+/**
+ * Runs the shipped wrapper with a stdin pipe that is never written to and never
+ * closed — a non-interactive stand-in for the terminal a hand-run gives it, and
+ * the condition cron does NOT provide.
+ *
+ * The script is copied to a temporary tree rather than run in place because it
+ * derives its root, and therefore its log directory and lock file, from its own
+ * location: run in place, the test would write logs into the repository and
+ * take the lock a real refresh uses. The copy is byte-for-byte the shipped
+ * file, so it is still shipped bytes being executed.
+ */
+function runWrapperWithOpenStdin(stepTimeout: string, killAfterMs: number): Promise<WrapperRun> {
+  const dir = mkdtempSync(join(tmpdir(), 'refresh-wrapper-'));
+  mkdirSync(join(dir, 'scripts'));
+  mkdirSync(join(dir, 'bin'));
+  copyFileSync(SCRIPT_PATH, join(dir, 'scripts', 'refresh-prod.sh'));
+  writeFileSync(join(dir, 'bin', 'docker'), FAKE_DOCKER, { mode: 0o755 });
+
+  return new Promise<WrapperRun>((resolve) => {
+    const child = spawn('bash', [join(dir, 'scripts', 'refresh-prod.sh')], {
+      env: {
+        ...process.env,
+        PATH: `${join(dir, 'bin')}:${process.env.PATH ?? ''}`,
+        STEP_TIMEOUT: stepTimeout,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      // Its own process group, so the backstop below can kill anything the
+      // wrapper left behind rather than only the wrapper itself.
+      detached: true,
+    });
+
+    let output = '';
+    let timedOut = false;
+    child.stdout.on('data', (chunk: Buffer) => (output += chunk.toString()));
+    child.stderr.on('data', (chunk: Buffer) => (output += chunk.toString()));
+
+    const backstop = setTimeout(() => {
+      timedOut = true;
+      try {
+        process.kill(-child.pid!, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }, killAfterMs);
+
+    child.on('close', (code, signal) => {
+      clearTimeout(backstop);
+      rmSync(dir, { recursive: true, force: true });
+      resolve({ code, signal, output, timedOut });
+    });
+  });
+}
+
+describe('scripts/refresh-prod.sh, run', () => {
+  it('terminates and succeeds when its stdin stays open', async () => {
+    const run = await runWrapperWithOpenStdin('20s', 60_000);
+
+    assert.ok(
+      run.output.includes('fake docker'),
+      'the stub was never invoked, so this asserts nothing about how the wrapper runs ' +
+        `Compose. Output:\n${run.output}`
+    );
+    assert.equal(
+      run.timedOut,
+      false,
+      'the wrapper never returned. Every step did its work and the process stayed alive — the ' +
+        'interactive hang, back. Check that `compose()` still redirects stdin from /dev/null: ' +
+        `stdout and stderr redirection alone leaves stdin as the caller's.\n${run.output}`
+    );
+    assert.equal(run.code, 0, `the wrapper exited ${run.code}/${run.signal}:\n${run.output}`);
+    assert.ok(
+      run.output.includes('--- done'),
+      `the wrapper exited 0 without reaching its last line:\n${run.output}`
     );
   });
 });

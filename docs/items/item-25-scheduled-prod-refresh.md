@@ -9,7 +9,7 @@ data arrived by `pg_restore` and the gameweek sync had never been run.
 
 ---
 
-## The three learnings
+## The four learnings
 
 ### 1. The ordering, and a comment that dissolved one dependency and kept the other's sentence
 
@@ -69,6 +69,49 @@ because a restored database looks exactly like a correct one.
 
 `README.md` asserted the opposite — *"Production data arrives by `pg_restore`, not by
 ingestion"* — which was true when written, before the `ingest` service existed.
+
+### 4. Redirecting stdout and stderr leaves stdin, and only the hand-run path pays
+
+Found on the VPS in verification step 7 — the operator's hand-run end to end — after this
+record's first three learnings were written.
+
+**The symptom.** Each `docker compose run` step did its work: correct output, `All
+assertions passed`, data committed. Then it never returned. The process tree showed
+`timeout` → `docker compose run` → `[docker-compose] <defunct>`, with the container
+already gone. Both steps hung identically, and the 20-minute step timeout would eventually
+have fired and written `logs/last-failure` naming a step that had **succeeded**.
+
+**What it was not**, each tested on the VPS against Compose v5.3.0:
+
+| Hypothesis | Test | Result |
+| --- | --- | --- |
+| `-T` (no TTY allocation) | `run --rm --no-deps -T ingest node -e "console.log('hi')"` | returns in **0.489s**; without `-T`, 0.468s |
+| The ingest scripts leaking a handle | `run --rm --no-deps -T ingest npx tsx src/ingest/ingest-live-season.ts`, outside the wrapper | returns in **1.823s**, clean |
+
+The pool is closed at `server/src/db/pool.ts:35`, and the second row is that closure
+observed rather than assumed: the same command that hangs inside the wrapper returns in
+under two seconds outside it. So the difference is the wrapper, not the container and not
+the ingest.
+
+**The cause.** `exec > >(tee -a "$LOG") 2>&1` redirects stdout and stderr and says nothing
+about stdin, which stays whatever invoked the script. Each `docker compose run` inherits
+it, and with an interactive terminal there it blocks on stream cleanup after its work is
+done. The fix is one redirect, `< /dev/null`, on the `compose` **function** rather than at
+either call site, so no future call can be added without it.
+
+**The trap, and why it is worse than a plain bug: it is invocation-dependent, in the
+direction that defeats verification.** Cron hands its child a closed stdin, so the
+*scheduled* run — the one nobody watches — was unaffected, while every *hand-run* — the
+one a human does to check the scheduled run works — hung. A defect that hides from the
+automated path and shows only under manual inspection is survivable; this is the reverse,
+and the reverse is the one that gets diagnosed as "works in cron, therefore fine". So the
+fix pins stdin rather than relying on cron's environment, and the two paths are now
+identical: what a hand-run exercises is what cron runs.
+
+`| tee "$GW_OUT"` on step 3 needs nothing further. In `cmd | tee f` it is the pipe that
+becomes tee's stdin; `cmd`'s comes from the function's redirect. Asserted rather than
+reasoned — the run-the-wrapper test below drives all three steps, and step 3 is the piped
+one.
 
 ---
 
@@ -173,13 +216,25 @@ temporary change to the cron line.
 
 Everything below was run locally against the prod compose stack (`fpl-lens-db-prod`, a
 different database from the VPS). The VPS half — a hand-run end to end, then the first
-scheduled run — is the operator's.
+scheduled run — was the operator's, and **step 7 of it is where learning 4 came from**.
 
-### The four wrapper invariants, each mutation-checked
+Note what that means about everything above it: the local runs in this section completed,
+including two full cold runs through both `docker compose run` steps. They were invoked
+from an agent's non-interactive shell rather than from a terminal, so on learning 4's
+account they had a closed stdin and could not have hung — but that is the account being
+inferred from, not evidence gathered at the time, and the stdin those runs actually
+received was never recorded. Either way the conclusion is the same one learning 4 draws:
+a defect whose presence depends on how the script was invoked will be missed by whichever
+invocation the verification happens to use, and the fix has to remove the dependence
+rather than pick the lucky path.
+
+### The wrapper invariants, each mutation-checked
 
 The suite is `server/src/ingest/refresh-wrapper.test.ts`, and it needs neither the database
-nor any ingest. Baseline 4 pass / 0 fail. Each mutation was applied to a **copy-restored**
-file, never `git checkout` (item 14's rule):
+nor any ingest. Each mutation was applied to a **copy-restored** file, never `git checkout`
+(item 14's rule).
+
+Baseline at the time of the first four: 4 pass / 0 fail.
 
 | Mutation | Result |
 | --- | --- |
@@ -189,6 +244,64 @@ file, never `git checkout` (item 14's rule):
 | Delete the wrapper's `HOLE_SENTINEL=` line | 3 pass / **1 fail** |
 
 Restored: 4 pass / 0 fail.
+
+Learning 4 added two more, and the baseline is now **6 pass / 0 fail** in 0.35s:
+
+| Mutation | Result |
+| --- | --- |
+| Delete `< /dev/null` from the `compose` function | 4 pass / **2 fail** |
+
+Restored: 6 pass / 0 fail. The two are the static assertion and the behavioural one, and
+they fail for different reasons — which is the point of keeping both, since only one of
+them can go red for a script that merely *looks* right.
+
+### The hang, caught by running the wrapper
+
+The suite that shipped with the first three learnings was entirely static, and **it passed
+a script that hung on every hand-run.** No assertion about the text of a command can
+observe a process that does not return, so the fourth finding needed the wrapper actually
+run.
+
+Two checks, deliberately not one:
+
+- **Static.** The line defining `compose()` must match `/<\s*\/dev\/null/`. Cheap, and it
+  pins the redirect to the **function** — a redirect moved to one call site fails here
+  while the behavioural test could still pass if the other call happened to be reached
+  first.
+- **Behavioural.** The shipped script is copied to a temp tree — it derives its root, log
+  directory and lock file from its own location, so running it in place would write logs
+  into the repository and take the lock a real refresh uses — and spawned with
+  `stdio[0]: 'pipe'`, a stdin that is never written to and never closed. That is a
+  non-interactive stand-in for the terminal a hand-run gives it, and precisely the
+  condition cron does not provide.
+
+A stub `docker` on `PATH` prints its arguments and then `exec cat > /dev/null`. It models
+**one** property of the real thing — a child that does not return while the stdin it
+inherited stays open — and reproduces neither Compose's mechanism nor its behaviour. That
+is legitimate because the code under test is the wrapper's redirection: the stub is the
+*environment*, not the thing being checked. It cannot establish that Compose hangs; the
+VPS did that. `exec` rather than a plain `cat` because a bash parent defers SIGTERM until
+its foreground command finishes, so without it the wrapper's own step timeout could not
+end the hang and the mutation run would never terminate.
+
+Guarded against passing on nothing, item 20's rule: the run must contain `fake docker`, or
+the stub was never invoked and the test asserts nothing about how the wrapper runs
+Compose; and it must reach `--- done`, or the wrapper exited 0 without getting through all
+three steps.
+
+**The mutation reproduces the VPS symptom exactly.** With `< /dev/null` removed, at
+`STEP_TIMEOUT=20s`:
+
+```
+--- build the ingest image
+fake docker compose -f docker-compose.prod.yml --profile ingest build ingest
+
+FAILED at step: build the ingest image (exit 124). Marker written to .../logs/last-failure.
+```
+
+The step did its work, printed its output, and then held for the full 20 seconds until the
+timeout killed it — a failure marker for a step that succeeded, which is the symptom the
+operator reported. With the redirect present the whole run takes **54ms**.
 
 **The suite found a fault in itself first.** The ordering assertions originally searched the
 raw script text and went red against a *correct* script, because the wrapper's header

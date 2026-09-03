@@ -366,4 +366,14 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       of the step, because confirming a rebuild on a changed context passes against
       a build step that does nothing. Exercising the failure path found a bug in
       the happy path: `timeout` cannot invoke a shell function, so the wrapper was
-      running `/usr/bin/compose` instead of `docker compose`.
+      running `/usr/bin/compose` instead of `docker compose`. **A fourth finding
+      arrived from the VPS afterwards**, in verification step 7: `exec > >(tee …)`
+      redirects stdout and stderr and leaves stdin as whatever invoked the script,
+      so each `docker compose run` inherited the terminal, completed its work and
+      then never returned — and the step timeout would have written a failure
+      marker for a step that succeeded. Invocation-dependent in the direction that
+      defeats verification: cron closes stdin, so the *scheduled* run was fine and
+      only the *hand-run used to check it* hung. The redirect goes on the `compose`
+      function so no future call can omit it, and the suite that had been entirely
+      static — and had passed a script that hung — now also **runs** the wrapper
+      with a stdin that stays open.

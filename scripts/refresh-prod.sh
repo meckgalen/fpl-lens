@@ -130,7 +130,26 @@ echo "=============================================================="
 # execs whatever `compose` is on PATH — on this dev box, the mailcap mime
 # utility, which "succeeded" at being the wrong program entirely. Found by the
 # failure-path check, which is the only run that read the command's output.
-compose() { timeout "$STEP_TIMEOUT" docker compose -f "$COMPOSE_FILE" --profile ingest "$@"; }
+#
+# `< /dev/null` is load-bearing, and it is on the function rather than at either
+# call site so that both calls get it. `exec > >(tee …)` above redirects stdout
+# and stderr and leaves stdin as whatever invoked the script; a
+# `docker compose run` that inherits an interactive terminal there finishes its
+# work — correct output, "All assertions passed", data committed — and then
+# never returns, blocked on stream cleanup with the container already gone. The
+# step timeout would eventually fire and write a failure marker for a step that
+# actually succeeded.
+#
+# The trap is that it is INVOCATION-dependent: cron hands its child a closed
+# stdin, so the scheduled run was unaffected while every hand-run hung. That is
+# backwards from what verification needs — the path a human exercises is the
+# one that breaks — so stdin is pinned here, and the two paths are identical
+# rather than one of them relying on cron's environment.
+#
+# Step 3 pipes this function into `tee` and needs nothing further: in
+# `cmd | tee f` it is the pipe that becomes tee's stdin, and cmd's stdin is this
+# redirect. Both are driven end to end by `refresh-wrapper.test.ts`.
+compose() { timeout "$STEP_TIMEOUT" docker compose -f "$COMPOSE_FILE" --profile ingest "$@" < /dev/null; }
 
 # Step 1. Build FIRST, always.
 #
