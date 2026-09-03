@@ -183,7 +183,29 @@ docker compose -f docker-compose.prod.yml --profile migrate run --rm migrate
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-The migrate step is profile gated and sits between build and up, so the schema is ready before the new code reaches it. Production data arrives by `pg_restore`, not by ingestion: the runtime image deliberately ships without the tooling to write to the database.
+The migrate step is profile gated and sits between build and up, so the schema is ready before the new code reaches it.
+
+### In-season refresh
+
+Production ingests from the FPL API itself, on a schedule. `scripts/refresh-prod.sh` builds the ingest image and then runs the two ingests in their required order, and cron calls it:
+
+```
+CRON_TZ=UTC
+0 3 * * * /home/kemal/fpl-lens/scripts/refresh-prod.sh >> /home/kemal/fpl-lens/logs/cron.log 2>&1
+```
+
+Every run writes a timestamped log under `logs/`, kept 30 days. Two sticky markers are the things worth looking at, both cleared or raised automatically:
+
+- `logs/last-failure` — the run failed. Written on any non-zero exit, and removed by the next success.
+- `logs/last-hole` — FPL served a settled round with a column unpublished, so those cells are stored as NULL. The run itself succeeded. Re-run once FPL publishes and the upsert overwrites them; nothing in the database will tell you later.
+
+Three things about it that are easy to get wrong:
+
+- **`ingest-live-season.ts` runs before `ingest-live-gameweeks.ts`.** `player_seasons` is written by the former alone, so a player registered since the last run leaves the sync with no row to attach a match to and it rolls back. The wrapper is where that order is written down.
+- **Build first.** `docker compose run` reuses whatever image already exists and does not rebuild when source changes, so a stale image runs old code and says nothing.
+- **Production and local ingest independently, and neither is a copy of the other.** In-season, production is usually ahead. The one-off `pg_restore` that seeded the first gameweek is not the refresh mechanism, and restoring local over production reverts it.
+
+The ingest and migrate services both build from the Dockerfile's `build` stage, because the runtime image deliberately ships without tsx.
 
 ## Roadmap
 

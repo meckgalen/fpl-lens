@@ -34,13 +34,15 @@
  *
  * Only rows whose fixture has **settled** are written, and settled is
  * `finished AND finished_provisional` — the conjunction. FPL flips those two at
- * different moments, one at roughly full time and the other once the round's
- * bonus is confirmed, and **which is which cannot be established from any
- * season available today**: both are true on all 380 rows of completed 2025-26
- * and false on all 380 of unplayed 2026-27. The conjunction is true only once
- * both have fired, which is the later of the two under either ordering, so it
- * is correct without needing the fact. Writing a row between those moments
- * would store a real-looking 0 bonus that later changes.
+ * different moments, and **one round of live evidence says `finished_provisional`
+ * leads**: GW2 of 2026-27 played 28-31 August 2026 and still read
+ * `finished: false` with `finished_provisional: true` days afterwards, all of it
+ * flipping once the round completed. So `finished` is the one that waits for
+ * round processing, not for full time. One round is a hypothesis, not a fact,
+ * and **nothing here depends on it**: the conjunction is true only once both have
+ * fired, which is the later of the two under either ordering, so it was correct
+ * before the observation and is unchanged by it. Writing a row between those
+ * moments would store a real-looking 0 bonus that later changes.
  *
  * This is also what makes "safe to run mid-round" precise: settled fixtures are
  * ingested, ones still in play are skipped, and a later run picks them up
@@ -48,10 +50,10 @@
  *
  * ## Status
  *
- * **This script has never been run against 2026-27**, because no match has been
- * played. It is verified by replaying 2025-26 through its mapper and comparing
- * against the CSV-loaded rows — see live-gameweeks.test.ts — not by having
- * ingested anything.
+ * **Run in production from 3 September 2026**, by hand for GW1 and GW2 and on a
+ * daily schedule since (item 25). It is also verified offline by replaying
+ * 2025-26 through its mapper and comparing against the CSV-loaded rows — see
+ * live-gameweeks.test.ts — which is the check that does not need a played round.
  */
 
 import { pathToFileURL } from 'node:url';
@@ -82,6 +84,19 @@ const CONCURRENCY = 5;
 const IDEAL_MINUTES_PER_FIXTURE = 2 * 11 * 90;
 /** Reds and stoppage time make the ideal unreachable; only a shortfall past this fails. */
 const MINUTES_TOLERANCE = 0.02;
+
+/**
+ * The distinguishing phrase in the hole block `main` prints, and the string
+ * `scripts/refresh-prod.sh` greps a run log for to raise its sticky marker.
+ *
+ * A hole exits 0 — the run succeeded, the rows landed — so under cron the block
+ * is the only trace, and nobody reads the output of a cron job. Exported rather
+ * than duplicated in the shell script because the two would otherwise drift
+ * silently, in the direction where the signal is lost: a reworded block simply
+ * stops matching and the marker stops being raised, with nothing failing. A test
+ * reads the shipped script off disk and asserts it contains this exact string.
+ */
+export const HOLE_SENTINEL = 'settled fixture(s) served with a column unpublished';
 
 // ------------------------------------------------------------- resolution
 
@@ -215,7 +230,11 @@ export function buildGameweekRows(
 
     const playerId = maps.players.get(elementId);
     if (playerId === undefined) {
-      throw new Error(`${season}: element ${elementId} has no player_seasons row`);
+      throw new Error(
+        `${season}: element ${elementId} has no player_seasons row. Run ` +
+          `'npm run ingest:live' first — it is the only writer of the roster, so a player ` +
+          `registered since its last run has nothing here to attach a match to.`
+      );
     }
     const opponentId = maps.teams.get(entry.opponent_team);
     if (opponentId === undefined) {
@@ -487,12 +506,22 @@ export interface SyncOutcome {
  * Everything the run does inside one transaction, separated from `main` so it
  * can be tested without the network.
  *
- * **The order of the first two steps is the point, not an optimisation.** Every
- * 2026-27 fixture is `finished: false` from item 4's pre-season load and nothing
- * updates that until the live season ingest runs again — so a sync that read the
- * stored flags without refreshing them first would write **zero rows after
- * Gameweek 1, correctly, for a reason nothing on screen explains**. Refreshing
- * here is what removes the ordering dependency instead of documenting it.
+ * **The order of the first two steps is the point, not an optimisation.** A
+ * fixture's stored `finished` flag is only ever as fresh as the last run of the
+ * live season ingest — every 2026-27 fixture was `finished: false` from item 4's
+ * pre-season load — so a sync that read the stored flags without refreshing them
+ * first would write **zero rows after Gameweek 1, correctly, for a reason nothing
+ * on screen explains**. Refreshing here removes **that** ordering dependency, the
+ * stale fixture flags, and only that one.
+ *
+ * **The roster ordering dependency is real and remains.** `player_seasons` is
+ * written by `ingest:live` alone, so an element registered since the last run has
+ * no row to attach a match to: `loadSyncMaps` throws where a season has none at
+ * all, and `buildGameweekRows` throws per element for every other case. Both
+ * abort the transaction and nothing is written. Item 25 hit exactly that in
+ * production on 3 September 2026, mid transfer window, by running this sync
+ * first. **`ingest-live-season.ts` runs before this script, always**, and
+ * `scripts/refresh-prod.sh` is where that order is written down.
  */
 export async function syncSeasonGameweeks(
   client: PoolClient,
@@ -577,8 +606,7 @@ async function main(): Promise<void> {
     // season this is the one line in the run worth acting on.
     if (holes.length > 0) {
       console.log(
-        `\n!! ${holes.length} settled fixture(s) served with a column unpublished — ` +
-          `${holedRows} rows stored as NULL:`
+        `\n!! ${holes.length} ${HOLE_SENTINEL} — ${holedRows} rows stored as NULL:`
       );
       for (const line of summariseHoles(holes)) console.log(`     ${line}`);
       console.log(

@@ -3,12 +3,17 @@
 The deferred work list. Moved out of `CLAUDE.md` in item 15: it is a list of what
 might be built next, not something that stops wrong code being written tomorrow.
 
-**One entry did not move in full.** "Run the gameweek sync, and cross-check it
-against `event/{gw}/live`" can only be done while a round is actually in play,
-and Gameweek 1 of 2026-27 locks 21 August 2026. A dated block naming that window
-stays in `CLAUDE.md`, which is the file that gets read; the full entry is below.
-The same applies to the `finished` / `finished_provisional` observation, which
-lives in `CLAUDE.md`'s schema notes and stays there.
+**One entry did not move in full.** "Cross-check the gameweek sync against
+`event/{gw}/live`" can only be done while a round is actually in play, so a short
+block naming it stays in `CLAUDE.md`, which is the file that gets read; the full
+entry is below. It used to be dated — the window was GW1 of 2026-27, locking
+21 August 2026 — and is no longer, because the sync half is done and the
+remaining half has a window every round rather than once a season.
+
+The `finished` / `finished_provisional` observation lives in `CLAUDE.md`'s schema
+notes and stays there. It is no longer an open question: GW2 supplied one round
+of evidence that `finished_provisional` leads and `finished` waits for round
+processing (item 25).
 
 ---
 
@@ -29,9 +34,10 @@ loads a season's structure — roster, clubs, deadlines, fixtures — and runs t
 completion in about a second. The field sync stores values that are different
 every hour, and needs somewhere to put them and a policy for how often.
 
-- **Run the gameweek sync, and cross-check it against `event/{gw}/live`.**
-  The script exists (item 5); what is left is running it once a round has been
-  played, and building the check that could not be written before then.
+- **Cross-check the gameweek sync against `event/{gw}/live`.**
+  **Half of this entry is discharged.** The sync has been run: by hand for GW1
+  and GW2 on 3 September 2026, and daily on cron since (item 25). What is left is
+  the check, which could not be written before a round existed and now can.
 
   **What the cross-check compares:** element-summary's per-fixture rows, summed
   per player per round, against `event/{gw}/live`'s per-round `stats`. **What it
@@ -40,14 +46,16 @@ every hour, and needs somewhere to put them and a policy for how often.
   wrong in exactly the rounds rule 13 exists for. Without that sentence the next
   reader sees a redundant assertion and deletes it.
 
-  **And the reason to do it on 22 August rather than eventually:**
+  **And the reason to do it while a round is fresh rather than eventually:**
   element-summary is **one request per player** (564 a run) and `event/live` is
   **one request per round**. If the shapes agree, the cheap endpoint becomes
   viable for routine syncing with the expensive one kept for verification. That
   is a real saving, and it is only measurable while a round's data is fresh.
 
-  First run also flips `SEASONS_WITH_GAMEWEEKS` to eleven and turns
-  `career.test.ts` red, which is the intended announcement.
+  The first run flipped `SEASONS_WITH_GAMEWEEKS` to eleven and turned
+  `career.test.ts` red, which was the intended announcement. That fallout is open
+  and separate: the database-backed suites written when 2026-27 held no match
+  rows now rest on a false premise.
 
   **Watch the run output for a hole.** Item 7 made the sync apply the same
   NULL-for-a-hole rule the CSV ingest does, and print a loud block when it
@@ -57,10 +65,11 @@ every hour, and needs somewhere to put them and a policy for how often.
   the database distinguishes a transient hole from a permanent one, so that
   block is the only trace that a re-run is worth doing.
 
-  **When scheduling lands, that block has to become a signal rather than a log
-  line.** Nobody reads the output of a cron job, and a hole that self-heals only
-  if somebody notices does not self-heal. Belongs with the scheduling work, not
-  before it.
+  **Done in item 25.** `scripts/refresh-prod.sh` greps the run for the block and
+  raises `logs/last-hole`, a sticky marker that survives until somebody acts on
+  it — because a hole exits 0 and nobody reads the output of a cron job. The
+  matched string is exported as `HOLE_SENTINEL` and pinned by a test, so a
+  reworded block cannot silently stop being detected.
 
 - **A season total that says a round is missing, rather than blanking or
   lying.** The instrument item 7 wanted and did not have. `measuredSum` has two

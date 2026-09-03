@@ -92,6 +92,13 @@ reworded on either move.
       it no longer owns the live season's fixtures alone. The trap has a test:
       with the stored flags left stale, the sync must still ingest.
 
+      **Scoped in item 25.** What this dissolved is the dependency on the fixture
+      **flags**, and only that. The **roster** dependency is real and remains —
+      `player_seasons` has exactly one writer — and it fired in production on
+      3 September 2026 when the sync was run first during a transfer window. The
+      comment this item left above `syncSeasonGameweeks` did not say which of the
+      two it meant, and was read as covering both.
+
       **Four unscoped assertions in `ingest-gameweeks.ts` plus its test's
       precondition were scoped before they could break** — the same class item 4
       hit, found this time by reading rather than by a red run. Fourteen queries

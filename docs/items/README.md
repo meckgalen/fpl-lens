@@ -346,3 +346,24 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       gate is 1,200 **minutes**, not a starts floor, so its immunity is a
       measurement (least-started member has 13 starts) and the real guard is on
       the denominator, in both surfaces, unchanged by this item.
+
+- [x] **25. The scheduled production refresh.** → [`item-25-scheduled-prod-refresh.md`](item-25-scheduled-prod-refresh.md)
+
+      The wrapper's value is the **order and the build**, not the two commands it
+      wraps. `ingest:live` is the only writer of `player_seasons`, so running the
+      sync first rolls it back on any player registered since the last run; and
+      `docker compose run` reuses a stale image rather than rebuilding, which
+      silently ran old code in prod. Item 5's comment saying the ordering
+      dependency was *removed* was true of the fixture flags and read as though it
+      covered the roster — **one dependency was dissolved and the other inherited
+      its sentence**, which is the failure worth carrying forward. A hole exits 0,
+      so cron would swallow the one line in a run worth acting on: it becomes a
+      sticky marker, and `HOLE_SENTINEL` is exported so the shell and the module
+      cannot drift in the direction where the signal is lost. `--no-deps` was
+      **discovered, not designed** — the first run recreated the production
+      Postgres container, which is correct for `up` and a surprise restart at
+      03:00. The build-first check had to be rewritten to exercise the **absence**
+      of the step, because confirming a rebuild on a changed context passes against
+      a build step that does nothing. Exercising the failure path found a bug in
+      the happy path: `timeout` cannot invoke a shell function, so the wrapper was
+      running `/usr/bin/compose` instead of `docker compose`.

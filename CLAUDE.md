@@ -20,19 +20,22 @@ row**, because none has been played. Anything that used to say "the ten seasons"
 has to pick which of the two it meant: `ALL_SEASONS` and `SEASONS_WITH_GAMEWEEKS`
 in `career.test.ts` were one constant and are now two.
 
-**Five ingest scripts, four of which have been run.** The three CSV scripts go in
+**Five ingest scripts, all of which have been run.** The three CSV scripts go in
 order — `ingest:dimensions`, `ingest:fixtures`, `ingest:gameweeks` — and each
 asserts its predecessors' row counts before it starts, failing with a message
 naming the one to run first. `ingest:live` has no ordering constraint, owns
 2026-27 end to end, and is meant to be re-run through the transfer window.
 
-**The fifth, `ingest:live-gameweeks`, has never been run**, because no 2026-27
-match has been played; item 5 built and verified it anyway. Two consequences a
-session will otherwise get wrong. `player_gameweeks` holds exactly the ten CSV
-seasons. And the two "no matches recorded / no rows yet" empty states are gated
-on that table being empty, so **playing** the matches does not clear them and
-**ingesting** them does. The first real run turns `SEASONS_WITH_GAMEWEEKS` red on
-purpose: that is how the eleventh season announces itself.
+**The fifth, `ingest:live-gameweeks`, has run in production since 3 September
+2026 and runs daily (item 25), so `player_gameweeks` now holds eleven seasons.**
+Two consequences a session will otherwise get wrong. **It runs after
+`ingest:live`, never before** — `player_seasons` is written by that script alone,
+so a player registered since the last run leaves the sync with no row to attach a
+match to and it rolls back; `scripts/refresh-prod.sh` is where the order lives.
+And the two "no matches recorded / no rows yet" empty states are gated on that
+table being empty rather than on the calendar, so **playing** the matches does
+not clear them and **ingesting** them does — which is why they are clear for
+2026-27 now and were not in August.
 
 **Item 7 stored NULL where the source holed a column — five columns of them, and
 deliberately not four.** That is Data Layer rule 6 applied per **fixture** as well
@@ -721,11 +724,18 @@ Season 2026-27: teams=20 players=564 events=38 fixtures=380
 No change: every table this ingest writes is byte-identical to before the run.
 ```
 
-`npm run ingest:live-gameweeks` loads the live season's match rows. It has no
-ordering constraint either — it refreshes fixture state itself before reading it
-— and is safe to run mid-round: fixtures that have settled are ingested, ones
-still in play are skipped, and a later run picks them up without touching what
-is already there.
+`npm run ingest:live-gameweeks` loads the live season's match rows. It is safe to
+run mid-round: fixtures that have settled are ingested, ones still in play are
+skipped, and a later run picks them up without touching what is already there.
+
+**It runs AFTER `ingest:live`, always**, and the older claim that it has no
+ordering constraint was true of one dependency and read as though it were true of
+both. It refreshes fixture *flags* itself, so it does not depend on `ingest:live`
+for those. It does depend on it for the **roster**: `player_seasons` has exactly
+one writer, so an element registered since the last run has no row and the sync
+rolls back on `element N has no player_seasons row`. That fired in production on
+3 September 2026, mid transfer window. `scripts/refresh-prod.sh` is the order
+written down, and cron calls it daily — see the README.
 
 `npm run verify:columns` runs **two parts, and they answer different questions**.
 **Read-only**; exits non-zero on either, which neither does today.
@@ -1170,15 +1180,18 @@ every row without the caller knowing which season it is looking at. That is what
 true — it had been reading `end_cost` since step 6.
 
 **`finished` and `finished_provisional` are two flags, and "settled" is the
-conjunction.** FPL flips them at different moments — one at roughly full time,
-the other once the round's bonus is confirmed — and **which is which cannot be
-established from any season available today**: both are `True` on all 380 rows
-of completed 2025-26 and `false` on all 380 of unplayed 2026-27, so only a match
-in progress distinguishes them. The gameweek sync gates on the conjunction,
-which is true only once both have fired — the later of the two under either
-ordering — so it is right without needing the fact. **One cheap observation on
-22 August settles it**: hit `/api/fixtures/` during a live match and record both
-flags for a match in play and one that has just ended.
+conjunction.** FPL flips them at different moments, and **one round of live
+evidence says `finished_provisional` leads**: GW2 of 2026-27 played 28-31 August
+2026 and still read `finished: false` with `finished_provisional: true` days
+afterwards, all of it flipping once the round completed. So `finished` is the one
+that waits for round processing rather than for full time — which is the opposite
+way round from what the names suggest, and is the whole reason the schedule reads
+rounds overnight rather than after the last whistle.
+
+One round is a hypothesis, not a fact. **Nothing in the code depends on it**: the
+sync gates on the conjunction, true only once both have fired — the later of the
+two under either ordering — so it was right before the observation and is
+unchanged by it.
 
 In SQL that test is **`finished AND COALESCE(finished_provisional, true)`**,
 never the bare conjunction, and `SETTLED_SQL` in `sync-fixtures.ts` is the one
@@ -1365,6 +1378,19 @@ One item per session, committed between each. **The record of every item is
       1 turned out not to exist, because its gate is stated in SQL on one side
       and TypeScript on the other.
 
+- [x] **25. The scheduled production refresh.** — the wrapper's value is the
+      **order and the build**, not the two commands: `ingest:live` writes
+      `player_seasons` alone, so the sync rolls back on any player registered
+      since the last run, and `docker compose run` reuses a stale image rather
+      than rebuilding. Both fired in prod on 3 September 2026. The comment
+      claiming the ordering dependency was *removed* was true of the fixture
+      flags and read as though it covered the roster — **one dependency
+      dissolved, the other inherited its sentence**. A hole exits 0, so cron
+      would swallow the one line in the run worth acting on; it becomes a sticky
+      marker, and the sentinel is exported so the shell and the module cannot
+      drift apart in the direction where the signal is lost. `--no-deps`,
+      because an unattended job must not reconcile container state.
+
 ## Deferred
 
 **The work list is `docs/roadmap.md`.** Each entry is picked deliberately, as the
@@ -1372,37 +1398,16 @@ subject of a session, and never drifted into as a side effect of another task:
 nothing on it is a prerequisite for anything already built, so touching one while
 working on something else is scope creep rather than progress.
 
-One entry does not keep. It is repeated here rather than left in a file nothing
-reads by default, because its window opens and closes:
+One entry does not keep, because its window is a round in play rather than a
+season:
 
-> ### Dated: **Gameweek 1 locks 21 August 2026**
->
-> **Run `npm run ingest:live-gameweeks` once the first round has been played, and
-> cross-check it against `event/{gw}/live` while the data is fresh.** The sync was
-> written in item 5 and has never been run; the cross-check could not be written
-> before a round existed. Both are only doable in a window that opens at GW1.
->
-> **Why it has to be then**, and not eventually: `element-summary` is one request
-> per player (564 a run) while `event/{gw}/live` is one request per round, and
-> whether the cheap endpoint is usable turns on whether the two agree about a
-> double gameweek — which is exactly the thing rule 13 exists for and exactly the
-> thing that is unobservable outside a played round.
->
-> **Watch the run output for a hole.** The sync applies the same NULL-for-a-hole
-> rule the CSV ingest does and prints a loud block when it fires. On the live path
-> that means FPL served a *settled* round with a column unpublished — an outage
-> rather than a scraper gap — so **re-run the sync** once FPL has published, and
-> the upsert overwrites the NULL. Nothing in the database distinguishes a
-> transient hole from a permanent one, so that block is the only trace that a
-> re-run is worth doing.
->
-> First run also flips `SEASONS_WITH_GAMEWEEKS` to eleven and turns
-> `career.test.ts` red, which is the intended announcement.
->
-> The related observation, whose window is the same and whose home is the schema
-> notes above: **hit `/api/fixtures/` during a live match** and record `finished`
-> and `finished_provisional` for a match in play and one that has just ended.
-> Which flips first cannot be established from any season now stored.
+> **Cross-check the gameweek sync against `event/{gw}/live` while a round is
+> fresh.** `element-summary` is one request per player (564 a run) and
+> `event/{gw}/live` is one per round, so the cheap endpoint would be a real
+> saving — but only if the two agree about a **double gameweek**, which is
+> exactly what rule 13 exists for and is unobservable outside a played round.
+> The sync half of this is done: it has run in production since 3 September 2026.
+> Full entry in `docs/roadmap.md`.
 
 The rest — the third-state total, the pre-season player list, expected points,
 the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
@@ -1665,6 +1670,20 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
   that is the entire reason for pairing — and testing the raw arms throws the
   pairing away. Pre-committing to the wrong statistic is not a safeguard; it
   just fixes the wrong answer in advance.
+- **Production and local are two independent databases, both ingesting from the
+  FPL API, and neither is a copy of the other.** In-season production is usually
+  ahead: it refreshes daily on cron (item 25) while a local database moves when
+  somebody runs an ingest. **Never `pg_restore` one over the other.** The
+  `pg_dump`/`pg_restore` that seeded production's first gameweek was a one-off
+  and is not the refresh mechanism; running it again reverts production to
+  whatever the local machine happens to hold, silently, because a restored
+  database looks exactly like a correct one.
+
+  Here rather than in the README because a session reaching for it will be
+  reasoning about the *data* — "get prod and local in step" — and will never open
+  a compose file on the way. The refresh is `scripts/refresh-prod.sh`; to move
+  data in either direction, run the ingest at the destination.
+
 - **Never use `git checkout --` to revert a mutation in a working tree full of
   uncommitted work.** Item 14 reverted one mutated file that way and discarded
   every uncommitted edit to tracked server files with it; only the untracked new

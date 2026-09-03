@@ -78,16 +78,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-        
-  # Run by cron, never by `up`, hence the profile:
-  #   docker compose -f docker-compose.prod.yml --profile ingest run --rm ingest \
-  #     npx tsx src/ingest/ingest-live-season.ts
+
+  # Run by cron, never by `up`, hence the profile. The wrapper is
+  # `scripts/refresh-prod.sh` and it is what the crontab calls; invoke it rather
+  # than these commands, because it builds first and the two below do not.
+  #
+  #   docker compose -f docker-compose.prod.yml --profile ingest run --rm --no-deps \
+  #     ingest npx tsx src/ingest/ingest-live-season.ts
   #
   # Same build stage as migrate, for the same reason: tsx is a devDependency
   # the runtime stage omits. No `command`, because the in-season refresh is two
   # scripts in a fixed order and the wrapper supplies each. That order is a hard
   # dependency: ingest-live-season.ts first, or the gameweek sync rolls back on
   # a player registered since the last run having no player_seasons row.
+  #
+  # `depends_on` is kept for a hand-run, but the wrapper passes `--no-deps`: an
+  # unattended job must not reconcile container state, and the first run after
+  # any edit to this file would otherwise RECREATE the Postgres container.
   ingest:
     profiles: ['ingest']
     build:
