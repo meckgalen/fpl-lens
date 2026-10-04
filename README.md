@@ -194,10 +194,13 @@ CRON_TZ=UTC
 0 3 * * * /home/kemal/fpl-lens/scripts/refresh-prod.sh >> /home/kemal/fpl-lens/logs/cron.log 2>&1
 ```
 
-Every run writes a timestamped log under `logs/`, kept 30 days. Two sticky markers are the things worth looking at, both cleared or raised automatically:
+Every run writes a timestamped log under `logs/`, kept 30 days. Three sticky markers are the things worth looking at, all cleared or raised automatically:
 
 - `logs/last-failure` — the run failed. Written on any non-zero exit, and removed by the next success.
 - `logs/last-hole` — FPL served a settled round with a column unpublished, so those cells are stored as NULL. The run itself succeeded. Re-run once FPL publishes and the upsert overwrites them; nothing in the database will tell you later.
+- `logs/last-capture-failure` — the raw capture had a problem: a payload was rejected or could not be fetched, the database state could not be read, or a stale `.staging-*` directory was found. It **never** fails the refresh, and it names the problem. Removed by the next clean capture.
+
+**Every run also archives two raw files**, whether or not the refresh succeeded: the FPL bootstrap and football-data.co.uk's `fixtures.csv`, gzipped, under `~/archive/fpl-lens/captures/<YYYYMMDDTHHMMSSZ>/`. The stamp matches that run's log. They are the only history of FPL's daily state (`status`, `news`, prices and so on), which no table stores, so **nothing prunes them, and nothing should**. Each directory's `MANIFEST` is `key=value` lines. `db_state` is `refreshed` or `refresh-failed`, `max_round_held` and the `round=` lines show what the database held at that moment, and each file gets its URL, the redirects followed, the HTTP status, a `sha256` of the uncompressed bytes, and `kept=yes|no` with the reason. A `.staging-*` directory is a capture that was interrupted. It is reported, never deleted: look inside it before removing it by hand.
 
 Three things about it that are easy to get wrong:
 

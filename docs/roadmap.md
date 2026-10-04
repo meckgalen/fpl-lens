@@ -32,7 +32,10 @@ sync**, which is what fills the five null fields and makes `form` and ownership
 real again. Not to be confused with `ingest:live`, which item 4 built: that
 loads a season's structure — roster, clubs, deadlines, fixtures — and runs to
 completion in about a second. The field sync stores values that are different
-every hour, and needs somewhere to put them and a policy for how often.
+every hour, and needs somewhere to put them and a policy for how often. **Since
+item 27, history from the first capture onward is already archived raw**
+(`~/archive/fpl-lens/captures/` on the VPS), so a field sync built later can
+backfill from it rather than starting from the day it ships.
 
 - **Cross-check the gameweek sync against `event/{gw}/live`.**
   **Half of this entry is discharged.** The sync has been run: by hand for GW1
@@ -129,6 +132,36 @@ every hour, and needs somewhere to put them and a policy for how often.
   fixture difficulty, minutes risk, form and ownership. **Blocked on the
   expected points work above** — without it there is no per-fixture projection
   to captain on, and the live sync, for form and ownership.
+- **A deadline-aligned second capture.** Item 27's capture runs at about 03:00
+  UTC, so news that breaks later on deadline day is missed. A second capture
+  shortly before each deadline (the deadlines are in `events`) would catch it.
+  **It is only worth having if the production predict job reads at that time
+  too**: backtest and production must see the same information (framework §15).
+- **`ep_next` as a candidate fourth baseline**, once a full season of item 27's
+  captures exists. Baselines 2 and 3 measure nearly the same quantity, while
+  `ep_next` is FPL's own forecast, an independent one. Every daily bootstrap in
+  the archive carries it.
+- **An off-box copy of `~/archive/fpl-lens/`.** It is the only copy of data that
+  cannot be regenerated, and it sits on one VPS disk. **Make it a manual weekly
+  `rsync`, pulled from the workstation**, for example
+  `rsync -a kemal@karpuz-prod:archive/fpl-lens/ ~/fpl-lens-archive/`. That needs
+  no code. Pull, never push, so the VPS holds no credentials for the workstation.
+  Do not pass `--delete`.
+- **VPS backup housekeeping, as one piece of work rather than one-offs.**
+  `~/backups` has no retention for the fpl-lens dumps, carries two fpl dump
+  prefixes (`fpl-20260831`, `fpl-lens-20260816`), and the box mixes two date
+  formats. Directories also sit outside `~/backups`: `techrelative-dump`, and
+  `~/fpl-capture`, the 2025-26 season-end `element_summary` snapshot taken on
+  2026-06-02.
+
+  The snapshot belongs at `~/archive/fpl-lens/season-end/2025-26/`. Before
+  anything is relocated:
+  - **run a repo-wide grep for any reference to `~/fpl-capture`;**
+  - check the tarball against `data/` (`tar tzf | sort` against
+    `find data -type f`);
+  - only then remove `.venv` and `data/`.
+
+  Item 27 checked the directory and deliberately did not move it.
 - **LLM scouting reports.**
 - **Deploy on karpuz-prod** alongside TechRelative (Docker Compose, Nginx),
   README with screenshots. ~~responsive design~~ — **done in item 22**, in the

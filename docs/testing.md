@@ -139,6 +139,22 @@ files, one of which touches no database — see `comparison/thresholds.test.ts`:
   stays open. Gated on the stub having been invoked and on the run reaching
   `--- done`.
 
+  **Item 27 added eight more run cases for the raw capture**, (a) to (g) plus (b2),
+  against a stubbed `curl`, a scriptable `docker` stub (`run` can fail, and `exec`
+  answers the database query) and a `CAPTURE_ROOT` in the temp tree. The stubs
+  mean `npm test` never reaches the network or the real archive. The two that
+  carry the design:
+  - **(e):** a failing capture leaves the exit code at 0 and sets no
+    `last-failure`.
+  - **(f):** a failed refresh still captures, flagged `refresh-failed`, with the
+    exit code preserved.
+
+  (b) feeds the **real** block page this network serves, from
+  `testdata/football-data-block-page.html`, and asserts the reason text. The `<`
+  check and the header check each reject that page alone, so without the
+  reason, removing either check stays green. Mutations:
+  `docs/items/item-27-raw-capture.md`.
+
 - `server/src/ingest/holes.test.ts` — the hole detector, on its own, because it
   is the load-bearing rule in two ingests and a regression in it would otherwise
   surface as a confusing failure somewhere else. Runs against a temp table

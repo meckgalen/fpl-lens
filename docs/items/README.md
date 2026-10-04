@@ -377,3 +377,19 @@ Phase 0 is one file, `phase-0.md`, covering all seven of its steps.
       function so no future call can omit it, and the suite that had been entirely
       static — and had passed a script that hung — now also **runs** the wrapper
       with a stdin that stays open.
+
+- [x] **27. Daily raw capture of the live-only sources.** → [`item-27-raw-capture.md`](item-27-raw-capture.md)
+
+      Item 26 is reserved for the harness, and this shipped first because every day
+      without it is data lost permanently. The four live-only fields are not
+      overwritten daily: **no table stores them at all**. The capture runs from the
+      **EXIT trap on both outcomes**, a deliberate reversal of the brief's strict
+      chaining. Only item 26's `form` bake-off needs a database-aligned capture,
+      and a lost day cannot be recovered.
+      - It never moves the refresh's exit code or `last-failure`.
+      - `set -e` does not apply inside an `||`-invoked function, so every step is
+        checked by hand.
+      - Validation judges the bytes, not the status: this network serves a
+        national block page as HTTP 200, so every football-data fetch runs on the
+        VPS.
+      - **Item 26 Part A must record this as shipped, not as future work.**

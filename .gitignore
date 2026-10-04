@@ -13,3 +13,4 @@ logs/
 coverage/
 docs/LEARNING.md
 *.dump
+plans/

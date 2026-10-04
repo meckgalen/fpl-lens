@@ -27,13 +27,24 @@
  * flock, timeout and find, which the wrapper needs anyway)
  */
 
-import { describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 import { HOLE_SENTINEL } from './ingest-live-gameweeks.js';
 
 const SCRIPT_PATH = fileURLToPath(new URL('../../../scripts/refresh-prod.sh', import.meta.url));
@@ -128,11 +139,75 @@ describe('scripts/refresh-prod.sh', () => {
  * direct child of `timeout`. A bash parent defers SIGTERM until its foreground
  * command finishes, so without the exec the wrapper's own step timeout could
  * not end the hang and the mutation run would never terminate.
+ *
+ * Item 27 extends it in two ways, both of which leave that property intact.
+ * `run` exits 1 when FAKE_RUN_FAIL is set, before reading stdin, which is how a
+ * failed ingest is staged. `exec` is the raw capture's read-only database
+ * query: it prints FAKE_DB_TABLE, or exits 1 when FAKE_DB_FAIL is set. Its
+ * banner goes to stderr, because the wrapper reads the query's stdout as data.
  */
 const FAKE_DOCKER = `#!/usr/bin/env bash
-echo "fake docker $*"
+echo "fake docker $*" >&2
+sub=
+for a in "$@"; do
+  case "$a" in run|exec|build) sub=$a; break ;; esac
+done
+if [ "$sub" = exec ]; then
+  [ -n "\${FAKE_DB_FAIL:-}" ] && exit 1
+  printf '%s\\n' "\${FAKE_DB_TABLE:-}"
+  exit 0
+fi
+if [ "$sub" = run ] && [ -n "\${FAKE_RUN_FAIL:-}" ]; then
+  exit 1
+fi
 exec cat > /dev/null
 `;
+
+/**
+ * Stands in for `curl`, so the suite never reaches FPL or football-data.co.uk
+ * and never depends on whether this machine can (the dev machine cannot reach
+ * the latter at all). It honours the two things the wrapper relies on: `-o` and
+ * the `-w` format, printed as `status redirects bytes url type`. The body is
+ * chosen by URL from FAKE_PAYLOADS, with optional `.status` and `.type`
+ * siblings. FAKE_CURL_FAIL makes it fail like a dropped connection.
+ */
+const FAKE_CURL = `#!/usr/bin/env bash
+[ -n "\${FAKE_CURL_FAIL:-}" ] && { echo "curl: (6) Could not resolve host" >&2; exit 6; }
+out= url=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out=$2; shift 2 ;;
+    -w|--max-redirs|--max-time|--retry) shift 2 ;;
+    -*) shift ;;
+    *) url=$1; shift ;;
+  esac
+done
+case "$url" in
+  *bootstrap-static*) name=bootstrap ;;
+  *fixtures.csv*) name=fixtures ;;
+  *) echo "fake curl: unexpected url $url" >&2; exit 3 ;;
+esac
+body=$FAKE_PAYLOADS/$name
+cp "$body" "$out"
+status=200; [ -f "$body.status" ] && status=$(cat "$body.status")
+type=application/octet-stream; [ -f "$body.type" ] && type=$(cat "$body.type")
+printf '%s 0 %s %s %s' "$status" "$(wc -c < "$body" | tr -d ' ')" "$url" "$type"
+`;
+
+const BOOTSTRAP_BODY = JSON.stringify({ elements: [{ id: 1, status: 'a' }, { id: 2, status: 'i' }], events: [] });
+
+/** The real header (2026-10-04, as served to the VPS), plus one PL row and one other. */
+const FIXTURES_BODY =
+  '﻿Div,Date,Time,HomeTeam,AwayTeam,Referee,B365H,B365D,B365A,AvgH,AvgD,AvgA,Avg>2.5,Avg<2.5\r\n' +
+  'E0,18/10/2026,15:00,Arsenal,Chelsea,,2.1,3.4,3.5,2.05,3.38,3.45,1.8,2.0\r\n' +
+  'E2,18/10/2026,15:00,Barnsley,Reading,,2.4,3.3,2.9,2.38,3.25,2.85,1.95,1.85\r\n';
+
+/** What the dev machine's network serves at the `.csv` URL: HTTP 200, HTML. Real bytes. */
+const BLOCK_PAGE = readFileSync(
+  fileURLToPath(new URL('./testdata/football-data-block-page.html', import.meta.url))
+);
+
+const DB_TABLE = '2026-27|1|610|10\n2026-27|2|626|10';
 
 interface WrapperRun {
   code: number | null;
@@ -141,30 +216,56 @@ interface WrapperRun {
   timedOut: boolean;
 }
 
+interface Tree {
+  dir: string;
+  archive: string;
+  logs: string;
+  payloads: string;
+}
+
 /**
- * Runs the shipped wrapper with a stdin pipe that is never written to and never
- * closed — a non-interactive stand-in for the terminal a hand-run gives it, and
- * the condition cron does NOT provide.
- *
- * The script is copied to a temporary tree rather than run in place because it
- * derives its root, and therefore its log directory and lock file, from its own
- * location: run in place, the test would write logs into the repository and
+ * A copy of the shipped wrapper in a temporary tree, with the stubs on PATH.
+ * The script derives its root, and so its log directory and lock file, from its
+ * own location: run in place, the test would write logs into the repository and
  * take the lock a real refresh uses. The copy is byte-for-byte the shipped
- * file, so it is still shipped bytes being executed.
+ * file, so it is still shipped bytes being executed. The archive root is inside
+ * the tree, never the default under $HOME.
  */
-function runWrapperWithOpenStdin(stepTimeout: string, killAfterMs: number): Promise<WrapperRun> {
+function makeTree(): Tree {
   const dir = mkdtempSync(join(tmpdir(), 'refresh-wrapper-'));
-  mkdirSync(join(dir, 'scripts'));
-  mkdirSync(join(dir, 'bin'));
+  for (const sub of ['scripts', 'bin', 'payloads']) mkdirSync(join(dir, sub));
   copyFileSync(SCRIPT_PATH, join(dir, 'scripts', 'refresh-prod.sh'));
   writeFileSync(join(dir, 'bin', 'docker'), FAKE_DOCKER, { mode: 0o755 });
+  writeFileSync(join(dir, 'bin', 'curl'), FAKE_CURL, { mode: 0o755 });
+  const payloads = join(dir, 'payloads');
+  writeFileSync(join(payloads, 'bootstrap'), BOOTSTRAP_BODY);
+  writeFileSync(join(payloads, 'bootstrap.type'), 'application/json');
+  writeFileSync(join(payloads, 'fixtures'), FIXTURES_BODY);
+  writeFileSync(join(payloads, 'fixtures.type'), 'text/csv');
+  return { dir, archive: join(dir, 'archive'), logs: join(dir, 'logs'), payloads };
+}
 
+/**
+ * Runs the wrapper with a stdin pipe that is never written to and never closed —
+ * a non-interactive stand-in for the terminal a hand-run gives it, and the
+ * condition cron does NOT provide.
+ */
+function runWrapper(
+  tree: Tree,
+  env: Record<string, string> = {},
+  stepTimeout = '20s',
+  killAfterMs = 60_000
+): Promise<WrapperRun> {
   return new Promise<WrapperRun>((resolve) => {
-    const child = spawn('bash', [join(dir, 'scripts', 'refresh-prod.sh')], {
+    const child = spawn('bash', [join(tree.dir, 'scripts', 'refresh-prod.sh')], {
       env: {
         ...process.env,
-        PATH: `${join(dir, 'bin')}:${process.env.PATH ?? ''}`,
+        PATH: `${join(tree.dir, 'bin')}:${process.env.PATH ?? ''}`,
         STEP_TIMEOUT: stepTimeout,
+        CAPTURE_ROOT: tree.archive,
+        FAKE_PAYLOADS: tree.payloads,
+        FAKE_DB_TABLE: DB_TABLE,
+        ...env,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       // Its own process group, so the backstop below can kill anything the
@@ -188,32 +289,217 @@ function runWrapperWithOpenStdin(stepTimeout: string, killAfterMs: number): Prom
 
     child.on('close', (code, signal) => {
       clearTimeout(backstop);
-      rmSync(dir, { recursive: true, force: true });
       resolve({ code, signal, output, timedOut });
     });
   });
 }
 
+function captures(tree: Tree): string[] {
+  if (!existsSync(tree.archive)) return [];
+  return readdirSync(tree.archive).filter((n) => /^\d{8}T\d{6}Z$/.test(n)).sort();
+}
+
+function manifest(tree: Tree, name: string): Map<string, string> {
+  const lines = readFileSync(join(tree.archive, name, 'MANIFEST'), 'utf8').split('\n');
+  const map = new Map<string, string>();
+  for (const line of lines) {
+    const at = line.indexOf('=');
+    if (at > 0 && !map.has(line.slice(0, at))) map.set(line.slice(0, at), line.slice(at + 1));
+  }
+  return map;
+}
+
+const sha256 = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
+const marker = (tree: Tree, name: string) => join(tree.logs, name);
+
 describe('scripts/refresh-prod.sh, run', () => {
   it('terminates and succeeds when its stdin stays open', async () => {
-    const run = await runWrapperWithOpenStdin('20s', 60_000);
+    const tree = makeTree();
+    try {
+      const run = await runWrapper(tree);
 
-    assert.ok(
-      run.output.includes('fake docker'),
-      'the stub was never invoked, so this asserts nothing about how the wrapper runs ' +
-        `Compose. Output:\n${run.output}`
-    );
+      assert.ok(
+        run.output.includes('fake docker'),
+        'the stub was never invoked, so this asserts nothing about how the wrapper runs ' +
+          `Compose. Output:\n${run.output}`
+      );
+      assert.equal(
+        run.timedOut,
+        false,
+        'the wrapper never returned. Every step did its work and the process stayed alive — the ' +
+          'interactive hang, back. Check that `compose()` still redirects stdin from /dev/null: ' +
+          `stdout and stderr redirection alone leaves stdin as the caller's.\n${run.output}`
+      );
+      assert.equal(run.code, 0, `the wrapper exited ${run.code}/${run.signal}:\n${run.output}`);
+      assert.ok(
+        run.output.includes('--- done'),
+        `the wrapper exited 0 without reaching its last line:\n${run.output}`
+      );
+    } finally {
+      rmSync(tree.dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * Item 27. Every case runs the shipped wrapper end to end with the stubs above;
+ * none of them asserts on the script's text, because the defects these exist to
+ * catch — an exit code changed by the capture, a capture skipped on failure —
+ * are properties of a run, not of a line.
+ */
+describe('scripts/refresh-prod.sh, raw capture', () => {
+  let tree: Tree;
+  beforeEach(() => {
+    tree = makeTree();
+  });
+  afterEach(() => {
+    rmSync(tree.dir, { recursive: true, force: true });
+  });
+
+  it('(a) archives both payloads, gzipped and hashed, beside the database state', async () => {
+    const run = await runWrapper(tree);
+    assert.equal(run.code, 0, run.output);
+
+    const [name, ...rest] = captures(tree);
+    assert.ok(name, `no capture directory was archived:\n${run.output}`);
+    assert.equal(rest.length, 0);
+    const m = manifest(tree, name);
+    assert.equal(m.get('db_state'), 'refreshed');
+    assert.equal(m.get('season'), '2026-27');
+    assert.equal(m.get('max_round_held'), '2');
+    assert.equal(m.get('rows_held'), '1236');
+    assert.equal(m.get('fixtures.csv.e0_rows'), '1');
+    assert.equal(m.get('bootstrap-static.json.elements'), '2');
+    assert.equal(m.get('fixtures.csv.num_redirects'), '0');
+
+    const bootstrap = gunzipSync(readFileSync(join(tree.archive, name, 'bootstrap-static.json.gz')));
+    const fixtures = gunzipSync(readFileSync(join(tree.archive, name, 'fixtures.csv.gz')));
+    assert.equal(bootstrap.toString(), BOOTSTRAP_BODY, 'the archived bootstrap is not the bytes served');
+    assert.equal(fixtures.toString(), FIXTURES_BODY, 'the archived CSV is not the bytes served, BOM included');
+    assert.equal(m.get('bootstrap-static.json.sha256'), sha256(BOOTSTRAP_BODY));
+    assert.equal(m.get('fixtures.csv.sha256'), sha256(FIXTURES_BODY));
+
+    assert.equal(existsSync(marker(tree, 'last-capture-failure')), false, run.output);
+    assert.equal(existsSync(marker(tree, 'last-failure')), false, run.output);
+  });
+
+  it('(b) rejects the real block page served as HTTP 200, and keeps the bootstrap', async () => {
+    writeFileSync(join(tree.payloads, 'fixtures'), BLOCK_PAGE);
+    writeFileSync(join(tree.payloads, 'fixtures.type'), 'text/html; charset=utf-8');
+    const run = await runWrapper(tree);
+    assert.equal(run.code, 0, run.output);
+
+    const [name] = captures(tree);
+    assert.ok(name, `the bootstrap should still have been archived:\n${run.output}`);
+    assert.ok(existsSync(join(tree.archive, name, 'bootstrap-static.json.gz')));
     assert.equal(
-      run.timedOut,
+      existsSync(join(tree.archive, name, 'fixtures.csv.gz')),
       false,
-      'the wrapper never returned. Every step did its work and the process stayed alive — the ' +
-        'interactive hang, back. Check that `compose()` still redirects stdin from /dev/null: ' +
-        `stdout and stderr redirection alone leaves stdin as the caller's.\n${run.output}`
+      'an HTML block page was archived as the odds file — the outcome this validation exists to prevent'
     );
-    assert.equal(run.code, 0, `the wrapper exited ${run.code}/${run.signal}:\n${run.output}`);
+    assert.equal(manifest(tree, name).get('fixtures.csv.kept'), 'no');
+    // The reason, not only the rejection. Against a page starting with `<` the
+    // header check alone would also reject it, so the `<` check earns its place
+    // by the diagnosis — "this is a web page" is what the reader of the marker
+    // needs at 08:00 — and this assertion is what pins it. Measured: without it,
+    // removing the `<` check left this suite green.
+    const text = readFileSync(marker(tree, 'last-capture-failure'), 'utf8');
+    assert.match(text, /fixtures\.csv: rejected, markup, not CSV/);
+    assert.equal(existsSync(marker(tree, 'last-failure')), false, 'a capture problem marked the ingest as failed');
+  });
+
+  it('(b2) rejects a plain-text error body and a bootstrap without elements', async () => {
+    // Neither starts with `<`, so only the content checks proper can catch them.
+    // The bootstrap shape is FPL's own while the game is updating.
+    writeFileSync(join(tree.payloads, 'fixtures'), 'Service temporarily unavailable, try later\r\n');
+    writeFileSync(join(tree.payloads, 'bootstrap'), JSON.stringify({ detail: 'The game is being updated.' }));
+    const run = await runWrapper(tree);
+    assert.equal(run.code, 0, run.output);
+
+    assert.deepEqual(captures(tree), [], 'an error body was archived as data');
+    const text = readFileSync(marker(tree, 'last-capture-failure'), 'utf8');
+    assert.match(text, /fixtures\.csv: rejected, header lacks Div/);
+    assert.match(text, /bootstrap-static\.json: rejected, no non-empty elements array/);
+  });
+
+  it('(c) keeps the payloads when the database cannot be read, marked unknown', async () => {
+    const run = await runWrapper(tree, { FAKE_DB_FAIL: '1' });
+    assert.equal(run.code, 0, run.output);
+
+    const [name] = captures(tree);
+    assert.ok(name, `an unreadable database discarded irreplaceable payloads:\n${run.output}`);
+    const m = manifest(tree, name);
+    assert.equal(m.get('max_round_held'), 'unknown');
+    assert.equal(m.get('bootstrap-static.json.kept'), 'yes');
+    assert.equal(m.get('fixtures.csv.kept'), 'yes');
+    assert.match(readFileSync(marker(tree, 'last-capture-failure'), 'utf8'), /database state unreadable/);
+  });
+
+  it('(d) a second run adds a capture and leaves the first byte-identical', async () => {
+    assert.equal((await runWrapper(tree)).code, 0);
+    const [first] = captures(tree);
+    const before = readdirSync(join(tree.archive, first)).map((f) =>
+      sha256(readFileSync(join(tree.archive, first, f)))
+    );
+    // Directory names are stamped to the second.
+    await new Promise((r) => setTimeout(r, 1100));
+    writeFileSync(join(tree.payloads, 'bootstrap'), JSON.stringify({ elements: [{ id: 9 }] }));
+    assert.equal((await runWrapper(tree)).code, 0);
+
+    const all = captures(tree);
+    assert.equal(all.length, 2, `expected two captures, found ${all.join(', ')}`);
+    assert.equal(all[0], first);
+    const after = readdirSync(join(tree.archive, first)).map((f) =>
+      sha256(readFileSync(join(tree.archive, first, f)))
+    );
+    assert.deepEqual(after, before, 'the first capture changed when the second was taken');
+  });
+
+  it('(e) a failing capture never fails the refresh', async () => {
+    const run = await runWrapper(tree, { FAKE_CURL_FAIL: '1' });
+
+    assert.equal(run.code, 0, `a capture failure changed the refresh's exit code:\n${run.output}`);
+    assert.equal(
+      existsSync(marker(tree, 'last-failure')),
+      false,
+      'a capture failure set the INGEST failure marker'
+    );
     assert.ok(
-      run.output.includes('--- done'),
-      `the wrapper exited 0 without reaching its last line:\n${run.output}`
+      existsSync(marker(tree, 'last-capture-failure')),
+      `the capture failed and raised no marker of its own:\n${run.output}`
     );
+    assert.deepEqual(captures(tree), [], 'nothing fetched, so nothing should be archived');
+  });
+
+  it('(f) a failed refresh still captures, flagged, with the state the database holds', async () => {
+    const run = await runWrapper(tree, { FAKE_RUN_FAIL: '1' });
+
+    assert.equal(run.code, 1, `the refresh's own exit code was not preserved:\n${run.output}`);
+    assert.ok(existsSync(marker(tree, 'last-failure')), 'the ingest failure marker was not set');
+    const [name] = captures(tree);
+    assert.ok(name, `a failed refresh skipped the capture, losing the day:\n${run.output}`);
+    const m = manifest(tree, name);
+    assert.equal(m.get('db_state'), 'refresh-failed');
+    assert.equal(m.get('failed_step'), 'ingest:live (season structure)');
+    assert.equal(m.get('max_round_held'), '2', 'the database was still readable and should have been read');
+    assert.equal(m.get('bootstrap-static.json.kept'), 'yes');
+  });
+
+  it('(g) reports a stale staging directory and does not delete it', async () => {
+    const stale = join(tree.archive, '.staging-20260101T030000Z');
+    mkdirSync(stale, { recursive: true });
+    writeFileSync(join(stale, 'bootstrap-static.json'), 'half a capture');
+
+    const run = await runWrapper(tree);
+    assert.equal(run.code, 0, run.output);
+
+    assert.equal(
+      readFileSync(join(stale, 'bootstrap-static.json'), 'utf8'),
+      'half a capture',
+      'a stale staging directory was deleted; it may be the only copy of that day'
+    );
+    const text = readFileSync(marker(tree, 'last-capture-failure'), 'utf8');
+    assert.ok(text.includes(stale), `the marker does not name the stale directory:\n${text}`);
+    assert.equal(captures(tree).length, 1, 'the stale directory should not block today\'s capture');
   });
 });

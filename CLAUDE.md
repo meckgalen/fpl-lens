@@ -73,6 +73,15 @@ seasons or nothing is comparable, and a band has to describe the population on
 screen or it describes a different game. Defensive contribution points forced the
 split — the evidence is in item 16's record.
 
+**The history of FPL's daily state exists only in a raw archive on the VPS, never
+in Postgres.** `status`, `chance_of_playing_next_round`, `news`, `form`, prices
+and ownership are not stored by any table. Since item 27, `refresh-prod.sh`
+archives the raw bootstrap and the football-data fixtures file on every run under
+`~/archive/fpl-lens/captures/`, each run with a MANIFEST of the database state it
+saw. **Anything asking what one of these fields said on a past date reads that
+archive. It cannot be reconstructed from the database, and the archive is never
+pruned.**
+
 `server/src/services/fplApi.ts` and its 5-minute cache are still there and still
 unused by the routes: it is the ingestion source for the live season, not dead
 code.
@@ -139,6 +148,13 @@ raw CSVs at
 - `players_raw.csv` (carries both `id` and `code`, plus `opta_code`, `birth_date`)
 - `teams.csv` (carries both `id` and `code`)
 - `gws/merged_gw.csv` (per-player per-gameweek rows, keyed on season-scoped `element`)
+
+**Odds come from football-data.co.uk, and every fetch from it runs on the VPS.**
+From the dev machine it is under a national block (Turkey, betting-odds sites),
+which is permanent: the `www.` host serves an **HTTP 200 HTML block page at the
+`.csv` URL**, and the apex host times out. Any fetch written to run locally will
+either fail or archive that page, so the historical season CSVs are fetched on the
+VPS and transferred too. Item 27 has the evidence.
 
 The official API cannot serve previous seasons at gameweek granularity. It exposes
 prior seasons only as totals via `history_past`, and current-season data is wiped at
@@ -503,7 +519,9 @@ is silently wrong.
     serves frozen constants, and `/api/comparison` reads `listPlayerTotals`'s
     rows because all eleven of its axes are already `PLAYER_COLUMNS` keys. A
     query written elsewhere is a second place `measuredSum` and rule 6's count
-    guard have to be remembered.
+    guard have to be remembered. **One exception, deliberate:** the raw
+    capture's read-only `gw | rows | fixtures` count in `scripts/refresh-prod.sh`
+    (item 27), which restates neither those rules nor `SETTLED_SQL`.
 21. **Join `player_seasons` with a LEFT JOIN, because only half the invariant is
     enforced.** `player_gameweeks` has foreign keys to `fixtures`, `teams` and
     `players` and **none to `player_seasons`**, so an orphan match row is
@@ -1397,6 +1415,15 @@ One item per session, committed between each. **The record of every item is
       the path you verify with is why the fix pins stdin rather than relying on
       cron's environment, and why the suite now **runs** the wrapper.
 
+- [x] **27. Daily raw capture of the live-only sources.** (Item 26 is reserved
+      for the harness.) The capture runs from the **EXIT trap, on both outcomes**:
+      the brief's strict chaining was reversed, because only one consumer needs a
+      database-aligned capture and a lost day is permanent. A capture never moves
+      the refresh's exit code or `last-failure`. `set -e` does not apply inside an
+      `||`-invoked function, so every step is checked by hand. Validation judges
+      the bytes, never the status: the dev machine is served a block page as
+      HTTP 200.
+
 ## Deferred
 
 **The work list is `docs/roadmap.md`.** Each entry is picked deliberately, as the
@@ -1552,6 +1579,9 @@ the captaincy model, the per-90 toggle and the rest — is in `docs/roadmap.md`.
   apply here, and flagging the conflict each session is unnecessary once this
   line exists.
 - One item per session, from Deferred, chosen deliberately. Commit between them.
+- **Plans live in `plans/item-NN-<slug>.md`, which is gitignored.** Once a plan is
+  approved, copy it there before building. All later edits go to that copy, and
+  it is never committed, because the item file is the record.
 - Plan before writing code for anything that ingests or aggregates. That is
   where an agent will confidently produce something that silently drops rows.
 - **Verification must not share its derivation with the thing it verifies.** A
