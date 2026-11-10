@@ -178,12 +178,13 @@ item's.
 ## The schedule
 
 ```
-CRON_TZ=UTC
 0 3 * * * /home/kemal/fpl-lens/scripts/refresh-prod.sh >> /home/kemal/fpl-lens/logs/cron.log 2>&1
 ```
 
 Under the deploy user's crontab, not root. `CRON_TZ` because cron uses system local time
 and the schedule is stated in UTC.
+
+Corrected 2026-11-10: the server runs cron 3.0pl1, which ignores CRON_TZ. Times are UTC because the server's time zone is Etc/UTC.
 
 **Once daily, and a midday run would buy nothing.** One round of evidence: GW2's fixtures
 played 28-31 August 2026 still read `finished: false` with `finished_provisional: true`

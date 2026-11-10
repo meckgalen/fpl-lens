@@ -3,9 +3,11 @@
 # The in-season refresh, run by cron on the VPS. Item 25.
 #
 #   crontab -e   (as the deploy user, not root)
-#     CRON_TZ=UTC
 #     0 3 * * * /home/kemal/fpl-lens/scripts/refresh-prod.sh \
 #       >> /home/kemal/fpl-lens/logs/cron.log 2>&1
+#
+#   Times are UTC because the server's time zone is Etc/UTC; this cron ignores
+#   CRON_TZ.
 #
 # Safe to run by hand at any time, and safe to run when there is nothing new:
 # both ingests are upserts that delete no row, and both report a no-change run
