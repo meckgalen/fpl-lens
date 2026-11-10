@@ -151,7 +151,7 @@ server/
   src/ingest/           CSV and live API ingestion
   src/verify/           read only cross-checks against the source data
   migrations/           node-pg-migrate
-scripts/                fetch and profile the raw CSVs, check doc size
+scripts/                fetch and profile the raw CSVs, check doc size, prod refresh and backup
 data/raw/               the downloaded CSVs, by season; gitignored
 docs/                   item records, testing notes, roadmap
 ```
@@ -187,10 +187,9 @@ The migrate step is profile gated and sits between build and up, so the schema i
 
 ### In-season refresh
 
-Production ingests from the FPL API itself, on a schedule. `scripts/refresh-prod.sh` builds the ingest image and then runs the two ingests in their required order, and cron calls it:
+Production ingests from the FPL API itself, on a schedule. `scripts/refresh-prod.sh` builds the ingest image and then runs the two ingests in their required order, and cron calls it. Times are UTC because the server's time zone is Etc/UTC; this cron ignores `CRON_TZ`.
 
 ```
-CRON_TZ=UTC
 0 3 * * * /home/kemal/fpl-lens/scripts/refresh-prod.sh >> /home/kemal/fpl-lens/logs/cron.log 2>&1
 ```
 
@@ -209,6 +208,52 @@ Three things about it that are easy to get wrong:
 - **Production and local ingest independently, and neither is a copy of the other.** In-season, production is usually ahead. The one-off `pg_restore` that seeded the first gameweek is not the refresh mechanism, and restoring local over production reverts it.
 
 The ingest and migrate services both build from the Dockerfile's `build` stage, because the runtime image deliberately ships without tsx.
+
+### Database backup
+
+`scripts/backup-prod.sh` takes a daily `pg_dump -Fc` of the production database, checks it, keeps it locally and copies it off-site. It is separate from the refresh, and the refresh's "no `pg_dump` / `pg_restore` in either direction" rule still stands: that rule is about moving data between production and local, and nothing here restores anything. Cron calls it half an hour before the refresh. Times are UTC because the server's time zone is Etc/UTC; this cron ignores `CRON_TZ`.
+
+```
+30 2 * * * /home/kemal/fpl-lens/scripts/backup-prod.sh >> /home/kemal/fpl-lens/logs/backup.log 2>&1
+```
+
+What one run does, in order. The stage names are the ones a failure reports:
+
+1. **`lock`** takes the refresh's own lock, `logs/.refresh.lock`, waiting up to 600 s for it. Failing to get it is a failure.
+2. **`pg_dump`** runs `pg_dump -Fc` inside the running `postgres` container with `docker compose exec -T`, as the container's own `$POSTGRES_USER` and `$POSTGRES_DB`, capped at 600 s, into `~/backups/fpl-lens-<YYYY-MM-DDTHHMMZ>.dump.partial`. The lock is released as soon as it finishes. The script never runs `run`, `build` or `up`, and never prints credentials: no `docker compose config`, no `docker inspect`, no read of `.env`.
+3. **`validate`** checks that the file is non-empty, starts with the custom-format header, and that `pg_restore --list` (run inside the container, from stdin) succeeds and lists at least one `TABLE DATA` entry.
+4. **`rename`** publishes it as `~/backups/fpl-lens-<YYYY-MM-DDTHHMMZ>.dump`. The rename is atomic and refuses to replace an existing file. A trap removes the `.partial` file on any failure.
+5. **`upload`** runs `rclone copyto --immutable` to `r2-fpl:fpl-lens-backups/<same name>`, and **`upload check`** confirms the object is there with the same size. Nothing in R2 is ever deleted, overwritten or synced.
+6. **`prune`** keeps the newest 7 local files whose name is exactly `fpl-lens-????-??-??T????Z.dump`, by name, which sorts by time. It runs only after this run's dump has been validated and uploaded, so a failing day never prunes a good file. **Nothing else in `~/backups` is touched**: other projects' dumps, other archives, and the older manual fpl-lens dumps, whose names do not match.
+
+Success logs one line, `backup ok: <file name> <size in bytes>`. Failure logs the stage, exits non-zero and writes the sticky marker **`logs/last-backup-failure`**, naming the stage and the file. The next success removes it. The two scripts keep out of each other's files: the refresh removes only `last-failure` and prunes only `refresh-*.log`, and the backup prunes only inside `~/backups`.
+
+**The lock.** The two scripts never overlap, and the backup is the one that gives way. The refresh does nothing if the lock is held at 03:00, so the backup waits for the lock (at most 600 s) and holds it only while `pg_dump` runs (at most 600 s). Validation, upload and pruning run after it has let go. A 02:30 run has therefore released the lock by about 02:51 at the very latest. A backup run by hand during a refresh waits up to ten minutes and then fails with a marker, which is better than dumping mid-ingest.
+
+**Retention.** Locally, 7 dumps by count. In R2 the script does no retention at all. The bucket `fpl-lens-backups` has a 30-day bucket lock rule, so objects cannot be deleted or overwritten for 30 days, and a lifecycle rule that deletes them after 35 days. Both are set in the Cloudflare dashboard. The rclone remote is `r2-fpl`, configured on the server with a token scoped to that bucket and `no_check_bucket = true`. Its credentials live only in the server's rclone config.
+
+**Overrides, for local testing only.** The defaults are production. `COMPOSE_FILE`, `PG_SERVICE`, `BACKUP_DIR`, `LOG_DIR`, `LOCK`, `LOCK_WAIT`, `RCLONE_DEST`, and `SKIP_UPLOAD=1` to skip the upload:
+
+```bash
+COMPOSE_FILE=docker-compose.yml BACKUP_DIR=$(mktemp -d) LOG_DIR=$(mktemp -d) \
+  LOCK=$(mktemp) SKIP_UPLOAD=1 scripts/backup-prod.sh
+```
+
+**Restore test.** This proves a dump restores. It never touches production. It is how the first manual dump was checked on 10 November 2026, and it is worth repeating now and then on a recent file, locally or one pulled from R2:
+
+```bash
+docker run -d --rm --network none --name fpl-restore-test -e POSTGRES_PASSWORD=throwaway postgres:16-alpine
+docker exec fpl-restore-test psql -U postgres -c 'CREATE DATABASE restore_test'
+docker cp fpl-lens-<stamp>.dump fpl-restore-test:/tmp/r.dump
+docker exec fpl-restore-test pg_restore -U postgres -d restore_test \
+  --no-owner --no-privileges --exit-on-error /tmp/r.dump
+# then compare count(*) of all 8 tables against the source database
+docker stop fpl-restore-test
+```
+
+`--network none` means the throwaway container cannot reach anything. `--no-owner --no-privileges` means it does not need production's roles.
+
+**Restoring into production is not scripted, and needs its own decision.** The database is refreshed daily from the FPL API, so a restore throws away every round ingested since the dump. Whatever it gets restored over is gone too, unless it was dumped first.
 
 ## Roadmap
 
